@@ -8,7 +8,7 @@ Reglas:
 - No cambies decisiones de diseño del encargo. Si hace falta, propónlo en la respuesta.
 - Código, identificadores y comentarios en inglés. Nada de datos reales del entorno (rutas personales, usuarios, hosts, correos).
 - No hay red: no añadas dependencias que el encargo no autorice.
-- No edites la bóveda `docs/` aunque `AGENTS.md` y `docs/README.md` pidan actualizar tareas o decisiones: en este equipo eso lo hace el director. Sus reglas sí se aplican.
+- Todo lo que necesitas está en este prompt, el encargo y el código. Tu copia del repo no trae la documentación del proyecto (`docs/`, `AGENTS.md`): no la busques ni la crees; la mantiene el director.
 - Antes de terminar ejecuta `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` y `cargo test --workspace`.
 - No hagas commits ni toques git: lo hace el orquestador.
 

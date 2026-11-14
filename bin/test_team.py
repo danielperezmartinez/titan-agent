@@ -56,6 +56,14 @@ class RepoConfigTest(unittest.TestCase):
         self.assertEqual(self.cfg["roles"]["revisor"]["sandbox"], "read-only")
         self.assertTrue((ROOT / self.cfg["roles"]["revisor"]["output_schema"]).is_file())
 
+    def test_roles_are_isolated_from_the_repo_instructions(self):
+        overrides = team.codex_overrides(self.cfg, self.cfg["roles"]["implementador"])
+        self.assertIn("project_doc_max_bytes=0", overrides)
+        self.assertIn("skills.include_instructions=false", overrides)
+        hidden = self.cfg["project"]["hidden_paths"]
+        for path in ("/AGENTS.md", "/CLAUDE.md", "/GEMINI.md", "/docs/", "/.claude/"):
+            self.assertIn(path, hidden)
+
     def test_director_cannot_be_launched(self):
         with self.assertRaises(team.TeamError):
             team.require_role(self.cfg, "director")
@@ -95,6 +103,21 @@ class PathRulesTest(unittest.TestCase):
         self.assertEqual(team.path_warnings({}, files), [])
 
 
+class CodexOverridesTest(unittest.TestCase):
+    def test_global_then_role_overrides(self):
+        cfg = {"codex": {"config": ["a=1"]}}
+        self.assertEqual(team.codex_overrides(cfg, {"config": ["b=2"]}), ["-c", "a=1", "-c", "b=2"])
+        self.assertEqual(team.codex_overrides({}, {}), [])
+
+    def test_overrides_reach_new_and_resumed_threads(self):
+        role = {"model": "m", "sandbox": "read-only"}
+        out = Path("out")
+        for thread in (None, "thread-1"):
+            cmd = team.codex_cmd(role, thread, out, Path("wt"), ["-c", "x=1"])
+            self.assertIn("x=1", cmd)
+            self.assertEqual(cmd[cmd.index("x=1") - 1], "-c")
+
+
 class DryRunTest(unittest.TestCase):
     """new + ask --dry-run on a throwaway repo laid out like this one."""
 
@@ -110,6 +133,10 @@ class DryRunTest(unittest.TestCase):
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_bytes((ROOT / rel).read_bytes())
         (self.base / ".gitignore").write_text(".agents/state/\n.agents/worktrees/\n")
+        for rel in ("AGENTS.md", "CLAUDE.md", "docs/README.md", "src/main.rs"):
+            dest = self.base / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(f"{rel}\n")
         run(["git", "init", "-q", "-b", "main"], self.base)
         run(["git", "add", "-A"], self.base)
         run(["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
@@ -141,12 +168,32 @@ class DryRunTest(unittest.TestCase):
         self.assertIn("-m gpt-6.1-sol", out)
         self.assertIn(str(worktree), out)
         self.assertIn("Nada que hacer.", out)
+        self.assertIn("-c project_doc_max_bytes=0", out)
 
         code, out = self.team("ask", "revisor", "prueba", "--dry-run", "-m", "Revisa.")
         self.assertEqual(code, 0)
         self.assertIn("-m gpt-6.1-sol", out)
         self.assertIn("-s read-only", out)
         self.assertIn("--output-schema", out)
+
+    def test_worktree_hides_the_repo_instructions(self):
+        self.team("new", "prueba", "--brief", str(self.brief))
+        worktree = self.base / ".agents/worktrees/prueba"
+        for rel in ("AGENTS.md", "CLAUDE.md", "docs"):
+            self.assertFalse((worktree / rel).exists(), rel)
+        self.assertTrue((worktree / "src/main.rs").is_file())
+        self.assertTrue((worktree / ".agents/team.toml").is_file())
+        # A role's commit (git add -A, as autocommit does) keeps the hidden files.
+        (worktree / "src/lib.rs").write_text("lib\n")
+        run(["git", "add", "-A"], worktree)
+        run(["git", "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+             "commit", "-q", "-m", "turn"], worktree)
+        tracked = subprocess.run(["git", "ls-files"], cwd=worktree, check=True,
+                                 capture_output=True, text=True).stdout.split()
+        for rel in ("AGENTS.md", "CLAUDE.md", "docs/README.md", "src/lib.rs"):
+            self.assertIn(rel, tracked)
+        # The main checkout is untouched.
+        self.assertTrue((self.base / "docs/README.md").is_file())
 
     def test_new_from_another_base(self):
         run(["git", "checkout", "-q", "-b", "fase"], self.base)

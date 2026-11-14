@@ -210,6 +210,7 @@ def cmd_new(cfg, args):
     branch = cfg["project"].get("branch_prefix", "encargo/") + args.task
     wt.parent.mkdir(parents=True, exist_ok=True)
     git(repo, "worktree", "add", "-b", branch, wt, base)
+    hide_paths(cfg, wt)
     task_dir.mkdir(parents=True, exist_ok=True)
     brief_dest = task_dir / "encargo.md"
     shutil.copyfile(brief_src, brief_dest)
@@ -222,7 +223,24 @@ def cmd_new(cfg, args):
     return 0
 
 
-def codex_cmd(role, thread_id, out_file, wt):
+def codex_overrides(cfg, role):
+    """-c pairs from [codex].config and then the role's own config list."""
+    pairs = list(cfg.get("codex", {}).get("config", [])) + list(role.get("config", []))
+    return [arg for pair in pairs for arg in ("-c", pair)]
+
+
+def hide_paths(cfg, wt):
+    """Leave project.hidden_paths out of the worktree with a sparse checkout.
+
+    The roles only get their prompt and the brief: no AGENTS.md, CLAUDE.md or
+    vault to read (or edit) on their own. Hidden files stay in the branch.
+    """
+    hidden = cfg["project"].get("hidden_paths") or []
+    if hidden:
+        git(wt, "sparse-checkout", "set", "--no-cone", "/*", *[f"!{p}" for p in hidden])
+
+
+def codex_cmd(role, thread_id, out_file, wt, overrides=()):
     cmd = ["codex", "exec"]
     if thread_id:
         cmd += ["resume", "--json", "-o", str(out_file), "-m", role["model"]]
@@ -230,6 +248,7 @@ def codex_cmd(role, thread_id, out_file, wt):
         cmd += ["--json", "-o", str(out_file), "-m", role["model"]]
     if role.get("effort"):
         cmd += ["-c", f"model_reasoning_effort={role['effort']}"]
+    cmd += list(overrides)
     if thread_id:
         cmd += ["-c", f"sandbox_mode=\"{role.get('sandbox', 'read-only')}\""]
     else:
@@ -326,7 +345,7 @@ def cmd_ask(cfg, args):
     agent_output = task_dir / output_name(entry_n, args.role, "response")
     if role.get("output_schema"):
         role["_schema_path"] = relpath(cfg, role["output_schema"])
-    command = codex_cmd(role, thread_id, agent_output, wt)
+    command = codex_cmd(role, thread_id, agent_output, wt, codex_overrides(cfg, role))
     if args.dry_run:
         print("Comando: " + shlex.join(command))
         print("\n--- prompt ---\n" + prompt)

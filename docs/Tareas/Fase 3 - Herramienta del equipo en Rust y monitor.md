@@ -5,7 +5,7 @@ Resumen: Reescribir en Rust la herramienta del equipo (titan-team, con su skill)
 Decisiones: ''
 Bloqueada: ["[[Fase 2 - Nueva sesión con salvaguardas]]"]
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T17:30:00+01:00
+Última modificación: 2026-11-14T19:20:00+01:00
 ---
 
 # Fase 3 - Herramienta del equipo en Rust y monitor
@@ -18,7 +18,9 @@ Fecha de creación: 2026-11-14T15:28:51+01:00
   `team.toml`, hilos por `thread_id`, worktree y commit por turno, aviso de rutas
   prohibidas, tope de rondas, informe del revisor con esquema, `--json`), sin el
   adaptador `claude -p`. **ADR** con el formato de eventos. Sustituye al
-  prototipo en Python, que se retira del repo.
+  prototipo en Python, que se retira del repo. Conserva el aislamiento de los
+  roles (`[codex].config` y `project.hidden_paths`, ver
+  [[Tareas/Aislar a los roles de Codex de las instrucciones del repo]]).
 - **Configurable por proyecto y por una IA** (petición del usuario,
   2026-11-14): nada del equipo va fijo en el código. Roles, CLI, modelo,
   esfuerzo, sandbox, prompts, rutas, flujo y tope de rondas viven en el

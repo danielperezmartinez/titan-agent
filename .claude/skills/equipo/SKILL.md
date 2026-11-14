@@ -14,7 +14,7 @@ Herramienta: `bin/team` (en la carpeta que contiene `.agents/`). Lee `team roles
 - Si el encargo no está claro, **debate con el usuario** antes de gastar llamadas. Pregunta solo lo que cambie el diseño.
 
 ## 1. Diseño y encargo (tú)
-Escribe el encargo en un fichero fuera del repo (p. ej. `$CLAUDE_JOB_DIR/tmp/<id>.md`); `team new` guarda su copia en `.agents/state/<id>/` (no versionado). Debe bastar por sí solo, porque los otros roles no ven esta conversación:
+Escribe el encargo en un fichero fuera del repo (p. ej. `$CLAUDE_JOB_DIR/tmp/<id>.md`); `team new` guarda su copia en `.agents/state/<id>/` (no versionado). Debe bastar por sí solo, porque los otros roles no ven esta conversación **ni la bóveda**: su worktree no trae `docs/`, `AGENTS.md`, `CLAUDE.md` ni `GEMINI.md` (`project.hidden_paths`) y Codex no carga instrucciones de proyecto ni skills (`[codex].config`). Lo que necesiten de una ADR, una decisión visual o una regla del proyecto, cópialo en el encargo:
 - Objetivo en una frase.
 - **Interfaz exacta**: crate y módulo, nombres, firmas, tipos, errores (tipo y cuándo), y en qué `crates/<crate>/tests/` van los tests de aceptación.
 - Comportamiento: casos normales, bordes, errores, ejemplos entrada → salida.
