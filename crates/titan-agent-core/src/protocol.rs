@@ -210,6 +210,27 @@ pub fn decode_line(line: &str) -> Result<Message, DecodeError> {
         None => None,
     };
     if let Some(method) = method {
+        let is_request = matches!(
+            method,
+            "hello"
+                | "sessions/list"
+                | "sessions/subscribe"
+                | "terminal/open"
+                | "terminal/input"
+                | "terminal/resize"
+                | "terminal/close"
+                | "session/stop"
+        );
+        let is_notification = matches!(
+            method,
+            "sessions/changed" | "terminal/output" | "terminal/exited"
+        );
+        if (id.is_some() && !is_request) || (id.is_none() && !is_notification) {
+            return Err(DecodeError::UnknownMethod {
+                id,
+                method: method.into(),
+            });
+        }
         let p = match o.get("params") {
             Some(value) if value.is_object() => value.clone(),
             Some(_) => return Err(bad(id)),
@@ -447,6 +468,36 @@ mod tests {
         ] {
             assert!(
                 matches!(decode_line(line), Err(DecodeError::InvalidParams { .. })),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn method_direction_is_checked_before_params() {
+        for (line, expected_id) in [
+            (r#"{"id":7,"method":"example/unknown"}"#, Some(7)),
+            (r#"{"id":7,"method":"terminal/output"}"#, Some(7)),
+            (
+                r#"{"id":7,"method":"example/unknown","params":null}"#,
+                Some(7),
+            ),
+            (
+                r#"{"id":7,"method":"terminal/output","params":[1]}"#,
+                Some(7),
+            ),
+            (r#"{"method":"hello"}"#, None),
+            (r#"{"method":"hello","params":[]}"#, None),
+        ] {
+            assert_eq!(
+                decode_line(line),
+                Err(DecodeError::UnknownMethod {
+                    id: expected_id,
+                    method: serde_json::from_str::<Value>(line).unwrap()["method"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                }),
                 "{line}"
             );
         }
