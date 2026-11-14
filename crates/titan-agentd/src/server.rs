@@ -2,7 +2,7 @@ use crate::{config::Config, discovery::CodexClient, snapshot::snapshot_ansi};
 use alacritty_terminal::{
     event::{OnResize, VoidListener, WindowSize},
     term::{Term, test::TermSize},
-    tty::{self, Options, Shell},
+    tty::{self, ChildEvent, EventedPty, Options, Shell},
 };
 use serde_json::{Value, json};
 use std::{
@@ -39,7 +39,7 @@ struct State {
     terminals: HashMap<String, Arc<Terminal>>,
 }
 struct Terminal {
-    pty: Mutex<tty::Pty>,
+    pty: Arc<Mutex<tty::Pty>>,
     term: Arc<Mutex<Term<VoidListener>>>,
     clients: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
 }
@@ -331,6 +331,7 @@ fn terminal_reader(
     session: String,
     term: Arc<Mutex<Term<VoidListener>>>,
     clients: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
+    pty: std::sync::Weak<Mutex<tty::Pty>>,
     state: Arc<Mutex<State>>,
 ) {
     use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
@@ -338,7 +339,16 @@ fn terminal_reader(
     let mut buffer = [0u8; 8192];
     loop {
         match reader.read(&mut buffer) {
-            Ok(0) | Err(_) => break,
+            Ok(0) => break,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                ) =>
+            {
+                thread::sleep(Duration::from_millis(10));
+            }
+            Err(_) => break,
             Ok(n) => {
                 processor.advance(&mut *term.lock().unwrap(), &buffer[..n]);
                 let message =
@@ -352,10 +362,20 @@ fn terminal_reader(
             }
         }
     }
+    let mut code = None;
+    if let Some(pty) = pty.upgrade() {
+        for _ in 0..20 {
+            if let Some(ChildEvent::Exited(status)) = pty.lock().unwrap().next_child_event() {
+                code = status.and_then(|status| status.code());
+                break;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
     let clients = clients.lock().unwrap().clone();
     let message = encode_line(&Message::Notification(DaemonNotification::TerminalExited {
         session: session.clone(),
-        code: None,
+        code,
     }));
     for client in clients {
         let _ = client.lock().unwrap().write_all(message.as_bytes());
@@ -418,6 +438,7 @@ fn handle(
                 None => err(3, "unknown session"),
                 Some(s) if s.attach.is_none() => err(4, "session cannot be attached"),
                 Some(s) => {
+                    let mut reader_file = None;
                     let existing = state.lock().unwrap().terminals.get(&session).cloned();
                     let terminal = if let Some(t) = existing {
                         let mut pty = t.pty.lock().unwrap();
@@ -469,24 +490,25 @@ fn handle(
                                     VoidListener,
                                 )));
                                 let clients = Arc::new(Mutex::new(Vec::new()));
+                                let pty = Arc::new(Mutex::new(pty));
                                 let terminal = Arc::new(Terminal {
-                                    pty: Mutex::new(pty),
+                                    pty: Arc::clone(&pty),
                                     term: Arc::clone(&term),
                                     clients: Arc::clone(&clients),
                                 });
-                                let file = terminal.pty.lock().unwrap().file().try_clone();
-                                if let Ok(file) = file {
-                                    state
-                                        .lock()
-                                        .unwrap()
-                                        .terminals
-                                        .insert(session.clone(), Arc::clone(&terminal));
-                                    let st = Arc::clone(state);
-                                    let name = session.clone();
-                                    thread::spawn(move || {
-                                        terminal_reader(file, name, term, clients, st)
-                                    });
-                                }
+                                let file = match terminal.pty.lock().unwrap().file().try_clone() {
+                                    Ok(file) => file,
+                                    Err(error) => {
+                                        reply(w, id, err(7, &error.to_string()));
+                                        return (true, false);
+                                    }
+                                };
+                                state
+                                    .lock()
+                                    .unwrap()
+                                    .terminals
+                                    .insert(session.clone(), Arc::clone(&terminal));
+                                reader_file = Some((file, term, clients, Arc::downgrade(&pty)));
                                 terminal
                             }
                             Err(e) => {
@@ -495,11 +517,9 @@ fn handle(
                             }
                         }
                     };
-                    {
-                        let mut clients = terminal.clients.lock().unwrap();
-                        if !clients.iter().any(|c| Arc::ptr_eq(c, w)) {
-                            clients.push(Arc::clone(w));
-                        }
+                    let mut clients = terminal.clients.lock().unwrap();
+                    if !clients.iter().any(|c| Arc::ptr_eq(c, w)) {
+                        clients.push(Arc::clone(w));
                     }
                     opened.insert(session.clone());
                     let snap = snapshot_ansi(&terminal.term.lock().unwrap());
@@ -518,6 +538,15 @@ fn handle(
                         }))
                         .as_bytes(),
                     );
+                    drop(writer);
+                    drop(clients);
+                    if let Some((file, term, clients, pty_ref)) = reader_file {
+                        let st = Arc::clone(state);
+                        let name = session.clone();
+                        thread::spawn(move || {
+                            terminal_reader(file, name, term, clients, pty_ref, st)
+                        });
+                    }
                     return (true, false);
                 }
             }
