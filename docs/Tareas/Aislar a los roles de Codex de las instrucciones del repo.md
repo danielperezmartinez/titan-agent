@@ -5,7 +5,7 @@ Resumen: Cada llamada de bin/team a Codex (Luna y Sol) entraba con AGENTS.md, el
 Decisiones: Aislamiento en dos capas, ambas en .agents/team.toml - [codex].config (opciones -c por llamada) y project.hidden_paths (sparse checkout del worktree del encargo). Se descarta desactivar herramientas de Codex (navegador, imagen, búsqueda web) porque con ellas desaparece también el shell.
 Bloqueada: []
 Fecha de creación: 2026-11-14T19:20:00+01:00
-Última modificación: 2026-11-14T19:20:00+01:00
+Última modificación: 2026-11-14T21:10:00+01:00
 ---
 
 # Aislar a los roles de Codex de las instrucciones del repo
@@ -93,3 +93,17 @@ Medidas del 2026-11-14 con `gpt-6-luna`, tokens de entrada de toda la llamada:
 - PR: pendiente de autorización del usuario para el push.
 
 ## Resultado
+
+Observaciones de la fase 1 (2026-11-14), primera fase con el aislamiento:
+
+- **Sockets Unix**: el sandbox `workspace-write` de Codex no deja crearlos ni
+  conectarse a ellos (`PermissionDenied`), así que los roles no pueden
+  ejecutar los tests del daemon ni del cliente. El director los pasa fuera del
+  sandbox (`bin/team test` o `--test` en la revisión) y envía los fallos. No se
+  ha abierto la red a los roles: sería decisión del usuario
+  (`sandbox_workspace_write.network_access` en `config` del rol).
+- **Coste de los hilos largos**: cada turno reanudado reenvía todo el hilo en
+  cada petición al modelo. El implementador del daemon llegó a ~26M tokens de
+  entrada acumulados en 8 turnos (casi todo en caché). Para rondas de corrección
+  grandes conviene un hilo nuevo (`bin/team ask … --new`) con un mensaje que
+  baste por sí solo.
