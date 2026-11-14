@@ -4933,7 +4933,6 @@ version = "0.2.0"
 dependencies = [
  "alacritty_terminal",
  "base64",
- "polling",
  "rustix",
  "serde",
  "serde_json",

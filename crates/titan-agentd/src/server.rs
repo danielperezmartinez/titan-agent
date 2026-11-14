@@ -46,6 +46,7 @@ struct State {
     stopping: bool,
     codex_stops: Option<StopSender>,
     open_gate: Arc<Mutex<()>>,
+    stop_flag: Arc<AtomicBool>,
 }
 struct Terminal {
     pty: Arc<Mutex<tty::Pty>>,
@@ -98,7 +99,16 @@ impl Daemon {
             .read(true)
             .write(true)
             .open(PathBuf::from(lock_path))?;
-        lock_file.try_lock()?;
+        match lock_file.try_lock() {
+            Ok(()) => (),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrInUse,
+                    "daemon socket is locked",
+                ));
+            }
+            Err(std::fs::TryLockError::Error(error)) => return Err(error),
+        }
         if config.socket.exists() {
             if UnixStream::connect(&config.socket).is_ok() {
                 return Err(std::io::Error::from(std::io::ErrorKind::AddrInUse));
@@ -120,6 +130,7 @@ impl Daemon {
             stopping: false,
             codex_stops: None,
             open_gate: Arc::new(Mutex::new(())),
+            stop_flag: Arc::clone(&stop),
         }));
         let ac = Arc::clone(&stop);
         let ast = Arc::clone(&state);
@@ -621,6 +632,15 @@ fn terminal_reader(
     let mut processor = Processor::<StdSyncHandler>::new();
     let mut buffer = [0u8; 8192];
     loop {
+        if !wait_fd(
+            &reader,
+            rustix::event::PollFlags::IN
+                | rustix::event::PollFlags::ERR
+                | rustix::event::PollFlags::HUP,
+            None,
+        ) {
+            break;
+        }
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Err(error)
@@ -629,7 +649,7 @@ fn terminal_reader(
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
                 ) =>
             {
-                thread::sleep(Duration::from_millis(10));
+                continue;
             }
             Err(_) => break,
             Ok(n) => {
@@ -675,10 +695,19 @@ fn terminal_reader(
         let _ = client.enqueue(message.clone());
     }
 }
-fn terminal_writer(mut writer: std::fs::File, receiver: std::sync::mpsc::Receiver<Vec<u8>>) {
-    for bytes in receiver {
+fn terminal_writer(
+    mut writer: std::fs::File,
+    receiver: std::sync::mpsc::Receiver<Vec<u8>>,
+    stopping: Arc<AtomicBool>,
+) {
+    while !stopping.load(Ordering::Relaxed) {
+        let bytes = match receiver.recv_timeout(Duration::from_millis(500)) {
+            Ok(bytes) => bytes,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         let mut offset = 0;
-        while offset < bytes.len() {
+        while offset < bytes.len() && !stopping.load(Ordering::Relaxed) {
             match writer.write(&bytes[offset..]) {
                 Ok(0) => return,
                 Ok(count) => offset += count,
@@ -688,10 +717,34 @@ fn terminal_writer(mut writer: std::fs::File, receiver: std::sync::mpsc::Receive
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
                     ) =>
                 {
-                    thread::sleep(Duration::from_millis(10))
+                    let _ = wait_fd(
+                        &writer,
+                        rustix::event::PollFlags::OUT
+                            | rustix::event::PollFlags::ERR
+                            | rustix::event::PollFlags::HUP,
+                        Some(Duration::from_millis(500)),
+                    );
                 }
                 Err(_) => return,
             }
+        }
+    }
+}
+fn wait_fd(
+    file: &std::fs::File,
+    events: rustix::event::PollFlags,
+    timeout: Option<Duration>,
+) -> bool {
+    let mut descriptors = [rustix::event::PollFd::new(file, events)];
+    let timespec = timeout.map(|duration| rustix::event::Timespec {
+        tv_sec: duration.as_secs() as i64,
+        tv_nsec: duration.subsec_nanos() as _,
+    });
+    loop {
+        match rustix::event::poll(&mut descriptors, timespec.as_ref()) {
+            Ok(ready) => return ready > 0,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(_) => return false,
         }
     }
 }
@@ -908,11 +961,12 @@ fn handle(
                     {
                         let st = Arc::clone(state);
                         let name = session.clone();
+                        let stopping = state.lock().unwrap().stop_flag.clone();
                         let reader_thread = thread::spawn(move || {
                             terminal_reader(file, name, inner, pty_ref, terminal_ref, st)
                         });
                         let writer_thread =
-                            thread::spawn(move || terminal_writer(input_file, input_rx));
+                            thread::spawn(move || terminal_writer(input_file, input_rx, stopping));
                         state
                             .lock()
                             .unwrap()

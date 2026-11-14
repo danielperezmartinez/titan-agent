@@ -12,8 +12,7 @@ serde_json.workspace = true
 base64.workspace = true
 alacritty_terminal.workspace = true
 titan-agent-core.workspace = true
-polling = "3.11.0"
-rustix = { version = "1.1.6", features = ["process"] }
+rustix = { version = "1.1.6", features = ["process", "event"] }
 
 [lints]
 workspace = true
