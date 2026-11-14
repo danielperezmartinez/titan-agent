@@ -54,6 +54,7 @@ struct State {
     stop_flag: Arc<AtomicBool>,
     codex_stop_pending: Arc<AtomicBool>,
     codex_wake: Arc<Wake>,
+    codex_available: Arc<AtomicBool>,
 }
 struct Terminal {
     pty: Arc<Mutex<tty::Pty>>,
@@ -144,6 +145,7 @@ impl Daemon {
         let stop = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake::new());
         let codex_stop_pending = Arc::new(AtomicBool::new(false));
+        let codex_available = Arc::new(AtomicBool::new(false));
         let state = Arc::new(Mutex::new(State {
             sessions: vec![],
             claude_sessions: vec![],
@@ -158,6 +160,7 @@ impl Daemon {
             stop_flag: Arc::clone(&stop),
             codex_stop_pending: Arc::clone(&codex_stop_pending),
             codex_wake: Arc::clone(&wake),
+            codex_available: Arc::clone(&codex_available),
         }));
         let ac = Arc::clone(&stop);
         let ast = Arc::clone(&state);
@@ -251,6 +254,7 @@ impl Daemon {
             config.clone(),
             stop_rx,
             Arc::clone(&codex_stop_pending),
+            Arc::clone(&codex_available),
         );
         Ok(DaemonHandle {
             socket: config.socket,
@@ -351,6 +355,7 @@ fn spawn_codex_worker(
     config: Config,
     stops: std::sync::mpsc::Receiver<StopRequest>,
     stop_pending: Arc<AtomicBool>,
+    codex_available: Arc<AtomicBool>,
 ) -> Option<thread::JoinHandle<()>> {
     let program = config.codex_program.clone()?;
     Some(thread::spawn(move || {
@@ -409,7 +414,8 @@ fn spawn_codex_worker(
                 Err(error) => {
                     eprintln!("Codex app-server failed to start: {error}");
                     publish_half(&state, false, Vec::new());
-                    interruptible_codex_sleep(&stop, &wake, &stop_pending, Duration::from_secs(30));
+                    set_codex_availability(&wake, &codex_available, &stop_pending, &stops, false);
+                    interruptible_sleep(&stop, &wake, Duration::from_secs(30));
                     continue;
                 }
             };
@@ -424,12 +430,18 @@ fn spawn_codex_worker(
                 let _ = child.kill();
                 let _ = child.wait();
                 pid.store(0, Ordering::Relaxed);
+                publish_half(&state, false, Vec::new());
+                set_codex_availability(&wake, &codex_available, &stop_pending, &stops, false);
+                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
                 continue;
             };
             let Some(output) = child.stdout.take() else {
                 let _ = child.kill();
                 let _ = child.wait();
                 pid.store(0, Ordering::Relaxed);
+                publish_half(&state, false, Vec::new());
+                set_codex_availability(&wake, &codex_available, &stop_pending, &stops, false);
+                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
                 continue;
             };
             let mut client = CodexClient::new(BufReader::new(output), input);
@@ -445,9 +457,11 @@ fn spawn_codex_worker(
                 let _ = child.wait();
                 pid.store(0, Ordering::Relaxed);
                 publish_half(&state, false, Vec::new());
-                interruptible_codex_sleep(&stop, &wake, &stop_pending, Duration::from_secs(30));
+                set_codex_availability(&wake, &codex_available, &stop_pending, &stops, false);
+                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
                 continue;
             }
+            set_codex_availability(&wake, &codex_available, &stop_pending, &stops, true);
             let mut failed = false;
             while !stop.load(Ordering::Relaxed) {
                 loop {
@@ -525,7 +539,8 @@ fn spawn_codex_worker(
             pid.store(0, Ordering::Relaxed);
             if failed {
                 publish_half(&state, false, Vec::new());
-                interruptible_codex_sleep(&stop, &wake, &stop_pending, Duration::from_secs(30));
+                set_codex_availability(&wake, &codex_available, &stop_pending, &stops, false);
+                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
             }
         }
         worker_done.store(true, Ordering::Release);
@@ -551,6 +566,23 @@ fn take_codex_stops(
     let requests = receiver.try_iter().collect();
     pending.store(false, Ordering::Release);
     requests
+}
+fn set_codex_availability(
+    wake: &Wake,
+    available: &AtomicBool,
+    pending: &AtomicBool,
+    receiver: &std::sync::mpsc::Receiver<StopRequest>,
+    is_available: bool,
+) {
+    let _guard = wake.mutex.lock().unwrap();
+    available.store(is_available, Ordering::Release);
+    if !is_available {
+        for request in receiver.try_iter() {
+            let _ = request.response.send(Err("Codex no disponible".to_owned()));
+        }
+        pending.store(false, Ordering::Release);
+    }
+    wake.condition.notify_all();
 }
 fn interruptible_sleep(stop: &AtomicBool, wake: &Wake, duration: Duration) {
     let guard = wake.mutex.lock().unwrap();
@@ -623,17 +655,37 @@ fn run_with_timeout(command: &mut Command, timeout: Duration) -> std::io::Result
     let mut child = command.spawn()?;
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
+    let out_buffer = Arc::new(Mutex::new(Vec::new()));
+    let err_buffer = Arc::new(Mutex::new(Vec::new()));
+    let out_reader_buffer = Arc::clone(&out_buffer);
+    let err_reader_buffer = Arc::clone(&err_buffer);
     let (out_tx, out_rx) = std::sync::mpsc::channel();
     let (err_tx, err_rx) = std::sync::mpsc::channel();
     let _out = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stdout.read_to_end(&mut bytes);
-        let _ = out_tx.send(bytes);
+        let mut bytes = [0; 8192];
+        loop {
+            match stdout.read(&mut bytes) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => out_reader_buffer
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&bytes[..count]),
+            }
+        }
+        let _ = out_tx.send(());
     });
     let _err = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let _ = stderr.read_to_end(&mut bytes);
-        let _ = err_tx.send(bytes);
+        let mut bytes = [0; 8192];
+        loop {
+            match stderr.read(&mut bytes) {
+                Ok(0) | Err(_) => break,
+                Ok(count) => err_reader_buffer
+                    .lock()
+                    .unwrap()
+                    .extend_from_slice(&bytes[..count]),
+            }
+        }
+        let _ = err_tx.send(());
     });
     let deadline = std::time::Instant::now() + timeout;
     let status = loop {
@@ -651,13 +703,15 @@ fn run_with_timeout(command: &mut Command, timeout: Duration) -> std::io::Result
         thread::sleep(Duration::from_millis(10));
     };
     let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-    let stdout = out_rx.recv_timeout(remaining).unwrap_or_default();
-    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
-    let stderr = err_rx.recv_timeout(remaining).unwrap_or_default();
+    let stdout_done = out_rx.recv_timeout(remaining).is_ok();
+    if stdout_done {
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        let _ = err_rx.recv_timeout(remaining);
+    }
     Ok(Output {
         status,
-        stdout,
-        stderr,
+        stdout: out_buffer.lock().unwrap().clone(),
+        stderr: err_buffer.lock().unwrap().clone(),
     })
 }
 
@@ -797,13 +851,20 @@ fn terminal_reader(
     let mut processor = Processor::<StdSyncHandler>::new();
     let mut buffer = [0u8; 8192];
     loop {
-        match wait_fd(
+        if stopping.load(Ordering::Relaxed) {
+            break;
+        }
+        let readiness = wait_fd(
             &reader,
             rustix::event::PollFlags::IN
                 | rustix::event::PollFlags::ERR
                 | rustix::event::PollFlags::HUP,
             Some(Duration::from_secs(1)),
-        ) {
+        );
+        if stopping.load(Ordering::Relaxed) {
+            break;
+        }
+        match readiness {
             Some(true) => {}
             Some(false) => {
                 if stopping.load(Ordering::Relaxed) {
@@ -859,8 +920,6 @@ fn terminal_reader(
     if is_current {
         state.terminals.remove(&session);
     }
-    drop(state);
-    kill_pty(&terminal.pty);
     let message = encode_line(&Message::Notification(DaemonNotification::TerminalExited {
         session: session.clone(),
         code,
@@ -868,6 +927,8 @@ fn terminal_reader(
     for client in clients {
         let _ = client.enqueue(message.clone());
     }
+    drop(state);
+    kill_pty(&terminal.pty);
     drop(inner);
 }
 fn terminal_writer(
@@ -1257,12 +1318,13 @@ fn handle(
                             )
                                 .1;
                         };
-                        let (sender, wake, pending) = {
+                        let (sender, wake, pending, available) = {
                             let state = state.lock().unwrap();
                             (
                                 state.codex_stops.clone(),
                                 Arc::clone(&state.codex_wake),
                                 Arc::clone(&state.codex_stop_pending),
+                                Arc::clone(&state.codex_available),
                             )
                         };
                         let outcome = if let Some(sender) = sender {
@@ -1270,28 +1332,37 @@ fn handle(
                             let deadline = std::time::Instant::now() + Duration::from_secs(10);
                             let queued = {
                                 let _guard = wake.mutex.lock().unwrap();
-                                let result = sender.try_send(StopRequest {
-                                    thread_id: thread_id.to_owned(),
-                                    deadline,
-                                    response: tx,
-                                });
-                                if result.is_ok() {
-                                    pending.store(true, Ordering::Release);
-                                    wake.condition.notify_all();
+                                if !available.load(Ordering::Acquire) {
+                                    Err("Codex no disponible".to_owned())
+                                } else {
+                                    sender
+                                        .try_send(StopRequest {
+                                            thread_id: thread_id.to_owned(),
+                                            deadline,
+                                            response: tx,
+                                        })
+                                        .map_err(|_| "Codex stop queue is full".to_owned())
+                                        .map(|()| {
+                                            pending.store(true, Ordering::Release);
+                                            wake.condition.notify_all();
+                                        })
                                 }
-                                result
                             };
-                            queued
-                                .map_err(|_| "Codex stop queue is full".to_owned())
-                                .and_then(|_| {
-                                    rx.recv_timeout(
-                                        deadline
-                                            .saturating_duration_since(std::time::Instant::now()),
-                                    )
-                                    .map_err(|_| "Codex interrupt timed out".to_owned())?
-                                })
+                            queued.and_then(|_| {
+                                match rx.recv_timeout(
+                                    deadline.saturating_duration_since(std::time::Instant::now()),
+                                ) {
+                                    Ok(result) => result,
+                                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                                        Err("Codex interrupt timed out".to_owned())
+                                    }
+                                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                        Err("Codex no disponible".to_owned())
+                                    }
+                                }
+                            })
                         } else {
-                            Err("Codex unavailable".to_owned())
+                            Err("Codex no disponible".to_owned())
                         };
                         return match outcome {
                             Ok(()) => {
@@ -1354,12 +1425,13 @@ mod timeout_tests {
         let mut command = Command::new("sh");
         command.args([
             "-c",
-            "sleep 60 & echo $! > \"$1\"; exit 0",
+            "echo ok; sleep 60 & echo $! > \"$1\"; exit 0",
             "sh",
             pid_file.to_str().unwrap(),
         ]);
         let output = run_with_timeout(&mut command, Duration::from_millis(200)).unwrap();
         assert!(output.status.success());
+        assert_eq!(output.stdout, b"ok\n");
         assert!(started.elapsed() < Duration::from_secs(2));
         let pid = std::fs::read_to_string(&pid_file).unwrap();
         let _ = Command::new("kill").args(["-KILL", pid.trim()]).status();
