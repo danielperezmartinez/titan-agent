@@ -193,10 +193,50 @@ pub fn decode_line(line: &str) -> Result<Message, DecodeError> {
     let Some(o) = v.as_object() else {
         return Err(DecodeError::InvalidJson("not object".into()));
     };
-    let id = o.get("id").and_then(Value::as_u64);
-    let method = o.get("method").and_then(Value::as_str);
+    let id = match o.get("id") {
+        Some(value) => Some(
+            value
+                .as_u64()
+                .ok_or_else(|| DecodeError::InvalidJson("invalid id".into()))?,
+        ),
+        None => None,
+    };
+    let method = match o.get("method") {
+        Some(value) => Some(
+            value
+                .as_str()
+                .ok_or_else(|| DecodeError::InvalidJson("invalid method".into()))?,
+        ),
+        None => None,
+    };
     if let Some(method) = method {
-        let p = o.get("params").cloned().unwrap_or(json!({}));
+        let is_request = matches!(
+            method,
+            "hello"
+                | "sessions/list"
+                | "sessions/subscribe"
+                | "terminal/open"
+                | "terminal/input"
+                | "terminal/resize"
+                | "terminal/close"
+                | "session/stop"
+        );
+        let is_notification = matches!(
+            method,
+            "sessions/changed" | "terminal/output" | "terminal/exited"
+        );
+        if (id.is_some() && !is_request) || (id.is_none() && !is_notification) {
+            return Err(DecodeError::UnknownMethod {
+                id,
+                method: method.into(),
+            });
+        }
+        let p = match o.get("params") {
+            Some(value) if value.is_object() => value.clone(),
+            Some(_) => return Err(bad(id)),
+            None if matches!(method, "sessions/list" | "sessions/subscribe") => json!({}),
+            None => return Err(bad(id)),
+        };
         if id.is_none() {
             let notification = match method {
                 "sessions/changed" => serde_json::from_value::<structs::Changed>(p).map(|x| {
@@ -397,5 +437,69 @@ impl<R: BufRead> LineReader<R> {
         String::from_utf8(b)
             .map(Some)
             .map_err(|_| LineError::InvalidUtf8)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_id_and_method_types_are_invalid_json() {
+        for line in [
+            r#"{"id":"1","method":"terminal/output","params":{"session":"x","data":""}}"#,
+            r#"{"id":null,"method":"hello"}"#,
+            r#"{"id":-1,"method":"hello"}"#,
+            r#"{"id":1,"method":3,"result":null}"#,
+        ] {
+            assert!(
+                matches!(decode_line(line), Err(DecodeError::InvalidJson(_))),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn known_methods_reject_non_object_params() {
+        for line in [
+            r#"{"id":1,"method":"terminal/open","params":["claude:a",80,24]}"#,
+            r#"{"id":1,"method":"hello","params":null}"#,
+            r#"{"method":"terminal/output","params":["claude:a",""]}"#,
+        ] {
+            assert!(
+                matches!(decode_line(line), Err(DecodeError::InvalidParams { .. })),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn method_direction_is_checked_before_params() {
+        for (line, expected_id) in [
+            (r#"{"id":7,"method":"example/unknown"}"#, Some(7)),
+            (r#"{"id":7,"method":"terminal/output"}"#, Some(7)),
+            (
+                r#"{"id":7,"method":"example/unknown","params":null}"#,
+                Some(7),
+            ),
+            (
+                r#"{"id":7,"method":"terminal/output","params":[1]}"#,
+                Some(7),
+            ),
+            (r#"{"method":"hello"}"#, None),
+            (r#"{"method":"hello","params":[]}"#, None),
+        ] {
+            assert_eq!(
+                decode_line(line),
+                Err(DecodeError::UnknownMethod {
+                    id: expected_id,
+                    method: serde_json::from_str::<Value>(line).unwrap()["method"]
+                        .as_str()
+                        .unwrap()
+                        .into(),
+                }),
+                "{line}"
+            );
+        }
     }
 }

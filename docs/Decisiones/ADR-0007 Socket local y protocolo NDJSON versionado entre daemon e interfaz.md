@@ -7,8 +7,8 @@ Decisión: Socket Unix en $XDG_RUNTIME_DIR/titan-agent/agentd.sock, NDJSON con p
 Consecuencias: Cualquier cliente (la interfaz, titan-ssh en la fase 4 por stdio) habla el mismo formato. Cambiar un mensaje de forma incompatible exige subir el número de protocolo. La interfaz no lanza CLI ni lee sus ficheros; todo pasa por el daemon.
 Reemplaza: []
 Reemplazada por: []
-Fecha de creación: 2026-11-14T19:40:00+01:00
-Última modificación: 2026-11-14T19:40:00+01:00
+Fecha de creación: 2026-11-14T19:30:00+01:00
+Última modificación: 2026-11-14T19:30:00+01:00
 ---
 
 # ADR-0007 · Socket local y protocolo NDJSON versionado entre daemon e interfaz
