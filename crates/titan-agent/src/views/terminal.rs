@@ -10,10 +10,8 @@ pub(crate) fn terminal_canvas(
     cursor: Option<(u16, u16)>,
     owner: WeakEntity<MainWindow>,
 ) -> impl IntoElement {
-    div()
-        .size_full()
-        .bg(rgb(theme::TERMINAL_BG))
-        .child(gpui::canvas(
+    div().size_full().bg(rgb(theme::TERMINAL_BG)).child(
+        gpui::canvas(
             move |bounds, window: &mut Window, cx: &mut App| {
                 let text_style = window.text_style();
                 let font_size = text_style.font_size.to_pixels(window.rem_size());
@@ -84,20 +82,26 @@ pub(crate) fn terminal_canvas(
                             }),
                             ..Default::default()
                         };
-                        let shaped = window.text_system().shape_line(
-                            SharedString::from(item.span.text.clone()),
-                            font_size,
-                            &[run],
-                            None,
-                        );
-                        let _ = shaped.paint(
-                            point(x, y),
-                            line_height,
-                            gpui::TextAlign::Left,
-                            None,
-                            window,
-                            cx,
-                        );
+                        for cluster in &item.clusters {
+                            let cluster_run = TextRun {
+                                len: cluster.text.len(),
+                                ..run.clone()
+                            };
+                            let shaped = window.text_system().shape_line(
+                                SharedString::from(cluster.text.clone()),
+                                font_size,
+                                &[cluster_run],
+                                None,
+                            );
+                            let _ = shaped.paint(
+                                point(bounds.left() + cell_width * f32::from(cluster.column), y),
+                                line_height,
+                                gpui::TextAlign::Left,
+                                None,
+                                window,
+                                cx,
+                            );
+                        }
                     }
                 }
                 if let Some((row, col)) = cursor.filter(|(r, c)| *r < rows && *c < cols) {
@@ -109,5 +113,7 @@ pub(crate) fn terminal_canvas(
                     ));
                 }
             },
-        ))
+        )
+        .size_full(),
+    )
 }

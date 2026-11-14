@@ -25,6 +25,7 @@ pub enum ClientError {
 }
 struct Inner {
     writer: Mutex<UnixStream>,
+    control: UnixStream,
     state: Mutex<PendingState>,
     next: AtomicU64,
     notices: Mutex<Option<mpsc::Receiver<DaemonNotification>>>,
@@ -64,23 +65,23 @@ pub fn daemon_program() -> PathBuf {
 }
 impl Connection {
     pub fn connect(socket: &Path) -> Result<Self, ClientError> {
-        Self::connect_with_timeout(socket, None)
+        Self::connect_with_deadline(socket, None)
     }
-    fn connect_with_timeout(socket: &Path, timeout: Option<Duration>) -> Result<Self, ClientError> {
-        let stream = UnixStream::connect(socket).map_err(ClientError::Io)?;
-        if let Some(timeout) = timeout {
-            stream
-                .set_read_timeout(Some(timeout))
-                .map_err(ClientError::Io)?;
-            stream
-                .set_write_timeout(Some(timeout))
-                .map_err(ClientError::Io)?;
+    fn connect_with_deadline(
+        socket: &Path,
+        deadline: Option<Instant>,
+    ) -> Result<Self, ClientError> {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+            return Err(ClientError::Timeout);
         }
+        let stream = UnixStream::connect(socket).map_err(ClientError::Io)?;
         let reader = stream.try_clone().map_err(ClientError::Io)?;
+        let control = stream.try_clone().map_err(ClientError::Io)?;
         let (ntx, nrx) = mpsc::channel();
         let (ttx, trx) = mpsc::channel();
         let inner = Arc::new(Inner {
             writer: Mutex::new(stream),
+            control,
             state: Mutex::new(PendingState {
                 closed: false,
                 pending: HashMap::new(),
@@ -96,13 +97,16 @@ impl Connection {
             inner: inner.clone(),
         };
         std::thread::spawn(move || reader_loop(reader, inner));
-        let result = match c.request(ClientRequest::Hello {
-            protocol: PROTOCOL_VERSION,
-            client: PeerInfo {
-                name: "titan-agent".into(),
-                version: env!("CARGO_PKG_VERSION").into(),
+        let result = match c.request_until(
+            ClientRequest::Hello {
+                protocol: PROTOCOL_VERSION,
+                client: PeerInfo {
+                    name: "titan-agent".into(),
+                    version: env!("CARGO_PKG_VERSION").into(),
+                },
             },
-        }) {
+            deadline,
+        ) {
             Ok(result) => result,
             Err(error) => {
                 c.close();
@@ -110,14 +114,16 @@ impl Connection {
             }
         };
         let _: serde_json::Value = result;
-        if timeout.is_some() {
-            let writer = c.inner.writer.lock().unwrap();
-            writer.set_read_timeout(None).map_err(ClientError::Io)?;
-            writer.set_write_timeout(None).map_err(ClientError::Io)?;
-        }
         Ok(c)
     }
     pub fn request(&self, request: ClientRequest) -> Result<serde_json::Value, ClientError> {
+        self.request_until(request, None)
+    }
+    fn request_until(
+        &self,
+        request: ClientRequest,
+        deadline: Option<Instant>,
+    ) -> Result<serde_json::Value, ClientError> {
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
         {
@@ -133,7 +139,23 @@ impl Connection {
             self.close();
             return Err(ClientError::Closed);
         }
-        rx.recv().unwrap_or(Err(ClientError::Closed))
+        match deadline {
+            Some(deadline) => match deadline.checked_duration_since(Instant::now()) {
+                Some(remaining) => match rx.recv_timeout(remaining) {
+                    Ok(result) => result,
+                    Err(mpsc::RecvTimeoutError::Timeout) => {
+                        self.close();
+                        Err(ClientError::Timeout)
+                    }
+                    Err(mpsc::RecvTimeoutError::Disconnected) => Err(ClientError::Closed),
+                },
+                None => {
+                    self.close();
+                    Err(ClientError::Timeout)
+                }
+            },
+            None => rx.recv().unwrap_or(Err(ClientError::Closed)),
+        }
     }
     pub fn take_notifications(&self) -> Option<mpsc::Receiver<DaemonNotification>> {
         let receiver = self.inner.notices.lock().unwrap().take();
@@ -167,13 +189,10 @@ fn close_inner(inner: &Arc<Inner>) {
     for (_, tx) in state.pending.drain() {
         let _ = tx.send(Err(ClientError::Closed));
     }
+    drop(state);
     inner.notice_tx.lock().unwrap().take();
     inner.tagged_notice_tx.lock().unwrap().take();
-    let _ = inner
-        .writer
-        .lock()
-        .unwrap()
-        .shutdown(std::net::Shutdown::Both);
+    let _ = inner.control.shutdown(std::net::Shutdown::Both);
 }
 fn reader_loop(stream: UnixStream, inner: Arc<Inner>) {
     let mut r = LineReader::new(BufReader::new(stream));
@@ -210,13 +229,11 @@ pub fn connect_or_spawn(
     daemon_program: &Path,
     timeout: Duration,
 ) -> Result<Connection, ClientError> {
-    let start = Instant::now();
-    if let Ok(c) = Connection::connect_with_timeout(socket, Some(timeout))
-        && start.elapsed() < timeout
-    {
+    let deadline = Instant::now() + timeout;
+    if let Ok(c) = Connection::connect_with_deadline(socket, Some(deadline)) {
         return Ok(c);
     }
-    if start.elapsed() >= timeout {
+    if Instant::now() >= deadline {
         return Err(ClientError::Timeout);
     }
     let mut command = Command::new(daemon_program);
@@ -226,14 +243,13 @@ pub fn connect_or_spawn(
         .stderr(std::process::Stdio::null())
         .process_group(0);
     let _ = command.spawn();
-    while start.elapsed() < timeout {
-        let remaining = timeout.saturating_sub(start.elapsed());
-        if let Ok(c) = Connection::connect_with_timeout(socket, Some(remaining))
-            && start.elapsed() < timeout
-        {
+    while Instant::now() < deadline {
+        if let Ok(c) = Connection::connect_with_deadline(socket, Some(deadline)) {
             return Ok(c);
         }
-        std::thread::sleep(Duration::from_millis(100).min(timeout.saturating_sub(start.elapsed())));
+        std::thread::sleep(
+            Duration::from_millis(100).min(deadline.saturating_duration_since(Instant::now())),
+        );
     }
     Err(ClientError::Timeout)
 }
@@ -245,9 +261,11 @@ mod tests {
 
     fn connection(stream: UnixStream) -> Connection {
         let (notice_tx, notice_rx) = mpsc::channel();
+        let control = stream.try_clone().unwrap();
         Connection {
             inner: Arc::new(Inner {
                 writer: Mutex::new(stream),
+                control,
                 state: Mutex::new(PendingState {
                     closed: false,
                     pending: HashMap::new(),
@@ -295,6 +313,8 @@ mod tests {
         for worker in workers {
             worker.join().unwrap();
         }
+        let notices = connection.take_notifications().unwrap();
+        assert!(notices.recv().is_err());
         assert!(connection.take_notifications().is_none());
     }
 
@@ -319,5 +339,37 @@ mod tests {
         assert!(began.elapsed() < Duration::from_millis(350));
         let _ = std::fs::remove_file(&path);
         let _ = server.join();
+    }
+
+    #[test]
+    fn notifications_do_not_extend_hello_deadline() {
+        let path = std::env::temp_dir().join(format!(
+            "titan-agent-notify-timeout-{}.sock",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut hello = String::new();
+            std::io::BufRead::read_line(&mut reader, &mut hello).unwrap();
+            let notification = encode_line(&Message::Notification(
+                DaemonNotification::SessionsChanged { sessions: vec![] },
+            ));
+            loop {
+                std::thread::sleep(Duration::from_millis(50));
+                if stream.write_all(notification.as_bytes()).is_err() {
+                    break;
+                }
+            }
+        });
+        let began = Instant::now();
+        let result =
+            Connection::connect_with_deadline(&path, Some(began + Duration::from_millis(180)));
+        assert!(matches!(result, Err(ClientError::Timeout)));
+        assert!(began.elapsed() < Duration::from_millis(350));
+        let _ = server.join();
+        let _ = std::fs::remove_file(&path);
     }
 }

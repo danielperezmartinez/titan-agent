@@ -29,6 +29,13 @@ pub struct CellSpan {
     pub column: u16,
     pub cells: u16,
     pub span: Span,
+    pub clusters: Vec<CellCluster>,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellCluster {
+    pub column: u16,
+    pub cells: u16,
+    pub text: String,
 }
 pub struct TerminalModel {
     term: Term<VoidListener>,
@@ -146,10 +153,20 @@ impl TerminalModel {
                 }) {
                     last.span.text.push_str(&text);
                     last.cells = last.cells.saturating_add(width as u16);
+                    last.clusters.push(CellCluster {
+                        column: col as u16,
+                        cells: width as u16,
+                        text,
+                    });
                 } else {
                     spans.push(CellSpan {
                         column: col as u16,
                         cells: width as u16,
+                        clusters: vec![CellCluster {
+                            column: col as u16,
+                            cells: width as u16,
+                            text: text.clone(),
+                        }],
                         span: Span {
                             text,
                             fg,

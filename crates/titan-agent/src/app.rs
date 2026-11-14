@@ -206,20 +206,32 @@ impl MainWindow {
                 self.open_queued = false;
                 match event.result {
                     Ok(_) => {
-                        let (target_cols, target_rows) = self.terminal_size.unwrap_or((cols, rows));
-                        let mut terminal = TerminalModel::new(target_cols, target_rows);
+                        let mut terminal = TerminalModel::new(cols, rows);
                         self.terminal_output_after = event.notification_cutoff;
                         for (sequence, bytes) in self.terminal_pending.drain(..) {
                             if sequence > event.notification_cutoff {
                                 terminal.feed(&bytes);
                             }
                         }
-                        self.terminal = Some(terminal);
                         self.exited = self
                             .terminal_pending_exit
                             .take()
                             .filter(|(sequence, _)| *sequence > event.notification_cutoff)
                             .map(|(_, code)| code);
+                        if let Some((target_cols, target_rows)) = self.terminal_size
+                            && (target_cols, target_rows) != (cols, rows)
+                        {
+                            terminal.resize(target_cols, target_rows);
+                            self.enqueue(
+                                ClientRequest::TerminalResize {
+                                    session,
+                                    cols: target_cols,
+                                    rows: target_rows,
+                                },
+                                event.generation,
+                            );
+                        }
+                        self.terminal = Some(terminal);
                     }
                     Err(error) => {
                         self.stop_error = Some(error_text(&error));
@@ -343,26 +355,48 @@ impl MainWindow {
         if let Some(model) = &mut self.terminal {
             model.resize(size.0, size.1);
         }
-        if self.open_pending && !self.open_queued {
+        if self.open_pending {
             if size.0 == 0 || size.1 == 0 {
                 return;
             }
-            self.open_queued = true;
-            if let Some(session) = self.terminal_session.clone() {
-                self.enqueue(
-                    ClientRequest::TerminalOpen {
-                        session,
-                        cols: size.0,
-                        rows: size.1,
-                    },
-                    self.generation,
-                );
+            if !self.open_queued {
+                self.open_queued = true;
+                if let Some(session) = self.terminal_session.clone() {
+                    self.enqueue(
+                        ClientRequest::TerminalOpen {
+                            session,
+                            cols: size.0,
+                            rows: size.1,
+                        },
+                        self.generation,
+                    );
+                }
             }
-        } else if (self.open_pending || self.terminal.is_some())
+            return;
+        }
+        if self.terminal.is_some()
             && let Some(session) = self.terminal_session.clone()
         {
             self.enqueue(
                 ClientRequest::TerminalResize {
+                    session,
+                    cols: size.0,
+                    rows: size.1,
+                },
+                self.generation,
+            );
+        }
+        if !self.open_pending
+            && !self.open_queued
+            && self.terminal.is_none()
+            && size.0 > 0
+            && size.1 > 0
+            && self.terminal_session.is_some()
+        {
+            self.open_queued = true;
+            let session = self.terminal_session.clone().unwrap();
+            self.enqueue(
+                ClientRequest::TerminalOpen {
                     session,
                     cols: size.0,
                     rows: size.1,
