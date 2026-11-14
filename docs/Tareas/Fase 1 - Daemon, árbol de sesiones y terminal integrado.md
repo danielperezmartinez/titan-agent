@@ -1,11 +1,11 @@
 ---
 Nombre: Fase 1 - Daemon, árbol de sesiones y terminal integrado
-Estado: Pendiente
+Estado: En curso
 Resumen: Primera versión usable - titan-agentd descubre las sesiones de Claude Code y Codex y mantiene los terminales; la interfaz GPUI muestra la ventana principal con el árbol de sesiones por proyecto y, al elegir una, su terminal con el CLI oficial en el que escribe el usuario.
-Decisiones: ''
+Decisiones: '[[Decisiones/ADR-0007 Socket local y protocolo NDJSON versionado entre daemon e interfaz]] · [[Decisiones/ADR-0008 Terminal con alacritty_terminal en el daemon y en la interfaz]] · Solo anidan los subagentes de Codex (parentThreadId), Claude va plano · Proyecto por git rev-parse --git-common-dir · Windows fuera de la fase 1 · Las interactivas de Claude se muestran sin terminal'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T18:40:00+01:00
+Última modificación: 2026-11-14T19:40:00+01:00
 ---
 
 # Fase 1 - Daemon, árbol de sesiones y terminal integrado
@@ -34,6 +34,28 @@ Fecha de creación: 2026-11-14T15:28:51+01:00
   Zed (`alacritty_terminal` sobre GPUI): **ADR** con los crates elegidos.
 - Linux primero; Windows en esta fase si el coste es razonable (PTY con ConPTY,
   named pipe).
+
+## Plan
+
+Decisiones tomadas al empezar (2026-11-14), con la sesión de diseño:
+
+- Protocolo, transporte, sesiones, descubrimiento y proyecto:
+  [[Decisiones/ADR-0007 Socket local y protocolo NDJSON versionado entre daemon e interfaz]].
+- Terminal (crates, instantánea al reabrir, render propio):
+  [[Decisiones/ADR-0008 Terminal con alacritty_terminal en el daemon y en la interfaz]].
+- Jerarquía «lanzada por»: solo los subagentes de Codex (`parentThreadId`).
+  Claude no da el dato y no se adivina; los encargos del equipo, en la fase 3.
+- Interactivas de Claude y acciones de parar: ampliación de
+  [[Decisiones visuales/Ventana principal al estilo Claude Code Desktop]].
+- Windows: fuera de esta fase (el crate ya trae ConPTY; falta la named pipe y
+  probarlo).
+
+Encargos del equipo (skill «equipo»), en la rama `feat/fase-1`:
+
+1. `nucleo-protocolo` — `titan-agent-core`: tipos del protocolo, sesión,
+   correspondencias de Claude y Codex, proyecto, árbol y filtro, teclado.
+2. `daemon` — `titan-agentd`: socket, descubrimiento, PTY e instantánea.
+3. `interfaz` — `titan-agent`: cliente del daemon y ventana principal.
 
 ## Criterios de finalización
 

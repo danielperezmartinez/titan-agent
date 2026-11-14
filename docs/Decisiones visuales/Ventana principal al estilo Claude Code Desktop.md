@@ -7,7 +7,7 @@ Decisión: Columna izquierda de sesiones en árbol y zona central según la sele
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-14T14:32:34+01:00
-Última modificación: 2026-11-14T14:32:34+01:00
+Última modificación: 2026-11-14T19:40:00+01:00
 ---
 
 # Ventana principal al estilo Claude Code Desktop
@@ -50,6 +50,18 @@ borde izquierdo `accent`) y es lo que muestra el centro.
   derecha (proyecto, rol, quién la lanzó, desde cuándo está en ese estado, con
   quién habla, «ver el monitor del proyecto», `[d] abrir carpeta`,
   `[x] detener`).
+  Concreciones de la fase 1 (acordadas con la sesión de diseño el 2026-11-14,
+  sin cambiar lo decidido):
+  - Las sesiones **interactivas de Claude Code** (abiertas en otro terminal) no
+    se pueden adjuntar (`claude attach` solo admite las background), pero
+    **nunca se ocultan**: en el árbol van como las demás. Al elegirlas, el
+    centro muestra en `mute` (no es un error, es una limitación del CLI) «sesión
+    interactiva en otro terminal: no se puede adjuntar», con pid, carpeta y
+    estado. El panel de detalle sigue disponible.
+  - Acción de parar según el agente: Claude `[x] detener` en `danger`
+    (`claude stop`, destructivo); Codex `[-] interrumpir` en `body` con hairline
+    neutro (interrumpe el turno sin descargar el hilo; `[-]` es el marcador de
+    pausa de titan-ssh).
 - **Nueva sesión**: cuadro de encargo vacío con los **valores por defecto ya
   puestos** y, debajo, botones que abren una lista corta para cambiar agente
   (Claude Code / Codex), modelo, esfuerzo, permisos (o sandbox en Codex) y

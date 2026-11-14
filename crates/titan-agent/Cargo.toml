@@ -7,6 +7,9 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde_json.workspace = true
+base64.workspace = true
+alacritty_terminal.workspace = true
 titan-agent-core.workspace = true
 gpui.workspace = true
 gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
