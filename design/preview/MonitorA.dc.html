@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · monitor A · grafo vivo</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+a{color:#0a84ff}a:hover{color:#409cff}
+@keyframes livepulse{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes needpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,159,10,0)}50%{box-shadow:0 0 0 4px rgba(255,159,10,.25)}}
+@keyframes tu-opus{from{left:475px;top:79px}to{left:475px;top:207px}}
+@keyframes opus-tu{from{left:475px;top:207px}to{left:475px;top:79px}}
+@keyframes opus-impl{from{left:475px;top:303px}to{left:475px;top:411px}}
+@keyframes impl-opus{from{left:475px;top:411px}to{left:475px;top:303px}}
+@keyframes tests-opus{from{left:265px;top:255px}to{left:365px;top:255px}}
+@keyframes opus-tests{from{left:365px;top:255px}to{left:265px;top:255px}}
+@keyframes opus-sol{from{left:585px;top:255px}to{left:685px;top:255px}}
+@keyframes sol-opus{from{left:685px;top:255px}to{left:585px;top:255px}}
+</style>
+</helmet>
+<div style="width: 100%; min-height: 820px; box-sizing: border-box; display: flex; flex-direction: column; background: #161313; color: #d8d5d5; font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 14px;">
+
+  <div style="display: flex; flex-direction: column; flex-grow: 1;">
+    <section aria-label="Grafo del equipo" style="min-width: 0; display: flex; align-items: center; justify-content: center; padding: 24px 16px 8px 16px; background: #161313; overflow-x: auto;">
+      <div style="position: relative; width: 960px; height: 560px; flex-shrink: 0;">
+
+        <sc-for list="{{edges}}" as="e" hint-placeholder-count="4">
+          <div style="position: absolute; left: {{e.x}}px; top: {{e.y}}px; width: {{e.w}}px; height: {{e.h}}px; background: {{e.color}};"></div>
+        </sc-for>
+
+        <sc-for list="{{packets}}" as="p" hint-placeholder-count="1">
+          <div aria-hidden="true" style="position: absolute; width: 10px; height: 10px; border-radius: 9999px; background: {{p.color}}; animation: {{p.anim}} 1.1s ease-in-out infinite;"></div>
+          <div style="position: absolute; left: {{p.lx}}px; top: {{p.ly}}px; padding: 2px 6px; background: #302c2c; border: 1px solid {{p.color}}; border-radius: 4px; font-size: 11px; color: #fdfcfc; white-space: nowrap;">{{p.label}}</div>
+        </sc-for>
+
+        <sc-for list="{{nodes}}" as="n" hint-placeholder-count="5">
+          <div style="position: absolute; left: {{n.x}}px; top: {{n.y}}px; width: {{n.w}}px; height: {{n.h}}px; box-sizing: border-box; padding: 8px 12px; background: #201d1d; border: 1px solid {{n.border}}; border-radius: 4px; display: flex; flex-direction: column; gap: 4px; opacity: {{n.opacity}}; animation: {{n.anim}};">
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 12px;">
+              <span style="color: {{n.agentColor}};">{{n.tag}}</span>
+              <span style="color: #fdfcfc; font-weight: 700; flex-grow: 1;">{{n.title}}</span>
+              <span style="color: {{n.markColor}}; white-space: pre;">{{n.mark}}</span>
+            </div>
+            <span style="font-size: 11px; color: #9a9898;">{{n.sub}}</span>
+            <span style="font-size: 12px; color: {{n.actColor}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{n.act}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <aside aria-label="Últimos eventos" style="box-sizing: border-box; padding: 12px 16px 16px 16px; border-top: 1px solid rgba(253,252,252,0.12); display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: 12px;">
+      <div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 6px;">
+        <span style="color: #9a9898; letter-spacing: 0.08em;">AHORA</span>
+        <sc-for list="{{feed}}" as="f" hint-placeholder-count="4">
+          <div style="display: flex; gap: 8px; opacity: {{f.opacity}};">
+            <span style="color: #6e6e73; width: 72px;">{{f.t}}</span>
+            <span style="color: #d8d5d5;">{{f.text}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="flex: 0 1 300px; display: flex; flex-direction: column; gap: 6px; color: #9a9898; font-size: 11px; justify-content: flex-end;">
+        <span>el punto viaja con el color de quien envía</span>
+        <span><span style="color: #da8fff;">*</span> Claude Code · <span style="color: #5ac8fa;">*</span> Codex</span>
+        <span>clic en un nodo: abre su sesión</span>
+      </div>
+    </aside>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1100,"height":820}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { tick: 0 }; }
+  componentDidMount() { var self = this; this.timer = setInterval(function () { self.setState({ tick: self.state.tick + 1 }); }, 300); }
+  componentWillUnmount() { clearInterval(this.timer); }
+  renderVals() {
+    var CL = '#da8fff', CX = '#5ac8fa';
+    var STEPS = [
+      { work: ['opus'], act: { opus: 'redacta el encargo de la ronda 2' }, ev: 'opus redacta el encargo' },
+      { msg: ['opus', 'tests', 'añade un caso'], ev: 'opus -> luna·tests: añade un caso' },
+      { work: ['tests'], act: { tests: 'escribe destino_existente' }, ev: 'luna·tests escribe el test' },
+      { msg: ['tests', 'opus', '[ok] +1 test'], ev: 'luna·tests -> opus: +1 test' },
+      { msg: ['opus', 'impl', 'corrige 1 y 2'], ev: 'opus -> luna·impl: corrige' },
+      { work: ['impl'], act: { impl: 'cargo test   6/8' }, ev: 'luna·impl corrige' },
+      { msg: ['impl', 'opus', '[ok] 8/8 pasan'], ev: 'luna·impl -> opus: 8/8 pasan' },
+      { msg: ['opus', 'sol', 'revisa diff + tests'], ev: 'opus -> sol: revisión' },
+      { work: ['sol'], act: { sol: 'lee el diff · 412 líneas' }, ev: 'sol revisa el diff' },
+      { msg: ['sol', 'opus', 'changes_requested'], ev: 'sol -> opus: 1 hallazgo' },
+      { work: ['opus'], act: { opus: 'analiza el informe' }, ev: 'opus analiza el informe' },
+      { msg: ['opus', 'tu', '¿acepto el hallazgo?'], need: 'opus', ev: 'opus -> tú: te necesita' }
+    ];
+    var NODES = {
+      tu: { title: 'tú', tag: '', agentColor: '#fdfcfc', sub: 'usuario', cx: 480, cy: 48, w: 160, h: 56 },
+      opus: { title: 'opus', tag: 'cl', agentColor: CL, sub: 'director · claude code', cx: 480, cy: 260, w: 220, h: 96 },
+      tests: { title: 'luna', tag: 'cx', agentColor: CX, sub: 'tests · gpt-6-luna', cx: 160, cy: 260, w: 220, h: 96 },
+      sol: { title: 'sol', tag: 'cx', agentColor: CX, sub: 'revisor · gpt-6.1-sol', cx: 800, cy: 260, w: 220, h: 96 },
+      impl: { title: 'luna', tag: 'cx', agentColor: CX, sub: 'implementador · gpt-6-luna', cx: 480, cy: 460, w: 220, h: 96 }
+    };
+    var EDGES = {
+      'tu|opus': { x: 479, y: 76, w: 2, h: 136, lx: 492, ly: 130 },
+      'opus|impl': { x: 479, y: 308, w: 2, h: 104, lx: 492, ly: 350 },
+      'tests|opus': { x: 270, y: 259, w: 100, h: 2, lx: 262, ly: 222 },
+      'opus|sol': { x: 590, y: 259, w: 100, h: 2, lx: 582, ly: 222 }
+    };
+    var spin = ['|', '/', '-', '\\'][this.state.tick % 4];
+    var idx = Math.floor(this.state.tick / 8) % STEPS.length;
+    var step = STEPS[idx];
+    var work = step.work || [];
+    var msg = step.msg;
+
+    var nodes = Object.keys(NODES).map(function (k) {
+      var n = NODES[k];
+      var isWork = work.indexOf(k) >= 0;
+      var isNeed = step.need === k;
+      var isSend = msg && msg[0] === k, isRecv = msg && msg[1] === k;
+      var mark = '[+]', markColor = '#9a9898', act = 'en espera', actColor = '#9a9898', border = 'rgba(253,252,252,0.12)', opacity = 0.75, anim = 'none';
+      if (isWork) { mark = '[>] ' + spin; markColor = '#30d158'; act = step.act[k]; actColor = '#d8d5d5'; border = '#30d158'; opacity = 1; }
+      if (isSend) { mark = '[>]'; markColor = n.agentColor; act = 'envía: ' + msg[2]; actColor = '#d8d5d5'; border = n.agentColor; opacity = 1; }
+      if (isRecv) { act = 'recibe: ' + msg[2]; actColor = '#d8d5d5'; border = NODES[msg[0]].agentColor; opacity = 1; }
+      if (isNeed) { mark = '[?]'; markColor = '#ff9f0a'; act = 'te necesita'; actColor = '#ffb340'; border = '#ff9f0a'; anim = 'needpulse 1.4s ease-in-out infinite'; opacity = 1; }
+      if (k === 'tu' && isRecv) { mark = '[?]'; markColor = '#ff9f0a'; act = 'responde en la sesión'; }
+      if (k === 'tu' && !isRecv) { act = ''; }
+      return { title: n.title, tag: n.tag, agentColor: n.agentColor, sub: n.sub, x: n.cx - n.w / 2, y: n.cy - n.h / 2, w: n.w, h: n.h,
+        mark: mark, markColor: markColor, act: act, actColor: actColor, border: border, opacity: opacity, anim: anim };
+    });
+
+    var activeKey = msg ? ([msg[0], msg[1]].sort().join('|')) : '';
+    var edges = Object.keys(EDGES).map(function (k) {
+      var e = EDGES[k];
+      var on = msg && (k === msg[0] + '|' + msg[1] || k === msg[1] + '|' + msg[0]);
+      return { x: e.x, y: e.y, w: e.w, h: e.h, color: on ? NODES[msg[0]].agentColor : 'rgba(253,252,252,0.14)' };
+    });
+    var packets = [];
+    if (msg) {
+      var key = EDGES[msg[0] + '|' + msg[1]] ? msg[0] + '|' + msg[1] : msg[1] + '|' + msg[0];
+      var e = EDGES[key];
+      packets.push({ anim: msg[0] + '-' + msg[1], color: NODES[msg[0]].agentColor, label: msg[2], lx: e.lx, ly: e.ly });
+    }
+    var feed = [];
+    for (var i = 0; i < 4; i++) {
+      var j = (idx - i + STEPS.length * 10) % STEPS.length;
+      var secs = i * 3;
+      feed.push({ t: i === 0 ? 'ahora' : 'hace ' + secs + ' s', text: STEPS[j].ev, opacity: 1 - i * 0.12 });
+    }
+    return { nodes: nodes, edges: edges, packets: packets, feed: feed };
+  }
+}
+</script>
+</body>
+</html>

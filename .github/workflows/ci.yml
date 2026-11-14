@@ -1,0 +1,86 @@
+# CI de titan-agent. Reglas en docs/README.md, secciones "Publicación" y
+# "Seguridad, coste y cumplimiento".
+# - Cambios: detecta si hay algo fuera de docs/. Un cambio de solo bóveda omite
+#   Verificar (un check omitido cuenta como superado).
+# - Verificar: versión, formato, clippy y tests de Rust. Se omite mientras no
+#   exista Cargo.toml. GPUI necesita librerías del sistema en Linux: la fase 1
+#   las añade aquí.
+# - Fugas: gitleaks sobre el historial, los mensajes, la rama y el texto de la
+#   PR. Corre siempre. Solo usa los patrones genéricos del repo.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # En la rama principal no se cancela: un push de la bóveda no debe interrumpir
+  # el CI de una integración de código.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  cambios:
+    name: Cambios
+    runs-on: ubuntu-latest
+    outputs:
+      codigo: ${{ steps.diff.outputs.codigo }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        # Si el diff no se puede calcular, se trata como código.
+        run: |
+          if git diff --quiet "$BASE_SHA" HEAD -- . ':(exclude)docs' 2>/dev/null; then
+            echo "codigo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "codigo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  verificar:
+    name: Verificar
+    needs: cambios
+    if: needs.cambios.outputs.codigo == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: La versión supera la de la rama principal
+        if: github.event_name == 'pull_request' && hashFiles('Cargo.toml') != ''
+        run: sh scripts/comprobar-version.sh "${{ github.event.pull_request.base.sha }}"
+      - name: Formato, clippy y tests
+        if: hashFiles('Cargo.toml') != ''
+        run: |
+          rustup component add rustfmt clippy
+          cargo fmt --all --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Sin proyecto Rust todavía
+        if: hashFiles('Cargo.toml') == ''
+        run: echo "Aún no hay Cargo.toml; nada que compilar."
+
+  fugas:
+    name: Fugas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (historial, mensajes, rama y PR)
+        env:
+          GITLEAKS_VERSION: 8.28.0
+          # El texto de la PR va por variable de entorno, nunca interpolado en el script.
+          PR_TEXTO: ${{ github.event.pull_request.title }} ${{ github.event.pull_request.body }}
+          RAMA: ${{ github.head_ref || github.ref_name }}
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz gitleaks
+          ./gitleaks git --redact --no-banner --config .gitleaks.toml
+          { git log --format=%B; printf '%s\n%s\n' "$RAMA" "$PR_TEXTO"; } | ./gitleaks stdin --redact --no-banner --config .gitleaks.toml

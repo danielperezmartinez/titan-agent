@@ -1,0 +1,90 @@
+{
+  "v": 3,
+  "createdOnFiles": {
+    "v": 1,
+    "at": "2026-11-14T12:05:00Z"
+  },
+  "title": "titan-agent · previa",
+  "launch": {
+    "view": "canvas"
+  },
+  "pages": [],
+  "boards": {
+    "Main.dc.html": {
+      "x": 0,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "1 · Ventana principal: sesión seleccionada",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "NuevaSesion.dc.html": {
+      "x": 1520,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "2 · Ventana principal tras pulsar «Nueva sesión»",
+      "expand": "fill",
+      "is_interactive": true
+    },
+    "MonitorA.dc.html": {
+      "x": 0,
+      "y": 1400,
+      "w": 1100,
+      "h": 820,
+      "title": "Vista grafo (pieza del monitor)",
+      "is_interactive": true
+    },
+    "MonitorB.dc.html": {
+      "x": 1180,
+      "y": 1400,
+      "w": 1100,
+      "h": 820,
+      "title": "Vista carriles (pieza del monitor)",
+      "is_interactive": true
+    },
+    "MonitorC.dc.html": {
+      "x": 2360,
+      "y": 1400,
+      "w": 1100,
+      "h": 820,
+      "title": "Vista mesa de control (pieza del monitor)",
+      "is_interactive": true
+    },
+    "MonitorProyecto.dc.html": {
+      "x": 3040,
+      "y": 0,
+      "w": 1440,
+      "h": 900,
+      "title": "3 · Ventana principal: monitor del proyecto",
+      "expand": "fill",
+      "is_interactive": true
+    }
+  },
+  "order": [
+    "Main.dc.html",
+    "NuevaSesion.dc.html",
+    "MonitorProyecto.dc.html",
+    "MonitorA.dc.html",
+    "MonitorB.dc.html",
+    "MonitorC.dc.html"
+  ],
+  "notes": {
+    "titulo": {
+      "x": 0,
+      "y": -300,
+      "text": "titan-agent · previa 3 · torre de control",
+      "kind": "title1",
+      "maxW": 4480
+    },
+    "monitor": {
+      "x": 0,
+      "y": 1100,
+      "text": "Las tres vistas del monitor (se eligen con los botones de arriba)",
+      "kind": "title1",
+      "maxW": 4480
+    }
+  },
+  "designSystems": []
+}

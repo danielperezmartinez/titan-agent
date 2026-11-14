@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · monitor</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+a{color:#0a84ff}a:hover{color:#409cff}
+button,input,textarea{font-family:inherit}
+@keyframes livepulse{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes needpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,159,10,0)}50%{box-shadow:0 0 0 4px rgba(255,159,10,.25)}}
+@keyframes needblink{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes tu-opus{from{left:475px;top:79px}to{left:475px;top:207px}}
+@keyframes opus-tu{from{left:475px;top:207px}to{left:475px;top:79px}}
+@keyframes opus-impl{from{left:475px;top:303px}to{left:475px;top:411px}}
+@keyframes impl-opus{from{left:475px;top:411px}to{left:475px;top:303px}}
+@keyframes tests-opus{from{left:265px;top:255px}to{left:365px;top:255px}}
+@keyframes opus-tests{from{left:365px;top:255px}to{left:265px;top:255px}}
+@keyframes opus-sol{from{left:585px;top:255px}to{left:685px;top:255px}}
+@keyframes sol-opus{from{left:685px;top:255px}to{left:585px;top:255px}}
+</style>
+</helmet>
+<div style="width: 100%; min-height: 900px; background: #201d1d;">
+  <dc-import name="Main" inicio="monitor" hint-size="100%,900px"></dc-import>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

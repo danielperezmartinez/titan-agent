@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · ventana principal</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+a{color:#0a84ff}a:hover{color:#409cff}
+button,input,textarea{font-family:inherit}
+@keyframes livepulse{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes needpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,159,10,0)}50%{box-shadow:0 0 0 4px rgba(255,159,10,.25)}}
+@keyframes needblink{0%,100%{opacity:1}50%{opacity:.4}}
+@keyframes tu-opus{from{left:475px;top:79px}to{left:475px;top:207px}}
+@keyframes opus-tu{from{left:475px;top:207px}to{left:475px;top:79px}}
+@keyframes opus-impl{from{left:475px;top:303px}to{left:475px;top:411px}}
+@keyframes impl-opus{from{left:475px;top:411px}to{left:475px;top:303px}}
+@keyframes tests-opus{from{left:265px;top:255px}to{left:365px;top:255px}}
+@keyframes opus-tests{from{left:365px;top:255px}to{left:265px;top:255px}}
+@keyframes opus-sol{from{left:585px;top:255px}to{left:685px;top:255px}}
+@keyframes sol-opus{from{left:685px;top:255px}to{left:585px;top:255px}}
+</style>
+</helmet>
+<div style="width: 100%; min-height: 900px; box-sizing: border-box; display: flex; flex-direction: column; background: #201d1d; color: #d8d5d5; font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 14px;">
+
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 16px; min-height: 48px; border-bottom: 1px solid rgba(253,252,252,0.12);">
+    <div style="display: flex; align-items: baseline; gap: 8px; flex-grow: 1;">
+      <span style="color: #fdfcfc; font-weight: 700; font-size: 16px;">titan-agent</span>
+      <span style="color: #9a9898; font-size: 12px;">torre de control</span>
+    </div>
+    <div style="display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: #9a9898;">
+      <span><span style="color: #30d158;">[&gt;]</span> {{counts.busy}} trabajando</span>
+      <span><span style="color: #ff9f0a;">[?]</span> {{counts.need}} te necesita</span>
+      <span>[+] {{counts.idle}} en espera</span>
+    </div>
+    <button aria-label="Acerca de" style="min-height: 32px; padding: 0 4px; border: 0; background: transparent; color: #d8d5d5; cursor: pointer; font-size: 14px;">[i]</button>
+    <button aria-label="Configuración" style="min-height: 32px; padding: 0 4px; border: 0; background: transparent; color: #d8d5d5; cursor: pointer; font-size: 14px;">[*]</button>
+  </header>
+
+  <div style="display: flex; flex-wrap: wrap; flex-grow: 1; min-height: 0;">
+
+    <nav aria-label="Sesiones" style="flex: 1 1 300px; max-width: 340px; min-width: 260px; box-sizing: border-box; border-right: 1px solid rgba(253,252,252,0.12); display: flex; flex-direction: column;">
+      <div style="display: flex; flex-direction: column; gap: 8px; padding: 12px;">
+        <button onClick="{{startNew}}" aria-pressed="{{isNew}}" style="display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 12px; border: 1px solid {{newBtnBorder}}; border-radius: 4px; background: {{newBtnBg}}; color: #fdfcfc; cursor: pointer; font-size: 13px; font-weight: 500; text-align: left;">
+          <span>[+]</span><span style="flex-grow: 1;">Nueva sesión</span><span style="color: #9a9898; font-size: 11px; font-weight: 400;">ctrl+n</span>
+        </button>
+        <label style="display: flex; align-items: center; gap: 8px; padding: 0 8px; min-height: 32px; background: #302c2c; border-radius: 4px; color: #9a9898; font-size: 12px;">
+          <span aria-hidden="true">[/]</span>
+          <input aria-label="Filtrar sesiones" placeholder="filtrar por nombre, agente o proyecto" style="flex-grow: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: #d8d5d5; font-size: 12px;">
+        </label>
+        <div style="display: flex; align-items: center; justify-content: space-between; padding-top: 4px;">
+          <span style="color: #fdfcfc; font-weight: 700; font-size: 12px; letter-spacing: 0.08em;">SESIONES</span>
+          <span style="color: #9a9898; font-size: 12px;">por proyecto [v]</span>
+        </div>
+      </div>
+
+      <div style="display: flex; flex-direction: column; padding-bottom: 12px;">
+        <sc-for list="{{rows}}" as="row" hint-placeholder-count="10">
+          <sc-if value="{{row.isProject}}" hint-placeholder-val="{{false}}">
+            <button onClick="{{row.pick}}" aria-pressed="{{row.selected}}" aria-label="Monitor de {{row.name}}" style="display: flex; align-items: center; gap: 8px; width: 100%; min-height: 32px; box-sizing: border-box; margin-top: 8px; padding: 0 12px; border: 0; border-left: 2px solid {{row.selBorder}}; background: {{row.selBg}}; color: #9a9898; cursor: pointer; text-align: left; font-size: 12px;">
+              <span aria-hidden="true">[#]</span>
+              <span style="color: {{row.nameColor}}; font-weight: 500;">{{row.name}}</span>
+              <span style="flex-grow: 1; height: 1px; background: rgba(253,252,252,0.12);"></span>
+              <span style="color: {{row.liveColor}};">{{row.live}}</span>
+              <span>{{row.count}}</span>
+            </button>
+          </sc-if>
+          <sc-if value="{{row.isSession}}" hint-placeholder-val="{{true}}">
+            <button onClick="{{row.pick}}" aria-pressed="{{row.selected}}" style="display: flex; align-items: center; gap: 8px; width: 100%; min-height: 36px; box-sizing: border-box; padding: 0 12px 0 {{row.indent}}px; border: 0; border-left: 2px solid {{row.selBorder}}; background: {{row.selBg}}; color: #d8d5d5; text-align: left; cursor: pointer; font-size: 13px;">
+              <span aria-hidden="true" style="color: #6e6e73; white-space: pre;">{{row.branch}}</span>
+              <span style="color: {{row.markColor}}; white-space: pre;">{{row.mark}}</span>
+              <span style="flex-grow: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: {{row.nameColor}};">{{row.name}}</span>
+              <span style="display: inline-flex; align-items: center; gap: 4px; padding: 0 4px; border: 1px solid {{row.agentColor}}; border-radius: 4px; color: {{row.agentColor}}; font-size: 11px; line-height: 16px;">{{row.agentTag}}<span style="color: #9a9898;">{{row.model}}</span></span>
+            </button>
+          </sc-if>
+        </sc-for>
+      </div>
+
+      <div style="margin-top: auto; padding: 12px; border-top: 1px solid rgba(253,252,252,0.12); display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: #9a9898;">
+        <span><span style="color: #da8fff;">cl</span> Claude Code</span>
+        <span><span style="color: #5ac8fa;">cx</span> Codex</span>
+        <span><span style="color: #30d158;">[&gt;]</span> trabajando</span>
+        <span><span style="color: #ff9f0a;">[?]</span> te necesita</span>
+        <span>[+] en espera</span>
+        <span>[x] terminada</span>
+      </div>
+    </nav>
+
+    <main style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column;">
+
+      <sc-if value="{{isSession}}" hint-placeholder-val="{{true}}">
+        <div style="display: flex; flex-direction: column; flex-grow: 1;">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 0 16px; min-height: 40px; border-bottom: 1px solid rgba(253,252,252,0.12); font-size: 12px; color: #9a9898;">
+            <span style="color: #fdfcfc; font-weight: 700; font-size: 13px;">{{cur.name}}</span>
+            <span style="color: {{cur.markColor}};">{{cur.mark}} {{cur.stateLabel}}</span>
+            <span style="color: {{cur.agentColor}};">{{cur.agentName}} · {{cur.model}}</span>
+            <span>{{cur.cwd}}</span>
+            <span style="margin-left: auto; color: #6e6e73;">$ {{cur.attach}}</span>
+          </div>
+          <div style="flex-grow: 1; display: flex; flex-wrap: wrap; min-height: 600px;">
+            <section aria-label="Terminal" style="flex: 999 1 480px; min-width: 0; background: #161313; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; font-size: 13px; line-height: 1.45;">
+              <sc-for list="{{cur.lines}}" as="ln" hint-placeholder-count="12">
+                <div style="white-space: pre-wrap; color: {{ln.c}};">{{ln.t}}</div>
+              </sc-for>
+              <div style="margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid #646262; border-radius: 4px; color: #d8d5d5;">
+                <span style="color: #9a9898;">&gt;</span>
+                <span style="color: #9a9898;">escribe aquí: hablas directamente con el CLI oficial</span>
+                <span aria-hidden="true" style="display: inline-block; width: 8px; height: 16px; background: #0a84ff;"></span>
+              </div>
+            </section>
+
+            <aside aria-label="Detalle de la sesión" style="flex: 1 1 260px; max-width: 320px; box-sizing: border-box; padding: 16px; border-left: 1px solid rgba(253,252,252,0.12); display: flex; flex-direction: column; gap: 16px; font-size: 12px;">
+              <span style="color: #9a9898; letter-spacing: 0.08em;">DETALLE</span>
+              <dl style="margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px;">
+                <dt style="color: #9a9898;">proyecto</dt><dd style="margin: 0;">{{cur.project}}</dd>
+                <dt style="color: #9a9898;">rol</dt><dd style="margin: 0;">{{cur.role}}</dd>
+                <dt style="color: #9a9898;">lanzada por</dt><dd style="margin: 0;">{{cur.parent}}</dd>
+                <dt style="color: #9a9898;">estado desde</dt><dd style="margin: 0;">{{cur.since}}</dd>
+              </dl>
+              <div style="display: flex; flex-direction: column; gap: 8px;">
+                <span style="color: #9a9898; letter-spacing: 0.08em;">HABLA CON</span>
+                <sc-for list="{{cur.talks}}" as="tk" hint-placeholder-count="2">
+                  <div style="display: flex; flex-direction: column; gap: 2px; padding: 8px; background: #302c2c; border-radius: 4px;">
+                    <span><span style="color: #9a9898;">{{tk.dir}}</span> <span style="color: {{tk.color}};">{{tk.who}}</span></span>
+                    <span style="color: #9a9898;">{{tk.what}}</span>
+                  </div>
+                </sc-for>
+                <button onClick="{{openCurMonitor}}" style="align-self: flex-start; padding: 0; border: 0; background: transparent; color: #0a84ff; cursor: pointer; font-size: 12px;">[&gt;] ver el monitor del proyecto</button>
+              </div>
+              <div style="margin-top: auto; display: flex; flex-wrap: wrap; gap: 8px;">
+                <button style="min-height: 32px; padding: 0 12px; border: 1px solid #646262; border-radius: 4px; background: transparent; color: #d8d5d5; cursor: pointer; font-size: 12px;">[d] abrir carpeta</button>
+                <button style="min-height: 32px; padding: 0 12px; border: 1px solid #ff453a; border-radius: 4px; background: transparent; color: #ff453a; cursor: pointer; font-size: 12px;">[x] detener</button>
+              </div>
+            </aside>
+          </div>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isMonitor}}" hint-placeholder-val="{{false}}">
+        <div style="display: flex; flex-direction: column; flex-grow: 1;">
+          <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 4px 16px; min-height: 40px; border-bottom: 1px solid rgba(253,252,252,0.12); font-size: 12px; color: #9a9898;">
+            <span style="color: #fdfcfc; font-weight: 700; font-size: 13px;">[#] {{mon.project}}</span>
+            <span>{{mon.subtitle}}</span>
+            <sc-if value="{{mon.hasTeam}}" hint-placeholder-val="{{true}}">
+              <span style="color: #30d158;"><span style="animation: livepulse 1.6s ease-in-out infinite;">[*]</span> en vivo</span>
+            </sc-if>
+            <div role="tablist" aria-label="Vista del monitor" style="margin-left: auto; display: flex; gap: 4px;">
+              <sc-for list="{{views}}" as="v" hint-placeholder-count="3">
+                <button role="tab" onClick="{{v.pick}}" aria-selected="{{v.selected}}" style="min-height: 30px; padding: 0 12px; border: 1px solid {{v.border}}; border-radius: 4px; background: {{v.bg}}; color: {{v.text}}; cursor: pointer; font-size: 12px;">{{v.label}}</button>
+              </sc-for>
+            </div>
+          </div>
+          <sc-if value="{{mon.hasTeam}}" hint-placeholder-val="{{true}}">
+            <div style="flex-grow: 1; display: flex; flex-direction: column;">
+              <sc-if value="{{viewGrafo}}" hint-placeholder-val="{{true}}">
+                <dc-import name="MonitorA" hint-size="100%,820px"></dc-import>
+              </sc-if>
+              <sc-if value="{{viewCarriles}}" hint-placeholder-val="{{false}}">
+                <dc-import name="MonitorB" hint-size="100%,820px"></dc-import>
+              </sc-if>
+              <sc-if value="{{viewMesa}}" hint-placeholder-val="{{false}}">
+                <dc-import name="MonitorC" hint-size="100%,820px"></dc-import>
+              </sc-if>
+            </div>
+          </sc-if>
+          <sc-if value="{{mon.noTeam}}" hint-placeholder-val="{{false}}">
+            <div style="flex-grow: 1; min-height: 640px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: #161313; text-align: center;">
+              <span style="color: #fdfcfc; font-size: 20px; font-weight: 700;">Sin equipo trabajando en {{mon.project}}</span>
+              <span style="color: #9a9898; font-size: 13px;">El monitor se anima cuando las sesiones del proyecto se encargan trabajo entre ellas.</span>
+              <span style="color: #9a9898; font-size: 13px;">Sesiones sueltas: {{mon.loose}}</span>
+            </div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{isNew}}" hint-placeholder-val="{{false}}">
+        <section aria-label="Nueva sesión" style="flex-grow: 1; min-height: 640px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; padding: 16px; background: #161313;">
+          <div style="flex-grow: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 48px 0;">
+            <span style="color: #fdfcfc; font-size: 28px; font-weight: 700;">Nueva sesión</span>
+            <span style="color: #9a9898; font-size: 13px;">en <span style="color: #d8d5d5;">[#] {{nw.project}}</span> con <span style="color: {{nw.agentColor}};">{{nw.agentName}}</span></span>
+          </div>
+
+          <div style="width: 100%; max-width: 820px; display: flex; flex-direction: column; gap: 8px;">
+            <sc-if value="{{menuOpen}}" hint-placeholder-val="{{false}}">
+              <div role="listbox" aria-label="{{menuTitle}}" style="display: flex; flex-direction: column; gap: 2px; padding: 8px; background: #3a3636; border: 1px solid #646262; border-radius: 4px; font-size: 12px;">
+                <span style="color: #9a9898; padding: 4px 8px;">{{menuTitle}}</span>
+                <sc-for list="{{menuItems}}" as="mi" hint-placeholder-count="3">
+                  <button role="option" onClick="{{mi.pick}}" aria-selected="{{mi.selected}}" style="display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 8px; border: 0; border-radius: 4px; background: {{mi.bg}}; color: {{mi.text}}; cursor: pointer; text-align: left; font-size: 12px;">
+                    <span style="color: #0a84ff; width: 32px;">{{mi.check}}</span>
+                    <span style="color: {{mi.tagColor}};">{{mi.tag}}</span>
+                    <span style="flex-grow: 1;">{{mi.label}}</span>
+                    <span style="color: #9a9898;">{{mi.hint}}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </sc-if>
+
+            <div style="display: flex; flex-direction: column; border: 1px solid #0a84ff; border-radius: 4px; background: #201d1d;">
+              <label style="display: flex; flex-direction: column;">
+                <span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0);">Encargo</span>
+                <textarea onChange="{{setBrief}}" rows="4" placeholder="Escribe el encargo. titan-agent no lo completa ni lo reescribe." style="padding: 12px; border: 0; outline: 0; background: transparent; color: #d8d5d5; font-size: 13px; line-height: 1.45; resize: none;"></textarea>
+              </label>
+              <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 8px; border-top: 1px solid rgba(253,252,252,0.12);">
+                <sc-for list="{{chips}}" as="ch" hint-placeholder-count="5">
+                  <button onClick="{{ch.toggle}}" aria-expanded="{{ch.open}}" aria-label="{{ch.aria}}" style="display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; border: 1px solid {{ch.border}}; border-radius: 4px; background: transparent; color: #d8d5d5; cursor: pointer; font-size: 12px;">
+                    <span style="color: {{ch.tagColor}};">{{ch.tag}}</span>{{ch.label}}<span style="color: #9a9898;">[v]</span>
+                  </button>
+                </sc-for>
+                <button onClick="{{launch}}" style="margin-left: auto; display: inline-flex; align-items: center; min-height: 32px; padding: 0 16px; border: 1px solid #0a84ff; border-radius: 4px; background: #3a3636; color: #fdfcfc; cursor: pointer; font-size: 13px; font-weight: 500;">[ok] lanzar</button>
+              </div>
+            </div>
+
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; padding: 0 4px; font-size: 11px; color: #9a9898;">
+              <span style="color: #6e6e73;">se ejecutará</span>
+              <code style="font-family: inherit; color: #9a9898; word-break: break-word;">{{command}}</code>
+            </div>
+          </div>
+        </section>
+      </sc-if>
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"inicio":{"editor":"enum","options":["sesion","nueva","monitor"],"default":"sesion"},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    var inicio = props && props.inicio;
+    this.state = {
+      sel: inicio === 'nueva' ? 'new' : (inicio === 'monitor' ? 'p:titan-ssh' : 'dir'),
+      view: 'grafo',
+      menu: null,
+      extra: [],
+      nw: { agent: 'cl', model: { cl: 'opus', cx: 'gpt-6-luna' }, effort: 'high', perm: { cl: 'default', cx: 'workspace-write' }, project: 'titan-ssh' },
+      brief: ''
+    };
+  }
+  data() {
+    var CL = '#da8fff', CX = '#5ac8fa';
+    var dim = '#9a9898', ink = '#fdfcfc', body = '#d8d5d5', ok = '#30d158', warn = '#ffb340', cy = '#8fe0ff';
+    var projects = [
+      { name: 'titan-ssh', cwd: '~/dev/apps/titan-ssh', sessions: [
+        { id: 'dir', name: 'sftp-renombrar: titan-ssh', agent: 'cl', model: 'opus', st: 'busy', depth: 0, role: 'director', parent: 'tú', since: 'hace 12 min', cwd: '~/dev/apps/titan-ssh', attach: 'claude attach 5e21c0a4',
+          talks: [
+            { dir: 'encarga a', who: 'luna · implementador', color: CX, what: 'implementar el renombrado en SFTP' },
+            { dir: 'encarga a', who: 'luna · tests', color: CX, what: 'tests a partir del mismo encargo' },
+            { dir: 'recibe de', who: 'sol · revisor', color: CX, what: 'informe ronda 1: changes_requested' }
+          ],
+          lines: [
+            { t: '> pásalo por el equipo: renombrar ficheros y carpetas en la sesión SFTP', c: ink },
+            { t: '', c: body },
+            { t: '* Encargo redactado en docs/encargos/sftp-renombrar.md', c: body },
+            { t: '* team ask disenador_tests sftp-renombrar     -> luna   [ok] 7 tests', c: body },
+            { t: '* team ask implementador sftp-renombrar       -> luna   [ok] 7/7 pasan', c: body },
+            { t: '* team ask revisor sftp-renombrar --diff      -> sol    changes_requested', c: warn },
+            { t: '    1. el nombre nuevo no se valida contra "/" ni ".."', c: dim },
+            { t: '    2. falta el caso de destino existente', c: dim },
+            { t: '', c: body },
+            { t: 'Acepto los dos hallazgos. Pido a Luna la corrección (ronda 2 de 3).', c: body },
+            { t: '* team ask implementador sftp-renombrar -m "Corrige: ..."', c: body },
+            { t: '    luna trabajando... 38 s', c: ok }
+          ] },
+        { id: 'tests', name: 'tests · sftp-renombrar', agent: 'cx', model: 'luna', st: 'done', depth: 1, role: 'diseñador de tests', parent: 'sftp-renombrar (opus)', since: 'hace 9 min', cwd: 'worktree encargo/sftp-renombrar', attach: 'codex resume 0b7c4d10',
+          talks: [ { dir: 'recibe de', who: 'opus · director', color: CL, what: 'encargo sin ver la implementación' } ],
+          lines: [
+            { t: 'codex  gpt-6-luna  medium  workspace-write', c: dim },
+            { t: '', c: body },
+            { t: 'user  Diseña los tests del encargo adjunto. No mires la implementación.', c: ink },
+            { t: '', c: body },
+            { t: 'codex  Añadidos 7 tests en tests/sftp/rename_test.rs:', c: cy },
+            { t: '       renombra_fichero, renombra_carpeta, rechaza_barra,', c: body },
+            { t: '       rechaza_punto_punto, destino_existente, sin_permiso, unicode', c: body },
+            { t: '', c: body },
+            { t: '[x] turno terminado · 28 s · team: disenador_tests turno 1', c: dim }
+          ] },
+        { id: 'impl', name: 'implementador · sftp-renombrar', agent: 'cx', model: 'luna', st: 'busy', depth: 1, role: 'implementador', parent: 'sftp-renombrar (opus)', since: 'hace 1 min', cwd: 'worktree encargo/sftp-renombrar', attach: 'codex resume 0b7c4d11',
+          talks: [ { dir: 'recibe de', who: 'opus · director', color: CL, what: 'ronda 2: corrige los hallazgos 1 y 2' } ],
+          lines: [
+            { t: 'codex  gpt-6-luna  medium  workspace-write', c: dim },
+            { t: '', c: body },
+            { t: 'user  Corrige: valida el nombre nuevo contra "/" y ".." y trata el destino existente.', c: ink },
+            { t: '', c: body },
+            { t: 'codex  Leo shared/src/sftp/rename.rs y los tests nuevos.', c: cy },
+            { t: '       Añado validate_entry_name() y compruebo exists() antes de rename.', c: body },
+            { t: '  $ cargo test -p shared sftp::rename', c: dim },
+            { t: '    running 7 tests ... 6 passed, 1 running', c: ok }
+          ] },
+        { id: 'rev', name: 'revisor · sftp-renombrar', agent: 'cx', model: 'sol', st: 'idle', depth: 1, role: 'revisor', parent: 'sftp-renombrar (opus)', since: 'hace 4 min', cwd: 'worktree encargo/sftp-renombrar', attach: 'codex resume 0b7c4d12',
+          talks: [ { dir: 'informa a', who: 'opus · director', color: CL, what: 'ronda 1: 2 hallazgos, tests correctos' } ],
+          lines: [
+            { t: 'codex  gpt-6.1-sol  high  read-only', c: dim },
+            { t: '', c: body },
+            { t: 'verdict: changes_requested', c: warn },
+            { t: 'summary: falta validar el nombre y el destino existente', c: body },
+            { t: 'tests_assessment: fieles al encargo, cubren los casos pedidos', c: body },
+            { t: '', c: body },
+            { t: '[+] esperando la ronda 2', c: dim }
+          ] },
+        { id: 'and', name: 'android-plugin: titan-ssh', agent: 'cl', model: 'sonnet', st: 'idle', depth: 0, role: 'sesión suelta', parent: 'tú', since: 'hace 2 h', cwd: '~/dev/apps/titan-ssh', attach: 'claude attach 8a43f2b9',
+          talks: [], lines: [ { t: '[+] sesión en espera. Escribe para continuar.', c: dim } ] }
+      ] },
+      { name: 'titan-agent', cwd: '~/dev/apps/titan-agent', sessions: [
+        { id: 'dis', name: 'diseño: titan-agent', agent: 'cl', model: 'opus', st: 'need', depth: 0, role: 'diseño', parent: 'control (opus)', since: 'hace 3 min', cwd: '~/dev/apps/titan-agent', attach: 'claude attach c61d0e57',
+          talks: [ { dir: 'lanzada por', who: 'control · opus', color: CL, what: 'sesión de diseño de titan-agent' } ],
+          lines: [
+            { t: '* Previa visual actualizada en el lienzo.', c: body },
+            { t: '', c: body },
+            { t: '? ¿Te encaja la nueva sesión dentro de la ventana principal?', c: warn },
+            { t: '  1. Me vale', c: body },
+            { t: '  2. Ajustar algo', c: body }
+          ] }
+      ] },
+      { name: 'control', cwd: '~/dev/control', sessions: [
+        { id: 'ctl', name: 'control', agent: 'cl', model: 'opus', st: 'idle', depth: 0, role: 'sesión de control', parent: 'tú', since: 'hace 40 min', cwd: '~/dev/control', attach: 'claude attach f30a9e66',
+          talks: [ { dir: 'lanzó a', who: 'diseño: titan-agent', color: CL, what: 'claude --bg en ~/dev/apps/titan-agent' } ],
+          lines: [ { t: '[+] sesión en espera. Escribe para continuar.', c: dim } ] }
+      ] }
+    ];
+    return { projects: projects, CL: CL, CX: CX };
+  }
+  renderVals() {
+    var self = this, s = this.state, d = this.data();
+    var ST = {
+      busy: { mark: '[>]', color: '#30d158', label: 'trabajando' },
+      need: { mark: '[?]', color: '#ff9f0a', label: 'te necesita' },
+      idle: { mark: '[+]', color: '#9a9898', label: 'en espera' },
+      done: { mark: '[x]', color: '#9a9898', label: 'terminada' }
+    };
+    var MODELS = { cl: ['opus', 'sonnet', 'haiku'], cx: ['gpt-6-luna', 'gpt-6.1-sol', 'gpt-6.1-terra'] };
+    var PERMS = { cl: ['default', 'plan', 'acceptEdits'], cx: ['read-only', 'workspace-write'] };
+    var EFFORTS = ['low', 'medium', 'high', 'xhigh'];
+    var nw = s.nw, ag = nw.agent;
+
+    var rows = [], all = {}, counts = { busy: 0, need: 0, idle: 0 };
+    d.projects.forEach(function (p) {
+      var list = s.extra.filter(function (x) { return x.project === p.name; }).concat(p.sessions);
+      var pSel = s.sel === 'p:' + p.name;
+      var team = list.some(function (x) { return x.depth === 1; });
+      rows.push({ isProject: true, isSession: false, name: p.name, count: String(list.length),
+        live: team ? '[*]' : '', liveColor: '#30d158',
+        selected: pSel, selBg: pSel ? '#302c2c' : 'transparent', selBorder: pSel ? '#0a84ff' : 'transparent', nameColor: pSel ? '#fdfcfc' : '#d8d5d5',
+        pick: function () { self.setState({ sel: 'p:' + p.name, menu: null }); } });
+      list.forEach(function (x, i) {
+        var st = ST[x.st];
+        if (counts[x.st] !== undefined) counts[x.st] += 1;
+        var next = list[i + 1];
+        var lastChild = x.depth === 1 && (!next || next.depth === 0);
+        var sel = s.sel === x.id;
+        var agentColor = x.agent === 'cl' ? d.CL : d.CX;
+        all[x.id] = Object.assign({}, x, { project: p.name, mark: st.mark, markColor: st.color, stateLabel: st.label, agentColor: agentColor, agentName: x.agent === 'cl' ? 'Claude Code' : 'Codex' });
+        rows.push({
+          isProject: false, isSession: true, name: x.name, mark: st.mark, markColor: st.color,
+          branch: x.depth === 0 ? '' : (lastChild ? '`-' : '|-'), indent: x.depth === 0 ? 12 : 20,
+          agentTag: x.agent, model: x.model, agentColor: agentColor,
+          nameColor: x.st === 'done' ? '#9a9898' : '#d8d5d5',
+          selected: sel, selBg: sel ? '#302c2c' : 'transparent', selBorder: sel ? '#0a84ff' : 'transparent',
+          pick: function () { self.setState({ sel: x.id, menu: null }); }
+        });
+      });
+    });
+
+    var proj = d.projects.filter(function (p) { return p.name === nw.project; })[0];
+    var model = nw.model[ag], perm = nw.perm[ag];
+    function setNw(patch) { self.setState({ nw: Object.assign({}, nw, patch), menu: null }); }
+    var MENUS = {
+      agent: { title: 'agente', items: [
+        { v: 'cl', tag: 'cl', tagColor: d.CL, label: 'Claude Code', hint: 'claude --bg', pick: function () { setNw({ agent: 'cl' }); } },
+        { v: 'cx', tag: 'cx', tagColor: d.CX, label: 'Codex', hint: 'TUI de codex', pick: function () { setNw({ agent: 'cx' }); } }
+      ], cur: ag },
+      model: { title: 'modelo', items: MODELS[ag].map(function (m) { return { v: m, label: m, hint: '', pick: function () { var o = Object.assign({}, nw.model); o[ag] = m; setNw({ model: o }); } }; }), cur: model },
+      effort: { title: 'esfuerzo', items: EFFORTS.map(function (e) { return { v: e, label: e, hint: '', pick: function () { setNw({ effort: e }); } }; }), cur: nw.effort },
+      perm: { title: ag === 'cl' ? 'modo de permisos' : 'sandbox', items: PERMS[ag].map(function (p) { return { v: p, label: p, hint: '', pick: function () { var o = Object.assign({}, nw.perm); o[ag] = p; setNw({ perm: o }); } }; }), cur: perm },
+      project: { title: 'proyecto (carpeta de trabajo)', items: d.projects.map(function (p) { return { v: p.name, tag: '[#]', tagColor: '#9a9898', label: p.name, hint: p.cwd, pick: function () { setNw({ project: p.name }); } }; }).concat([{ v: '_', tag: '[d]', tagColor: '#0a84ff', label: 'elegir otra carpeta…', hint: '', pick: function () { self.setState({ menu: null }); } }]), cur: nw.project }
+    };
+    function chip(key, tag, tagColor, label, aria) {
+      var open = s.menu === key;
+      return { tag: tag, tagColor: tagColor, label: label, aria: aria, open: open, border: open ? '#0a84ff' : 'rgba(253,252,252,0.12)',
+        toggle: function () { self.setState({ menu: open ? null : key }); } };
+    }
+    var chips = [
+      chip('agent', ag, ag === 'cl' ? d.CL : d.CX, ag === 'cl' ? 'Claude Code' : 'Codex', 'Agente'),
+      chip('model', '', '#9a9898', model, 'Modelo'),
+      chip('effort', '', '#9a9898', nw.effort, 'Esfuerzo'),
+      chip('perm', '', '#9a9898', perm, ag === 'cl' ? 'Modo de permisos' : 'Sandbox'),
+      chip('project', '[#]', '#9a9898', nw.project, 'Proyecto')
+    ];
+    var menu = s.menu ? MENUS[s.menu] : null;
+    var menuItems = menu ? menu.items.map(function (it) {
+      var sel = it.v === menu.cur;
+      return { tag: it.tag || '', tagColor: it.tagColor || '#9a9898', label: it.label, hint: it.hint, check: sel ? '[ok]' : '', selected: sel, bg: sel ? '#302c2c' : 'transparent', text: sel ? '#fdfcfc' : '#d8d5d5', pick: it.pick };
+    }) : [];
+
+    var briefShown = s.brief ? '"' + s.brief.replace(/"/g, '\\"') + '"' : '"<tu encargo>"';
+    var command = 'cd ' + proj.cwd + ' && ' + (ag === 'cl'
+      ? 'claude --bg --model ' + model + ' --effort ' + nw.effort + ' --permission-mode ' + perm + ' ' + briefShown
+      : 'codex -m ' + model + ' -c model_reasoning_effort=' + nw.effort + ' -s ' + perm + ' ' + briefShown);
+
+    var isNew = s.sel === 'new';
+    var isMonitor = s.sel.indexOf('p:') === 0;
+    var curSession = all[s.sel] || all.dir;
+    var monName = isMonitor ? s.sel.slice(2) : curSession.project;
+    var monProj = d.projects.filter(function (p) { return p.name === monName; })[0];
+    var hasTeam = monProj.sessions.some(function (x) { return x.depth === 1; });
+    var mon = { project: monName, hasTeam: hasTeam, noTeam: !hasTeam,
+      subtitle: hasTeam ? 'encargo sftp-renombrar · ronda 2 de 3 · 4 agentes' : monProj.sessions.length + ' sesión(es), ninguna en equipo',
+      loose: monProj.sessions.map(function (x) { return x.name; }).join(', ') };
+    var views = [['grafo', 'grafo'], ['carriles', 'carriles'], ['mesa', 'mesa de control']].map(function (v) {
+      var sel = s.view === v[0];
+      return { label: v[1], selected: sel, border: sel ? '#0a84ff' : 'rgba(253,252,252,0.12)', bg: sel ? '#3a3636' : 'transparent', text: sel ? '#fdfcfc' : '#9a9898',
+        pick: function () { self.setState({ view: v[0] }); } };
+    });
+    return {
+      rows: rows, counts: counts, cur: curSession,
+      isNew: isNew, isMonitor: isMonitor, isSession: !isNew && !isMonitor,
+      mon: mon, views: views, viewGrafo: s.view === 'grafo', viewCarriles: s.view === 'carriles', viewMesa: s.view === 'mesa',
+      openCurMonitor: function () { self.setState({ sel: 'p:' + curSession.project, menu: null }); },
+      newBtnBg: isNew ? '#302c2c' : '#3a3636', newBtnBorder: isNew ? '#0a84ff' : '#646262',
+      startNew: function () { self.setState({ sel: 'new', menu: null }); },
+      nw: { project: nw.project, agentName: ag === 'cl' ? 'Claude Code' : 'Codex', agentColor: ag === 'cl' ? d.CL : d.CX },
+      chips: chips, menuOpen: !!menu, menuTitle: menu ? menu.title : '', menuItems: menuItems,
+      command: command,
+      setBrief: function (e) { self.setState({ brief: e && e.target ? e.target.value : '' }); },
+      launch: function () {
+        var n = s.extra.length + 1, id = 'n' + n;
+        var text = s.brief || 'Encargo de prueba';
+        var title = text.split(/\s+/).slice(0, 4).join(' ').toLowerCase();
+        var x = { id: id, project: nw.project, name: title, agent: ag, model: ag === 'cl' ? model : model.replace('gpt-6-', '').replace('gpt-6.1-', ''), st: 'busy', depth: 0, role: 'sesión suelta', parent: 'tú (titan-agent)', since: 'ahora', cwd: proj.cwd,
+          attach: ag === 'cl' ? 'claude attach ' + (9000 + n) : 'codex resume ' + (9000 + n), talks: [],
+          lines: [ { t: '$ ' + command, c: '#9a9898' }, { t: '', c: '#d8d5d5' }, { t: '> ' + text, c: '#fdfcfc' }, { t: '', c: '#d8d5d5' }, { t: '  trabajando...', c: '#30d158' } ] };
+        self.setState({ extra: [x].concat(s.extra), sel: id, menu: null, brief: '' });
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>

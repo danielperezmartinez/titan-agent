@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · monitor B · carriles</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+a{color:#0a84ff}a:hover{color:#409cff}
+@keyframes livepulse{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes needblink{0%,100%{opacity:1}50%{opacity:.4}}
+</style>
+</helmet>
+<div style="width: 100%; min-height: 820px; box-sizing: border-box; display: flex; flex-direction: column; background: #161313; color: #d8d5d5; font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 14px;">
+
+  <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 24px; padding: 24px 16px; background: #161313;">
+
+    <div style="display: flex; flex-direction: column; gap: 4px;">
+      <span style="color: #9a9898; font-size: 12px; letter-spacing: 0.08em;">AHORA</span>
+      <span style="color: #fdfcfc; font-size: 20px; font-weight: 700;">{{now.text}}</span>
+    </div>
+
+    <div style="display: flex; overflow-x: auto; border: 1px solid rgba(253,252,252,0.12); background: #201d1d;">
+      <div style="flex: 0 0 240px; display: flex; flex-direction: column; border-right: 1px solid rgba(253,252,252,0.12);">
+        <sc-for list="{{lanes}}" as="l" hint-placeholder-count="5">
+          <div style="height: 72px; box-sizing: border-box; padding: 10px 12px; border-bottom: 1px solid rgba(253,252,252,0.08); display: flex; flex-direction: column; justify-content: center; gap: 4px;">
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px;">
+              <span style="color: {{l.agentColor}};">{{l.tag}}</span>
+              <span style="color: #fdfcfc; font-weight: 700;">{{l.title}}</span>
+              <span style="color: #9a9898; font-size: 11px; flex-grow: 1;">{{l.sub}}</span>
+              <span style="color: {{l.markColor}}; white-space: pre;">{{l.mark}}</span>
+            </div>
+            <span style="font-size: 12px; color: {{l.actColor}}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{l.act}}</span>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="position: relative; flex: 1 0 800px; height: 360px; overflow: hidden;">
+        <sc-for list="{{lanes}}" as="l" hint-placeholder-count="5">
+          <div style="position: absolute; left: 0; right: 0; top: {{l.y}}px; height: 72px; border-bottom: 1px solid rgba(253,252,252,0.08);"></div>
+        </sc-for>
+        <div style="position: absolute; right: -40px; top: 0; width: 880px; height: 360px; transform: translateX(-{{offset}}px); transition: transform 300ms linear;">
+          <sc-for list="{{bars}}" as="b" hint-placeholder-count="10">
+            <div style="position: absolute; left: {{b.x}}px; top: {{b.y}}px; width: {{b.w}}px; height: 22px; box-sizing: border-box; background: {{b.bg}}; border-top: 2px solid {{b.line}}; animation: {{b.anim}};"></div>
+          </sc-for>
+          <sc-for list="{{links}}" as="k" hint-placeholder-count="6">
+            <div style="position: absolute; left: {{k.x}}px; top: {{k.y}}px; width: 2px; height: {{k.h}}px; background: {{k.color}};"></div>
+            <div style="position: absolute; left: {{k.dx}}px; top: {{k.dy}}px; width: 10px; height: 10px; border-radius: 9999px; background: {{k.color}};"></div>
+            <span style="position: absolute; left: {{k.ax}}px; top: {{k.ay}}px; font-size: 11px; color: {{k.color}};">{{k.arrow}}</span>
+          </sc-for>
+        </div>
+        <div aria-hidden="true" style="position: absolute; right: 40px; top: 0; bottom: 0; width: 1px; background: #0a84ff;"></div>
+        <span style="position: absolute; right: 46px; top: 4px; font-size: 11px; color: #0a84ff;">ahora</span>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-wrap: wrap; gap: 24px; font-size: 12px; color: #9a9898;">
+      <span><span style="display: inline-block; width: 24px; height: 10px; background: rgba(48,209,88,0.28); border-top: 2px solid #30d158; vertical-align: middle;"></span> trabajando</span>
+      <span><span style="display: inline-block; width: 2px; height: 14px; background: #da8fff; vertical-align: middle;"></span> mensaje (color de quien envía; el punto marca a quien llega)</span>
+      <span><span style="display: inline-block; width: 24px; height: 10px; background: rgba(255,159,10,0.28); border-top: 2px solid #ff9f0a; vertical-align: middle;"></span> te necesita</span>
+      <span>el tiempo corre hacia la izquierda · clic en un carril: abre su sesión</span>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1100,"height":820}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { tick: 96 }; }
+  componentDidMount() { var self = this; this.timer = setInterval(function () { self.setState({ tick: self.state.tick + 1 }); }, 300); }
+  componentWillUnmount() { clearInterval(this.timer); }
+  renderVals() {
+    var CL = '#da8fff', CX = '#5ac8fa';
+    var STEPS = [
+      { work: ['opus'], act: { opus: 'redacta el encargo de la ronda 2' }, ev: 'opus redacta el encargo de la ronda 2' },
+      { msg: ['opus', 'tests', 'añade un caso'], ev: 'opus -> luna·tests: añade un caso' },
+      { work: ['tests'], act: { tests: 'escribe destino_existente' }, ev: 'luna·tests escribe el test' },
+      { msg: ['tests', 'opus', '+1 test'], ev: 'luna·tests -> opus: [ok] +1 test' },
+      { msg: ['opus', 'impl', 'corrige 1 y 2'], ev: 'opus -> luna·impl: corrige los hallazgos' },
+      { work: ['impl'], act: { impl: 'cargo test   6/8' }, ev: 'luna·impl corrige · cargo test 6/8' },
+      { msg: ['impl', 'opus', '8/8 pasan'], ev: 'luna·impl -> opus: [ok] 8/8 pasan' },
+      { msg: ['opus', 'sol', 'revisa'], ev: 'opus -> sol: revisa el diff y los tests' },
+      { work: ['sol'], act: { sol: 'lee el diff · 412 líneas' }, ev: 'sol revisa el diff' },
+      { msg: ['sol', 'opus', 'changes_requested'], ev: 'sol -> opus: changes_requested (1 hallazgo)' },
+      { work: ['opus'], act: { opus: 'analiza el informe' }, ev: 'opus analiza el informe de sol' },
+      { msg: ['opus', 'tu', '¿acepto?'], need: 'opus', ev: 'opus te necesita: ¿acepta el hallazgo?' }
+    ];
+    var ORDER = ['tu', 'opus', 'tests', 'impl', 'sol'];
+    var INFO = {
+      tu: { title: 'tú', tag: '  ', agentColor: '#fdfcfc', sub: 'usuario' },
+      opus: { title: 'opus', tag: 'cl', agentColor: CL, sub: 'director' },
+      tests: { title: 'luna', tag: 'cx', agentColor: CX, sub: 'tests' },
+      impl: { title: 'luna', tag: 'cx', agentColor: CX, sub: 'implementador' },
+      sol: { title: 'sol', tag: 'cx', agentColor: CX, sub: 'revisor' }
+    };
+    var LANE_H = 72, COL = 80, COLS = 11;
+    var tick = this.state.tick;
+    var idx = Math.floor(tick / 8);
+    var cur = STEPS[idx % STEPS.length];
+    var spin = ['|', '/', '-', '\\'][tick % 4];
+    var bars = [], links = [];
+    for (var c = 0; c < COLS; c++) {
+      var sIdx = idx - (COLS - 1 - c);
+      if (sIdx < 0) continue;
+      var st = STEPS[sIdx % STEPS.length];
+      (st.work || []).forEach(function (k) {
+        bars.push({ x: c * COL + 2, y: ORDER.indexOf(k) * LANE_H + 25, w: COL - 4, bg: 'rgba(48,209,88,0.28)', line: '#30d158', anim: 'none' });
+      });
+      if (st.need) {
+        bars.push({ x: c * COL + 2, y: ORDER.indexOf(st.need) * LANE_H + 25, w: COL - 4, bg: 'rgba(255,159,10,0.28)', line: '#ff9f0a', anim: c === COLS - 1 ? 'needblink 1.2s ease-in-out infinite' : 'none' });
+      }
+      if (st.msg) {
+        var a = ORDER.indexOf(st.msg[0]), b = ORDER.indexOf(st.msg[1]);
+        var color = INFO[st.msg[0]].agentColor;
+        var y1 = Math.min(a, b) * LANE_H + 36, y2 = Math.max(a, b) * LANE_H + 36;
+        var x = c * COL + COL / 2;
+        var down = b > a;
+        links.push({ x: x - 1, y: y1, h: y2 - y1, color: color,
+          dx: x - 5, dy: (down ? y2 : y1) - 5,
+          ax: x + 6, ay: (down ? y1 : y2) - 6, arrow: st.msg[2] });
+      }
+    }
+    var lanes = ORDER.map(function (k, i) {
+      var n = INFO[k];
+      var mark = '[+]', markColor = '#9a9898', act = 'en espera', actColor = '#9a9898';
+      if ((cur.work || []).indexOf(k) >= 0) { mark = '[>] ' + spin; markColor = '#30d158'; act = cur.act[k]; actColor = '#d8d5d5'; }
+      if (cur.msg && cur.msg[0] === k) { mark = '[>]'; markColor = n.agentColor; act = 'envía: ' + cur.msg[2]; actColor = '#d8d5d5'; }
+      if (cur.msg && cur.msg[1] === k) { act = 'recibe: ' + cur.msg[2]; actColor = '#d8d5d5'; }
+      if (cur.need === k) { mark = '[?]'; markColor = '#ff9f0a'; act = 'te necesita'; actColor = '#ffb340'; }
+      if (k === 'tu') { act = cur.msg && cur.msg[1] === 'tu' ? 'te piden una decisión' : ''; }
+      return { title: n.title, tag: n.tag, agentColor: n.agentColor, sub: n.sub, mark: mark, markColor: markColor, act: act, actColor: actColor, y: i * LANE_H };
+    });
+    var offset = Math.round(((tick % 8) / 8) * COL);
+    return { lanes: lanes, bars: bars, links: links, offset: offset, now: { text: cur.ev } };
+  }
+}
+</script>
+</body>
+</html>

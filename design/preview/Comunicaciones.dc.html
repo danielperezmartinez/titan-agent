@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · comunicaciones</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+a{color:#0a84ff}a:hover{color:#409cff}
+</style>
+</helmet>
+<div style="width: 100%; min-height: 900px; box-sizing: border-box; display: flex; flex-direction: column; background: #201d1d; color: #d8d5d5; font-family: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace; font-size: 14px;">
+
+  <header style="display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 0 16px; min-height: 48px; border-bottom: 1px solid rgba(253,252,252,0.12);">
+    <a href="Main.dc.html" style="text-decoration: none; color: #d8d5d5;">[&lt;] sesiones</a>
+    <span style="color: #fdfcfc; font-weight: 700; font-size: 16px; flex-grow: 1;">Comunicaciones</span>
+    <span style="font-size: 12px; color: #9a9898;">proyecto</span>
+    <span style="padding: 4px 8px; border: 1px solid #646262; border-radius: 4px; font-size: 12px;">[#] titan-ssh [v]</span>
+    <span style="font-size: 12px; color: #9a9898;">encargo</span>
+    <span style="padding: 4px 8px; border: 1px solid #646262; border-radius: 4px; font-size: 12px;">sftp-renombrar [v]</span>
+  </header>
+
+  <div style="display: flex; flex-wrap: wrap; flex-grow: 1;">
+
+    <section aria-label="Equipo" style="flex: 1 1 320px; max-width: 400px; box-sizing: border-box; padding: 16px; border-right: 1px solid rgba(253,252,252,0.12); display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; flex-direction: column; gap: 4px;">
+        <span style="color: #9a9898; font-size: 12px; letter-spacing: 0.08em;">EQUIPO DEL PROYECTO</span>
+        <span style="color: #9a9898; font-size: 12px;">leído de .agents/team.toml</span>
+      </div>
+      <pre style="margin: 0; padding: 12px; background: #161313; border-radius: 0; font-family: inherit; font-size: 12px; line-height: 1.6; color: #d8d5d5; white-space: pre; overflow-x: auto;"><span style="color: #da8fff;">opus</span> director --+-- <span style="color: #5ac8fa;">luna</span> tests     <span style="color: #9a9898;">[x]</span>
+                 +-- <span style="color: #5ac8fa;">luna</span> implem.   <span style="color: #30d158;">[&gt;]</span>
+                 +-- <span style="color: #5ac8fa;">sol</span>  revisor   <span style="color: #9a9898;">[+]</span></pre>
+      <div style="display: flex; flex-direction: column; gap: 8px;">
+        <sc-for list="{{roles}}" as="r" hint-placeholder-count="4">
+          <div style="display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; background: #302c2c; border-radius: 4px; font-size: 12px;">
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span style="color: {{r.color}};">{{r.tag}}</span>
+              <span style="color: #fdfcfc; font-weight: 500; flex-grow: 1;">{{r.role}}</span>
+              <span style="color: {{r.markColor}};">{{r.mark}}</span>
+            </div>
+            <span style="color: #9a9898;">{{r.model}}</span>
+          </div>
+        </sc-for>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px; font-size: 12px;">
+        <span style="color: #9a9898; letter-spacing: 0.08em;">RONDAS DE REVISIÓN</span>
+        <div style="display: flex; gap: 4px;">
+          <span style="flex: 1 1 0; height: 8px; background: #ff9f0a;"></span>
+          <span style="flex: 1 1 0; height: 8px; background: #30d158;"></span>
+          <span style="flex: 1 1 0; height: 8px; background: #3a3636;"></span>
+        </div>
+        <span style="color: #9a9898;">ronda 2 de 3 en curso · tope en team.toml</span>
+      </div>
+    </section>
+
+    <section aria-label="Línea de tiempo" style="flex: 999 1 560px; min-width: 0; padding: 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px;">
+        <span style="color: #fdfcfc; font-weight: 700;">Encargo sftp-renombrar</span>
+        <span style="color: #9a9898; font-size: 12px;">worktree encargo/sftp-renombrar · 9 mensajes · 7 llamadas a Codex</span>
+      </div>
+      <div style="display: grid; grid-template-columns: 64px 280px minmax(0, 1fr) 140px; gap: 0; font-size: 12px; border-top: 1px solid rgba(253,252,252,0.12);">
+        <span style="padding: 8px 0; color: #9a9898; border-bottom: 1px solid rgba(253,252,252,0.12);">hora</span>
+        <span style="padding: 8px 0; color: #9a9898; border-bottom: 1px solid rgba(253,252,252,0.12);">de -&gt; a</span>
+        <span style="padding: 8px 0; color: #9a9898; border-bottom: 1px solid rgba(253,252,252,0.12);">mensaje</span>
+        <span style="padding: 8px 0; color: #9a9898; border-bottom: 1px solid rgba(253,252,252,0.12);">resultado</span>
+        <sc-for list="{{events}}" as="e" hint-placeholder-count="9">
+          <span style="padding: 10px 0; color: #9a9898; border-bottom: 1px solid rgba(253,252,252,0.12);">{{e.time}}</span>
+          <span style="padding: 10px 0; border-bottom: 1px solid rgba(253,252,252,0.12); white-space: pre;"><span style="color: {{e.fromColor}};">{{e.from}}</span> <span style="color: #6e6e73;">--&gt;</span> <span style="color: {{e.toColor}};">{{e.to}}</span></span>
+          <span style="padding: 10px 12px 10px 0; border-bottom: 1px solid rgba(253,252,252,0.12); color: #d8d5d5;">{{e.msg}}</span>
+          <span style="padding: 10px 0; border-bottom: 1px solid rgba(253,252,252,0.12); color: {{e.resColor}};">{{e.res}}</span>
+        </sc-for>
+      </div>
+
+      <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 16px;">
+        <span style="color: #9a9898; font-size: 12px; letter-spacing: 0.08em;">ENTRE SESIONES (TODOS LOS PROYECTOS)</span>
+        <sc-for list="{{cross}}" as="x" hint-placeholder-count="3">
+          <div style="display: flex; flex-wrap: wrap; gap: 12px; padding: 8px 12px; background: #302c2c; border-radius: 4px; font-size: 12px;">
+            <span style="color: #9a9898;">{{x.time}}</span>
+            <span style="white-space: pre;"><span style="color: #da8fff;">{{x.from}}</span> <span style="color: #6e6e73;">--&gt;</span> <span style="color: {{x.toColor}};">{{x.to}}</span></span>
+            <span style="color: #9a9898; flex-grow: 1;">{{x.how}}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    var CL = '#da8fff', CX = '#5ac8fa', ok = '#30d158', warn = '#ff9f0a', dim = '#9a9898';
+    return {
+      roles: [
+        { tag: 'cl', color: CL, role: 'director', model: 'claude code · opus', mark: '[>]', markColor: ok },
+        { tag: 'cx', color: CX, role: 'diseñador de tests', model: 'codex · gpt-6-luna · medium', mark: '[x]', markColor: dim },
+        { tag: 'cx', color: CX, role: 'implementador', model: 'codex · gpt-6-luna · medium', mark: '[>]', markColor: ok },
+        { tag: 'cx', color: CX, role: 'revisor', model: 'codex · gpt-6.1-sol · high', mark: '[+]', markColor: dim }
+      ],
+      events: [
+        { time: '12:31', from: 'tú', fromColor: '#fdfcfc', to: 'opus', toColor: CL, msg: 'pásalo por el equipo: renombrar ficheros y carpetas en SFTP', res: 'encargo escrito', resColor: dim },
+        { time: '12:34', from: 'opus', fromColor: CL, to: 'luna·tests', toColor: CX, msg: 'diseña los tests del encargo (sin ver la implementación)', res: '[ok] 7 tests', resColor: ok },
+        { time: '12:35', from: 'opus', fromColor: CL, to: 'luna·impl', toColor: CX, msg: 'implementa hasta que pasen los tests', res: '[ok] 7/7 pasan', resColor: ok },
+        { time: '12:37', from: 'opus', fromColor: CL, to: 'sol', toColor: CX, msg: 'revisa el diff y la salida de los tests (ronda 1)', res: 'enviado', resColor: dim },
+        { time: '12:38', from: 'sol', fromColor: CX, to: 'opus', toColor: CL, msg: '2 hallazgos: validar el nombre nuevo y el destino existente', res: 'changes_requested', resColor: warn },
+        { time: '12:39', from: 'opus', fromColor: CL, to: 'tú', toColor: '#fdfcfc', msg: 'acepto los dos hallazgos; paso a la ronda 2', res: 'decisión', resColor: dim },
+        { time: '12:40', from: 'opus', fromColor: CL, to: 'luna·tests', toColor: CX, msg: 'añade el caso de destino existente', res: '[ok] +1 test', resColor: ok },
+        { time: '12:42', from: 'opus', fromColor: CL, to: 'luna·impl', toColor: CX, msg: 'corrige los hallazgos 1 y 2', res: '[>] trabajando', resColor: ok },
+        { time: '--:--', from: 'opus', fromColor: CL, to: 'sol', toColor: CX, msg: 'revisión de la ronda 2', res: 'pendiente', resColor: dim }
+      ],
+      cross: [
+        { time: '12:02', from: 'control', to: 'diseño: titan-agent', toColor: CL, how: 'claude --bg (sesión nueva) en ~/dev/apps/titan-agent' },
+        { time: '12:20', from: 'diseño: titan-agent', to: 'control', toColor: CL, how: 'SendMessage: la bóveda está montada' },
+        { time: '12:31', from: 'sftp-renombrar', to: 'luna · sol', toColor: CX, how: 'herramienta del equipo: 3 hilos de Codex' }
+      ]
+    };
+  }
+}
+</script>
+</body>
+</html>
