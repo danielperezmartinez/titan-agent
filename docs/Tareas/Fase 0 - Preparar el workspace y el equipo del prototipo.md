@@ -64,8 +64,10 @@ En local, rama `chore/fase-0-workspace` (2026-11-14):
   `changes_requested` por la entrada del catálogo, que añadió el director sin
   otra ronda). 3 llamadas a Codex, 2 de cuota de Sol.
 - Hooks de gitleaks en cada commit, sin fugas.
-- **Pendiente**: CI en GitHub (`Cambios`, `Verificar`, `Fugas` y `Windows`) y la
-  PR integrada; el remoto no existe todavía.
+- PR [#1](https://github.com/danielperezmartinez/titan-agent/pull/1): `Cambios`,
+  `Verificar` (9 tests de Rust y 11 de `bin/team`; 4 min 19 s sin caché),
+  `Fugas` y `Windows` (4 min 43 s) en verde.
+- **Pendiente**: la autorización del usuario para integrar la PR.
 
 ## Resultado
 

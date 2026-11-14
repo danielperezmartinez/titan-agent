@@ -253,10 +253,10 @@ enlazan en vez de repetirla.
 - Los commits, incluidos los squash que hace la plataforma, usan el correo
   privado de la forja (p. ej. `…@users.noreply.github.com`), nunca uno personal.
 - Configuración: job `Cambios` en el CI (un cambio de solo bóveda omite
-  `Verificar`); guarda en `.githooks/pre-push`. **Pendiente** hasta que exista el
-  repo en GitHub: protección de `main` con los checks estrictos,
-  `enforce_admins=false` e historial lineal, y los ajustes de la checklist de
-  lanzamiento (ver [[Tareas/Proteger main y configurar el repo al crearlo en GitHub]]).
+  `Verificar`); guarda en `.githooks/pre-push`. En GitHub: protección de `main`
+  con los checks estrictos, `enforce_admins=false`, historial lineal e
+  integración solo con squash, y los ajustes de la checklist de lanzamiento
+  (aplicados en [[Tareas/Proteger main y configurar el repo al crearlo en GitHub]]).
 - Una tarea de código no pasa a `Hecha` hasta que su PR está integrada (y, si
   publica una versión, su release verificada); su sección "Verificación" anota la
   PR, el commit y el estado de la release. Si la PR espera autorización, la tarea
@@ -280,9 +280,9 @@ enlazan en vez de repetirla.
 
 ### 3. Versionado
 
-- El proyecto se versiona con **git**, rama principal `main`. Está previsto un
-  repositorio **público** en GitHub; el remoto aún no existe y no se crea ni se
-  sube nada sin aprobación explícita del usuario. El flujo de ramas, PR y
+- El proyecto se versiona con **git**, rama principal `main`. El repositorio es
+  **público** en GitHub (remoto `origin`, creado el 2026-11-14). No se sube nada
+  sin aprobación explícita del usuario. El flujo de ramas, PR y
   versiones está en [[#Publicación]].
 
 ### 4. Repositorio público: nada sensible ni personal

@@ -1,11 +1,11 @@
 ---
 Nombre: Proteger main y configurar el repo al crearlo en GitHub
-Estado: Pendiente
+Estado: Hecha
 Resumen: Cuando el usuario cree el repositorio público en GitHub, configurar la protección de main con los checks Cambios, Verificar y Fugas, revisar los ajustes de la checklist de lanzamiento y comprobar las trampas conocidas de Publicación. Cada cambio externo con confirmación del usuario.
 Decisiones: ''
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T15:28:51+01:00
+Última modificación: 2026-11-14T18:10:00+01:00
 ---
 
 # Proteger main y configurar el repo al crearlo en GitHub
@@ -30,4 +30,21 @@ usuario. Cuando exista:
 
 ## Verificación
 
+2026-11-14, con aprobación del usuario en la sesión de implementación:
+
+- Repo público creado con `gh`; primer push de `main` (b4e577a) tras revisar
+  todo el historial con gitleaks (patrones genéricos y personales) y comprobar
+  que los commits usan el correo noreply. El primer CI dio los checks
+  `Cambios`, `Verificar` y `Fugas` de la app 15368, en verde.
+- Protección leída de vuelta por la API: checks estrictos, `enforce_admins`
+  falso, historial lineal, sin force-push ni borrado.
+- Ajustes leídos de vuelta: solo squash, sin auto-merge, borrado de rama al
+  integrar, secret scanning y push protection activos, private vulnerability
+  reporting activo, alertas de Dependabot activas.
+- Trampas: `remote.origin.push` sin definir; la rama de la fase 0 sigue a
+  `origin/chore/fase-0-workspace`.
+
 ## Resultado
+
+Hecho salvo el ajuste de correo privado de la cuenta, que no se puede comprobar
+por API (ver [[Seguridad/Checklist de lanzamiento]]).
