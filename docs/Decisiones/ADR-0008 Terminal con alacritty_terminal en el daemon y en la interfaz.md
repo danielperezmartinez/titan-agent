@@ -7,8 +7,8 @@ Decisión: alacritty_terminal 0.26 oficial para el PTY (tty) y la emulación (Te
 Consecuencias: Una sola dependencia de terminal para los dos procesos y para Linux y Windows (ConPTY). Hay que mantener la instantánea ANSI y el render y la codificación del teclado propios. Windows queda fuera de la fase 1.
 Reemplaza: []
 Reemplazada por: []
-Fecha de creación: 2026-11-14T19:40:00+01:00
-Última modificación: 2026-11-14T19:40:00+01:00
+Fecha de creación: 2026-11-14T19:30:00+01:00
+Última modificación: 2026-11-14T19:30:00+01:00
 ---
 
 # ADR-0008 · Terminal con alacritty_terminal en el daemon y en la interfaz

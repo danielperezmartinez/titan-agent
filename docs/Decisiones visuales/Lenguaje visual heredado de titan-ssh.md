@@ -7,7 +7,7 @@ Decisión: Heredar los tokens y la disciplina de color de titan-ssh, con colores
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-14T14:32:34+01:00
-Última modificación: 2026-11-14T14:32:34+01:00
+Última modificación: 2026-11-14T19:35:00+01:00
 ---
 
 # Lenguaje visual heredado de titan-ssh
@@ -30,7 +30,26 @@ distinguir de un vistazo qué agente es cada sesión y nuevos estados.
   `success` #30d158, `warning` #ff9f0a, `danger` #ff453a. JetBrains Mono en
   toda la interfaz; escala, espaciado, radios (4 px interactivo, 0 px
   contenedor), sin sombras ni gradientes; paleta ANSI del terminal la de
-  titan-ssh.
+  titan-ssh (copiada de su decisión «Tokens visuales dark-first base opencode»,
+  sección «Paleta ANSI del terminal», el 2026-11-14):
+
+  | Terminal | Valor |
+  | --- | --- |
+  | Fondo | `#161313` (`terminal-bg`) |
+  | Texto | `#d8d5d5` (`body`) |
+  | Cursor | `#0a84ff` (`accent`) |
+  | Selección | `rgba(10,132,255,0.30)` |
+
+  | Color | Normal | Brillante |
+  | --- | --- | --- |
+  | black | `#201d1d` | `#6e6e73` |
+  | red | `#ff453a` | `#ff6961` |
+  | green | `#30d158` | `#66d97e` |
+  | yellow | `#ff9f0a` | `#ffb340` |
+  | blue | `#0a84ff` | `#409cff` |
+  | magenta | `#bf5af2` | `#da8fff` |
+  | cyan | `#5ac8fa` | `#8fe0ff` |
+  | white | `#d8d5d5` | `#fdfcfc` |
 - **Disciplina de color de titan-ssh**: `accent` solo para interacción
   (selección, foco, enlaces, botón primario con hairline accent); verde, ámbar y
   rojo solo para estados reales; `danger` también para lo destructivo.

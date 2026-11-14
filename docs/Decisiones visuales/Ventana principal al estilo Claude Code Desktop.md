@@ -7,7 +7,7 @@ Decisión: Columna izquierda de sesiones en árbol y zona central según la sele
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-14T14:32:34+01:00
-Última modificación: 2026-11-14T19:40:00+01:00
+Última modificación: 2026-11-14T19:30:00+01:00
 ---
 
 # Ventana principal al estilo Claude Code Desktop
