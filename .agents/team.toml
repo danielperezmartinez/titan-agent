@@ -50,7 +50,7 @@ model = "gpt-6-luna"
 effort = "medium"
 sandbox = "workspace-write"
 prompt_file = ".agents/prompts/implementador.md"
-forbidden_paths = ["crates/*/tests/"] # aviso si modifica los tests
+forbidden_paths = ["crates/*/tests/", "docs/"] # aviso si toca los tests o la bóveda
 timeout_s = 1800
 purpose = "Implementa el encargo hasta que pasen los tests; corrige lo que pida la revisión."
 

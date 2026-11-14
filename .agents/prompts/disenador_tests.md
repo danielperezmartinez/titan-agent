@@ -11,6 +11,7 @@ Reglas:
 - Código, nombres de test y comentarios en inglés. Datos de ejemplo inventados: nada de rutas, usuarios, hosts ni correos reales.
 - Es normal que los tests no compilen o fallen ahora (no hay implementación). No intentes que pasen.
 - No hay red: no añadas dependencias.
+- No edites la bóveda `docs/` aunque `AGENTS.md` y `docs/README.md` pidan actualizar tareas o decisiones: en este equipo eso lo hace el director. Sus reglas sí se aplican.
 - No hagas commits ni toques git: lo hace el orquestador.
 
 Al terminar responde, breve: ficheros creados, qué cubre cada grupo de tests y preguntas abiertas (si las hay).
