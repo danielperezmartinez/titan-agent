@@ -1,4 +1,4 @@
-use titan_agent_core::keys::{encode_key, encode_paste, Key, KeyModes, Modifiers};
+use titan_agent_core::keys::{Key, KeyModes, Modifiers, encode_key, encode_paste};
 
 fn modifiers(bits: u8) -> Modifiers {
     Modifiers {

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
 /// The official CLI used to run an agent session.
@@ -5,6 +6,17 @@ use std::fmt;
 pub enum AgentCli {
     ClaudeCode,
     Codex,
+}
+impl Serialize for AgentCli {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.command())
+    }
+}
+impl<'de> Deserialize<'de> for AgentCli {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v = String::deserialize(d)?;
+        Self::from_command(&v).ok_or_else(|| serde::de::Error::custom("unknown CLI"))
+    }
 }
 
 impl AgentCli {
@@ -57,6 +69,29 @@ pub enum SessionState {
     Waiting,
     /// The session ended; `failed` is true when it ended with an error.
     Finished { failed: bool },
+}
+impl Serialize for SessionState {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(match self {
+            Self::Working => "working",
+            Self::NeedsYou => "needs_you",
+            Self::Waiting => "waiting",
+            Self::Finished { failed: false } => "finished",
+            Self::Finished { failed: true } => "failed",
+        })
+    }
+}
+impl<'de> Deserialize<'de> for SessionState {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match String::deserialize(d)?.as_str() {
+            "working" => Ok(Self::Working),
+            "needs_you" => Ok(Self::NeedsYou),
+            "waiting" => Ok(Self::Waiting),
+            "finished" => Ok(Self::Finished { failed: false }),
+            "failed" => Ok(Self::Finished { failed: true }),
+            _ => Err(serde::de::Error::custom("unknown session state")),
+        }
+    }
 }
 
 impl SessionState {

@@ -1,9 +1,9 @@
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Cursor, Read};
 use titan_agent_core::protocol::{
-    decode_line, encode_line, error_code, ClientRequest, DaemonNotification, DecodeError,
-    HelloResult, LineError, LineReader, Message, PeerInfo, Project, RpcError, Session,
-    SessionsResult, StopAction, MAX_LINE_BYTES, PROTOCOL_VERSION,
+    ClientRequest, DaemonNotification, DecodeError, HelloResult, LineError, LineReader,
+    MAX_LINE_BYTES, Message, PROTOCOL_VERSION, PeerInfo, Project, RpcError, Session,
+    SessionsResult, StopAction, decode_line, encode_line, error_code,
 };
 use titan_agent_core::session::{AgentCli, SessionState};
 

@@ -97,9 +97,11 @@ fn claude_translation_preserves_order_metadata_and_capabilities() {
 
 #[test]
 fn claude_requires_a_json_array_and_accepts_an_empty_array() {
-    assert!(sessions_from_claude_agents("[]", &project)
-        .unwrap()
-        .is_empty());
+    assert!(
+        sessions_from_claude_agents("[]", &project)
+            .unwrap()
+            .is_empty()
+    );
     for input in ["{", "{}", "null", "42", "\"array\""] {
         assert!(sessions_from_claude_agents(input, &project).is_err());
     }

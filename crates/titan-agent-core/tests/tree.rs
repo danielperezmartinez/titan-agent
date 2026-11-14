@@ -1,6 +1,6 @@
 use titan_agent_core::protocol::{Project, Session};
 use titan_agent_core::session::{AgentCli, SessionState};
-use titan_agent_core::tree::{build_tree, matches_filter, TreeRow};
+use titan_agent_core::tree::{TreeRow, build_tree, matches_filter};
 
 fn session(id: &str, parent: Option<&str>, started_at: Option<i64>) -> Session {
     Session {
