@@ -1,0 +1,15 @@
+# Alertas y actualizaciones de dependencias (checklist de lanzamiento).
+# GPUI va por git fijado a un tag de Zed (ADR-0006): se sube a mano.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      - dependency-name: gpui
+      - dependency-name: gpui_platform
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
