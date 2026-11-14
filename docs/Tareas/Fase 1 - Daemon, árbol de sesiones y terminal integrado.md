@@ -5,7 +5,7 @@ Resumen: Primera versión usable - titan-agentd descubre las sesiones de Claude 
 Decisiones: '[[Decisiones/ADR-0007 Socket local y protocolo NDJSON versionado entre daemon e interfaz]] · [[Decisiones/ADR-0008 Terminal con alacritty_terminal en el daemon y en la interfaz]] · Solo anidan los subagentes de Codex (parentThreadId), Claude va plano · Proyecto por git rev-parse --git-common-dir · Windows fuera de la fase 1 · Las interactivas de Claude se muestran sin terminal'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T19:40:00+01:00
+Última modificación: 2026-11-14T19:30:00+01:00
 ---
 
 # Fase 1 - Daemon, árbol de sesiones y terminal integrado
