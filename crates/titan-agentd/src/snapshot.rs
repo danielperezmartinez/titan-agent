@@ -91,7 +91,12 @@ pub fn snapshot_ansi<T: EventListener>(term: &Term<T>) -> Vec<u8> {
                 continue;
             }
             style(&mut out, cell);
-            out.extend_from_slice(cell.c.encode_utf8(&mut [0; 4]).as_bytes());
+            let character = if cell.c <= '\u{1f}' || cell.c == '\u{7f}' {
+                ' '
+            } else {
+                cell.c
+            };
+            out.extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes());
             if let Some(chars) = cell.zerowidth() {
                 for c in chars {
                     out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
@@ -117,4 +122,53 @@ pub fn snapshot_ansi<T: EventListener>(term: &Term<T>) -> Vec<u8> {
     style(&mut out, &grid.cursor.template);
     out.extend_from_slice(b"\x1b[3J");
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snapshot_ansi;
+    use alacritty_terminal::{
+        event::VoidListener,
+        term::{Term, test::TermSize},
+        vte::ansi::{Processor, StdSyncHandler},
+    };
+
+    fn snapshot(input: &[u8]) -> Vec<u8> {
+        let mut term = Term::new(Default::default(), &TermSize::new(20, 4), VoidListener);
+        Processor::<StdSyncHandler>::new().advance(&mut term, input);
+        snapshot_ansi(&term)
+    }
+
+    #[test]
+    fn tab_cells_are_emitted_as_spaces() {
+        let output = snapshot(b"A\tB");
+        assert!(!output.contains(&b'\t'));
+        let mut restored = Term::new(Default::default(), &TermSize::new(20, 4), VoidListener);
+        Processor::<StdSyncHandler>::new().advance(&mut restored, &output);
+        assert_eq!(
+            restored.grid()[alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(0),
+                alacritty_terminal::index::Column(0)
+            )]
+            .c,
+            'A'
+        );
+        assert_eq!(
+            restored.grid()[alacritty_terminal::index::Point::new(
+                alacritty_terminal::index::Line(0),
+                alacritty_terminal::index::Column(8)
+            )]
+            .c,
+            'B'
+        );
+    }
+
+    #[test]
+    fn styled_tab_cells_keep_cell_style_without_control_bytes() {
+        let output = snapshot(b"A\x1b[31m\t\x1b[44m\tB");
+        assert!(!output.contains(&b'\t'));
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("31m"));
+        assert!(output.contains("44m"));
+    }
 }
