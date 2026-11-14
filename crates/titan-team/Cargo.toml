@@ -1,0 +1,10 @@
+[package]
+name = "titan-team"
+description = "Team tool of titan-agent (phase 3). Until then the Python prototype in bin/team is used."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

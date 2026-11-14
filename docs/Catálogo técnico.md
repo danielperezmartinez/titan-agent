@@ -9,10 +9,16 @@ implementación, que continúa siendo la fuente de verdad técnica.
 
 ## Vocabularios
 
-<!-- TODO: `Tipo`, `Área`, `Feature` y `Ámbito` aún no están acordados. Se
-fijan con el usuario al registrar la primera pieza y se listan aquí. Si la
-funcionalidad compartida con titan-ssh llega a existir, conviene alinearlos con
-los de su catálogo. -->
+Acordados con el usuario el 2026-11-14. No se usan valores fuera de esta lista;
+uno nuevo se acuerda con el usuario y se añade aquí.
+
+- **Tipo**: `Modelo de datos` · `Servicio` · `Protocolo` · `Componente UI` ·
+  `Comando CLI`.
+- **Área**: `Núcleo` · `Daemon` · `Interfaz` · `Equipo`.
+- **Feature**: `Sesiones` · `Terminal` · `Nueva sesión` · `Monitor` · `Equipo` ·
+  `Remoto` · `Base`.
+- **Ámbito**: `Interno` (solo titan-agent) · `Compartido` (lo usa o lo usará
+  titan-ssh).
 
 ## Cómo utilizarlo
 

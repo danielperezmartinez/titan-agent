@@ -1,0 +1,15 @@
+[package]
+name = "titan-agent"
+description = "titan-agent desktop interface (GPUI), a client of titan-agentd."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+titan-agent-core.workspace = true
+gpui.workspace = true
+gpui_platform = { workspace = true, features = ["font-kit", "wayland", "x11"] }
+
+[lints]
+workspace = true

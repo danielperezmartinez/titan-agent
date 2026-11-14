@@ -1,11 +1,11 @@
 ---
 Nombre: Implementar titan-agent v1 por fases
-Estado: Pendiente
+Estado: En curso
 Resumen: Tarea paraguas de la construcción de titan-agent en cinco fases, cada una usable por sí sola - 0 workspace y equipo del prototipo, 1 daemon + árbol de sesiones + terminal, 2 nueva sesión, 3 herramienta del equipo en Rust + monitor, 4 Android en titan-ssh. Se construye con el equipo del prototipo (Opus dirige, Luna implementa y diseña los tests, Sol revisa).
 Decisiones: ''
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T15:28:51+01:00
+Última modificación: 2026-11-14T17:30:00+01:00
 ---
 
 # Implementar titan-agent v1 por fases

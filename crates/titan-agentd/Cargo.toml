@@ -1,0 +1,13 @@
+[package]
+name = "titan-agentd"
+description = "Headless titan-agent daemon: discovers sessions, keeps terminals alive and is the only process launcher."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+titan-agent-core.workspace = true
+
+[lints]
+workspace = true
