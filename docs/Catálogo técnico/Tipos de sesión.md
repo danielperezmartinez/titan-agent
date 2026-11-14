@@ -7,8 +7,8 @@ Estado: "Vigente"
 Ámbito: "Interno"
 Fuente: "crates/titan-agent-core/src/session.rs"
 Entrada pública: "titan_agent_core::session::{AgentCli, SessionState, StateCounts}"
-Resumen: "AgentCli (ClaudeCode, Codex) con su ejecutable oficial (`claude`/`codex`), su etiqueta de pastilla (`cl`/`cx`), su nombre visible y la búsqueda exacta por ejecutable. SessionState (Working, NeedsYou, Waiting, Finished { failed }) con su marcador ASCII (`[>]`, `[?]`, `[+]`, `[x]`) y si sigue viva. StateCounts cuenta los estados vivos para los contadores de la cabecera. Lógica pura, sin E/S ni dependencias."
-Última modificación: "2026-11-14T17:45:00+01:00"
+Resumen: "AgentCli (ClaudeCode, Codex) con su ejecutable oficial (`claude`/`codex`), su etiqueta de pastilla (`cl`/`cx`), su nombre visible y la búsqueda exacta por ejecutable. SessionState (Working, NeedsYou, Waiting, Finished { failed }) con su marcador ASCII (`[>]`, `[?]`, `[+]`, `[x]`) y si sigue viva. StateCounts cuenta los estados vivos para los contadores de la cabecera. AgentCli y SessionState se serializan como cadenas del protocolo (`claude`/`codex`; `working`, `needs_you`, `waiting`, `finished`, `failed`). Lógica pura, sin E/S."
+Última modificación: "2026-11-14T19:50:00+01:00"
 ---
 
 # Tipos de sesión
