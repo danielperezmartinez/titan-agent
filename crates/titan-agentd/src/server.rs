@@ -17,7 +17,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -74,9 +74,26 @@ impl ClientSink {
     }
 }
 pub struct Daemon;
+struct Wake {
+    mutex: Mutex<()>,
+    condition: Condvar,
+}
+impl Wake {
+    fn new() -> Self {
+        Self {
+            mutex: Mutex::new(()),
+            condition: Condvar::new(),
+        }
+    }
+    fn notify(&self) {
+        let _guard = self.mutex.lock().unwrap();
+        self.condition.notify_all();
+    }
+}
 pub struct DaemonHandle {
     socket: PathBuf,
     stop: Arc<AtomicBool>,
+    wake: Arc<Wake>,
     state: Arc<Mutex<State>>,
     accept: Option<thread::JoinHandle<()>>,
     poll: Option<thread::JoinHandle<()>>,
@@ -116,9 +133,9 @@ impl Daemon {
             let _ = fs::remove_file(&config.socket);
         }
         let listener = UnixListener::bind(&config.socket)?;
-        listener.set_nonblocking(true)?;
         let socket_stat = fs::metadata(&config.socket)?;
         let stop = Arc::new(AtomicBool::new(false));
+        let wake = Arc::new(Wake::new());
         let state = Arc::new(Mutex::new(State {
             sessions: vec![],
             claude_sessions: vec![],
@@ -136,17 +153,18 @@ impl Daemon {
         let ast = Arc::clone(&state);
         let cfg = config.clone();
         let accept = thread::spawn(move || {
-            while !ac.load(Ordering::Relaxed) {
+            loop {
                 match listener.accept() {
+                    Ok((stream, _)) if ac.load(Ordering::Relaxed) => {
+                        let _ = stream.shutdown(Shutdown::Both);
+                        break;
+                    }
                     Ok((stream, _)) => {
                         let s = Arc::clone(&ast);
                         let client_state = Arc::clone(&s);
                         let c = cfg.clone();
                         let handle = thread::spawn(move || client(stream, client_state, c));
                         s.lock().unwrap().threads.push(handle);
-                    }
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(10))
                     }
                     Err(_) => break,
                 }
@@ -155,6 +173,7 @@ impl Daemon {
         let ps = Arc::clone(&stop);
         let pst = Arc::clone(&state);
         let pc = config.clone();
+        let pw = Arc::clone(&wake);
         let poll = thread::spawn(move || {
             let mut old_claude = Vec::new();
             let projects = std::cell::RefCell::new(HashMap::<
@@ -188,6 +207,7 @@ impl Daemon {
                 publish_half(&pst, true, claude_sessions);
                 interruptible_sleep(
                     &ps,
+                    &pw,
                     if pst.lock().unwrap().subscribers.is_empty() {
                         pc.poll_idle
                     } else {
@@ -200,6 +220,7 @@ impl Daemon {
         state.lock().unwrap().codex_stops = Some(stop_tx);
         let codex = spawn_codex_worker(
             Arc::clone(&stop),
+            Arc::clone(&wake),
             Arc::clone(&state),
             config.clone(),
             stop_rx,
@@ -207,6 +228,7 @@ impl Daemon {
         Ok(DaemonHandle {
             socket: config.socket,
             stop,
+            wake,
             state,
             accept: Some(accept),
             poll: Some(poll),
@@ -231,6 +253,7 @@ impl DaemonHandle {
             state.subscribers.clear();
         }
         self.stop.store(true, Ordering::Relaxed);
+        self.wake.notify();
         let _ = UnixStream::connect(&self.socket);
         let terminals = {
             let mut state = self.state.lock().unwrap();
@@ -295,6 +318,7 @@ fn publish_half(
 #[allow(clippy::collapsible_if)]
 fn spawn_codex_worker(
     stop: Arc<AtomicBool>,
+    wake: Arc<Wake>,
     state: Arc<Mutex<State>>,
     config: Config,
     stops: std::sync::mpsc::Receiver<(String, std::sync::mpsc::SyncSender<Result<(), String>>)>,
@@ -304,10 +328,12 @@ fn spawn_codex_worker(
         let deadline = Arc::new(Mutex::new(None::<std::time::Instant>));
         let pid = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let ws = Arc::clone(&stop);
+        let ww = Arc::clone(&wake);
         let wd = Arc::clone(&deadline);
         let wp = Arc::clone(&pid);
         let watcher = thread::spawn(move || {
             loop {
+                let guard = ww.mutex.lock().unwrap();
                 if ws.load(Ordering::Relaxed) {
                     let raw = wp.load(Ordering::Relaxed) as i32;
                     if let Some(pid) = rustix::process::Pid::from_raw(raw) {
@@ -315,18 +341,25 @@ fn spawn_codex_worker(
                     }
                     break;
                 }
-                let timed_out = wd
-                    .lock()
-                    .unwrap()
-                    .is_some_and(|until| std::time::Instant::now() >= until);
-                if timed_out {
+                let deadline_value = *wd.lock().unwrap();
+                if deadline_value.is_some_and(|until| std::time::Instant::now() >= until) {
                     let raw = wp.load(Ordering::Relaxed) as i32;
                     if let Some(pid) = rustix::process::Pid::from_raw(raw) {
                         let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
                     }
                     *wd.lock().unwrap() = None;
+                    drop(guard);
+                    continue;
                 }
-                thread::sleep(Duration::from_millis(50));
+                match deadline_value {
+                    Some(until) => {
+                        let duration = until.saturating_duration_since(std::time::Instant::now());
+                        let _ = ww.condition.wait_timeout(guard, duration).unwrap();
+                    }
+                    None => {
+                        drop(ww.condition.wait(guard).unwrap());
+                    }
+                }
             }
         });
         let projects =
@@ -343,7 +376,7 @@ fn spawn_codex_worker(
                 Err(error) => {
                     eprintln!("Codex app-server failed to start: {error}");
                     publish_half(&state, false, Vec::new());
-                    interruptible_sleep(&stop, Duration::from_secs(30));
+                    interruptible_sleep(&stop, &wake, Duration::from_secs(30));
                     continue;
                 }
             };
@@ -361,37 +394,50 @@ fn spawn_codex_worker(
                 continue;
             };
             let mut client = CodexClient::new(BufReader::new(output), input);
-            *deadline.lock().unwrap() = Some(std::time::Instant::now() + Duration::from_secs(10));
+            set_deadline(
+                &wake,
+                &deadline,
+                Some(std::time::Instant::now() + Duration::from_secs(10)),
+            );
             let initialized = client.initialize(env!("CARGO_PKG_VERSION"));
-            *deadline.lock().unwrap() = None;
+            set_deadline(&wake, &deadline, None);
             if initialized.is_err() {
                 let _ = child.kill();
                 let _ = child.wait();
                 pid.store(0, Ordering::Relaxed);
                 publish_half(&state, false, Vec::new());
-                interruptible_sleep(&stop, Duration::from_secs(30));
+                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
                 continue;
             }
             let mut failed = false;
             while !stop.load(Ordering::Relaxed) {
-                *deadline.lock().unwrap() =
-                    Some(std::time::Instant::now() + Duration::from_secs(10));
+                set_deadline(
+                    &wake,
+                    &deadline,
+                    Some(std::time::Instant::now() + Duration::from_secs(10)),
+                );
                 let result = if let Ok((thread_id, response)) = stops.try_recv() {
-                    *deadline.lock().unwrap() =
-                        Some(std::time::Instant::now() + Duration::from_secs(10));
+                    set_deadline(
+                        &wake,
+                        &deadline,
+                        Some(std::time::Instant::now() + Duration::from_secs(10)),
+                    );
                     let result = client
                         .interrupt(&thread_id)
                         .map(|_| ())
                         .map_err(|error| format!("{error:?}"));
-                    *deadline.lock().unwrap() = None;
+                    set_deadline(&wake, &deadline, None);
                     let _ = response.send(result);
-                    *deadline.lock().unwrap() =
-                        Some(std::time::Instant::now() + Duration::from_secs(10));
+                    set_deadline(
+                        &wake,
+                        &deadline,
+                        Some(std::time::Instant::now() + Duration::from_secs(10)),
+                    );
                     client.loaded_threads()
                 } else {
                     client.loaded_threads()
                 };
-                *deadline.lock().unwrap() = None;
+                set_deadline(&wake, &deadline, None);
                 match result {
                     Ok(threads) => {
                         let sessions = threads
@@ -408,7 +454,7 @@ fn spawn_codex_worker(
                         } else {
                             config.poll_subscribed
                         };
-                        interruptible_sleep(&stop, delay);
+                        interruptible_sleep(&stop, &wake, delay);
                     }
                     Err(error) => {
                         eprintln!("Codex app-server request failed: {error:?}");
@@ -427,16 +473,28 @@ fn spawn_codex_worker(
             pid.store(0, Ordering::Relaxed);
             if failed {
                 publish_half(&state, false, Vec::new());
-                interruptible_sleep(&stop, Duration::from_secs(30));
+                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
             }
         }
         let _ = watcher.join();
     }))
 }
-fn interruptible_sleep(stop: &AtomicBool, duration: Duration) {
-    let deadline = std::time::Instant::now() + duration;
-    while !stop.load(Ordering::Relaxed) && std::time::Instant::now() < deadline {
-        thread::sleep((deadline - std::time::Instant::now()).min(Duration::from_millis(50)));
+fn set_deadline(
+    wake: &Wake,
+    deadline: &Mutex<Option<std::time::Instant>>,
+    value: Option<std::time::Instant>,
+) {
+    let _guard = wake.mutex.lock().unwrap();
+    *deadline.lock().unwrap() = value;
+    wake.condition.notify_all();
+}
+fn interruptible_sleep(stop: &AtomicBool, wake: &Wake, duration: Duration) {
+    let guard = wake.mutex.lock().unwrap();
+    if !stop.load(Ordering::Relaxed) {
+        let _ = wake
+            .condition
+            .wait_timeout_while(guard, duration, |_| !stop.load(Ordering::Relaxed))
+            .unwrap();
     }
 }
 pub fn run(config: Config) -> std::io::Result<()> {
