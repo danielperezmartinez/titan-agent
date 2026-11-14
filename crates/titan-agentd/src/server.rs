@@ -10,6 +10,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{BufReader, Read, Write},
     net::Shutdown,
+    os::fd::AsFd,
     os::unix::{
         fs::{DirBuilderExt, MetadataExt},
         net::{UnixListener, UnixStream},
@@ -32,8 +33,12 @@ use titan_agent_core::{
     session::AgentCli,
 };
 
-type StopSender =
-    std::sync::mpsc::SyncSender<(String, std::sync::mpsc::SyncSender<Result<(), String>>)>;
+struct StopRequest {
+    thread_id: String,
+    deadline: std::time::Instant,
+    response: std::sync::mpsc::SyncSender<Result<(), String>>,
+}
+type StopSender = std::sync::mpsc::SyncSender<StopRequest>;
 
 struct State {
     sessions: Vec<titan_agent_core::protocol::Session>,
@@ -47,6 +52,8 @@ struct State {
     codex_stops: Option<StopSender>,
     open_gate: Arc<Mutex<()>>,
     stop_flag: Arc<AtomicBool>,
+    codex_stop_pending: Arc<AtomicBool>,
+    codex_wake: Arc<Wake>,
 }
 struct Terminal {
     pty: Arc<Mutex<tty::Pty>>,
@@ -136,6 +143,7 @@ impl Daemon {
         let socket_stat = fs::metadata(&config.socket)?;
         let stop = Arc::new(AtomicBool::new(false));
         let wake = Arc::new(Wake::new());
+        let codex_stop_pending = Arc::new(AtomicBool::new(false));
         let state = Arc::new(Mutex::new(State {
             sessions: vec![],
             claude_sessions: vec![],
@@ -148,24 +156,42 @@ impl Daemon {
             codex_stops: None,
             open_gate: Arc::new(Mutex::new(())),
             stop_flag: Arc::clone(&stop),
+            codex_stop_pending: Arc::clone(&codex_stop_pending),
+            codex_wake: Arc::clone(&wake),
         }));
         let ac = Arc::clone(&stop);
         let ast = Arc::clone(&state);
         let cfg = config.clone();
+        let accept_listener = listener;
         let accept = thread::spawn(move || {
             loop {
-                match listener.accept() {
-                    Ok((stream, _)) if ac.load(Ordering::Relaxed) => {
-                        let _ = stream.shutdown(Shutdown::Both);
-                        break;
-                    }
+                if ac.load(Ordering::Relaxed) {
+                    break;
+                }
+                match wait_fd_borrowed(
+                    accept_listener.as_fd(),
+                    rustix::event::PollFlags::IN
+                        | rustix::event::PollFlags::ERR
+                        | rustix::event::PollFlags::HUP,
+                    Some(Duration::from_secs(1)),
+                ) {
+                    None => break,
+                    Some(false) => continue,
+                    Some(true) => {}
+                }
+                match accept_listener.accept() {
                     Ok((stream, _)) => {
-                        let s = Arc::clone(&ast);
-                        let client_state = Arc::clone(&s);
+                        let mut state = ast.lock().unwrap();
+                        if state.stopping {
+                            let _ = stream.shutdown(Shutdown::Both);
+                            break;
+                        }
+                        let client_state = Arc::clone(&ast);
                         let c = cfg.clone();
                         let handle = thread::spawn(move || client(stream, client_state, c));
-                        s.lock().unwrap().threads.push(handle);
+                        register_thread(&mut state, handle);
                     }
+                    Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(_) => break,
                 }
             }
@@ -224,6 +250,7 @@ impl Daemon {
             Arc::clone(&state),
             config.clone(),
             stop_rx,
+            Arc::clone(&codex_stop_pending),
         );
         Ok(DaemonHandle {
             socket: config.socket,
@@ -254,17 +281,18 @@ impl DaemonHandle {
         }
         self.stop.store(true, Ordering::Relaxed);
         self.wake.notify();
-        let _ = UnixStream::connect(&self.socket);
         let terminals = {
             let mut state = self.state.lock().unwrap();
+            let threads = std::mem::take(&mut state.threads);
             for t in state.terminals.values() {
-                if let Some(pid) =
-                    rustix::process::Pid::from_raw(t.pty.lock().unwrap().child().id() as i32)
-                {
-                    let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
-                }
+                kill_pty(&t.pty);
             }
-            std::mem::take(&mut state.terminals)
+            let terminals = std::mem::take(&mut state.terminals);
+            drop(state);
+            for handle in threads {
+                let _ = handle.join();
+            }
+            terminals
         };
         drop(terminals);
         if let Some(h) = self.accept.take() {
@@ -321,16 +349,19 @@ fn spawn_codex_worker(
     wake: Arc<Wake>,
     state: Arc<Mutex<State>>,
     config: Config,
-    stops: std::sync::mpsc::Receiver<(String, std::sync::mpsc::SyncSender<Result<(), String>>)>,
+    stops: std::sync::mpsc::Receiver<StopRequest>,
+    stop_pending: Arc<AtomicBool>,
 ) -> Option<thread::JoinHandle<()>> {
     let program = config.codex_program.clone()?;
     Some(thread::spawn(move || {
         let deadline = Arc::new(Mutex::new(None::<std::time::Instant>));
         let pid = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let worker_done = Arc::new(AtomicBool::new(false));
         let ws = Arc::clone(&stop);
         let ww = Arc::clone(&wake);
         let wd = Arc::clone(&deadline);
         let wp = Arc::clone(&pid);
+        let wd_done = Arc::clone(&worker_done);
         let watcher = thread::spawn(move || {
             loop {
                 let guard = ww.mutex.lock().unwrap();
@@ -339,6 +370,8 @@ fn spawn_codex_worker(
                     if let Some(pid) = rustix::process::Pid::from_raw(raw) {
                         let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
                     }
+                }
+                if wd_done.load(Ordering::Acquire) {
                     break;
                 }
                 let deadline_value = *wd.lock().unwrap();
@@ -376,11 +409,17 @@ fn spawn_codex_worker(
                 Err(error) => {
                     eprintln!("Codex app-server failed to start: {error}");
                     publish_half(&state, false, Vec::new());
-                    interruptible_sleep(&stop, &wake, Duration::from_secs(30));
+                    interruptible_codex_sleep(&stop, &wake, &stop_pending, Duration::from_secs(30));
                     continue;
                 }
             };
             pid.store(child.id(), Ordering::Relaxed);
+            if stop.load(Ordering::Relaxed) {
+                let _ = child.kill();
+                let _ = child.wait();
+                pid.store(0, Ordering::Relaxed);
+                break;
+            }
             let Some(input) = child.stdin.take() else {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -406,37 +445,50 @@ fn spawn_codex_worker(
                 let _ = child.wait();
                 pid.store(0, Ordering::Relaxed);
                 publish_half(&state, false, Vec::new());
-                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
+                interruptible_codex_sleep(&stop, &wake, &stop_pending, Duration::from_secs(30));
                 continue;
             }
             let mut failed = false;
             while !stop.load(Ordering::Relaxed) {
+                loop {
+                    let pending = take_codex_stops(&wake, &stop_pending, &stops);
+                    if pending.is_empty() {
+                        break;
+                    }
+                    for request in pending {
+                        if request.deadline <= std::time::Instant::now() {
+                            continue;
+                        }
+                        set_deadline(
+                            &wake,
+                            &deadline,
+                            Some(std::time::Instant::now() + Duration::from_secs(10)),
+                        );
+                        let result = client
+                            .interrupt(&request.thread_id)
+                            .map(|_| ())
+                            .map_err(|error| format!("{error:?}"));
+                        set_deadline(&wake, &deadline, None);
+                        let failed_interrupt = result.is_err();
+                        let _ = request.response.send(result);
+                        if failed_interrupt {
+                            failed = true;
+                            break;
+                        }
+                    }
+                    if failed {
+                        break;
+                    }
+                }
+                if failed {
+                    break;
+                }
                 set_deadline(
                     &wake,
                     &deadline,
                     Some(std::time::Instant::now() + Duration::from_secs(10)),
                 );
-                let result = if let Ok((thread_id, response)) = stops.try_recv() {
-                    set_deadline(
-                        &wake,
-                        &deadline,
-                        Some(std::time::Instant::now() + Duration::from_secs(10)),
-                    );
-                    let result = client
-                        .interrupt(&thread_id)
-                        .map(|_| ())
-                        .map_err(|error| format!("{error:?}"));
-                    set_deadline(&wake, &deadline, None);
-                    let _ = response.send(result);
-                    set_deadline(
-                        &wake,
-                        &deadline,
-                        Some(std::time::Instant::now() + Duration::from_secs(10)),
-                    );
-                    client.loaded_threads()
-                } else {
-                    client.loaded_threads()
-                };
+                let result = client.loaded_threads();
                 set_deadline(&wake, &deadline, None);
                 match result {
                     Ok(threads) => {
@@ -454,7 +506,7 @@ fn spawn_codex_worker(
                         } else {
                             config.poll_subscribed
                         };
-                        interruptible_sleep(&stop, &wake, delay);
+                        interruptible_codex_sleep(&stop, &wake, &stop_pending, delay);
                     }
                     Err(error) => {
                         eprintln!("Codex app-server request failed: {error:?}");
@@ -473,9 +525,11 @@ fn spawn_codex_worker(
             pid.store(0, Ordering::Relaxed);
             if failed {
                 publish_half(&state, false, Vec::new());
-                interruptible_sleep(&stop, &wake, Duration::from_secs(30));
+                interruptible_codex_sleep(&stop, &wake, &stop_pending, Duration::from_secs(30));
             }
         }
+        worker_done.store(true, Ordering::Release);
+        wake.notify();
         let _ = watcher.join();
     }))
 }
@@ -488,12 +542,38 @@ fn set_deadline(
     *deadline.lock().unwrap() = value;
     wake.condition.notify_all();
 }
+fn take_codex_stops(
+    wake: &Wake,
+    pending: &AtomicBool,
+    receiver: &std::sync::mpsc::Receiver<StopRequest>,
+) -> Vec<StopRequest> {
+    let _guard = wake.mutex.lock().unwrap();
+    let requests = receiver.try_iter().collect();
+    pending.store(false, Ordering::Release);
+    requests
+}
 fn interruptible_sleep(stop: &AtomicBool, wake: &Wake, duration: Duration) {
     let guard = wake.mutex.lock().unwrap();
     if !stop.load(Ordering::Relaxed) {
         let _ = wake
             .condition
             .wait_timeout_while(guard, duration, |_| !stop.load(Ordering::Relaxed))
+            .unwrap();
+    }
+}
+fn interruptible_codex_sleep(
+    stop: &AtomicBool,
+    wake: &Wake,
+    stop_pending: &AtomicBool,
+    duration: Duration,
+) {
+    let guard = wake.mutex.lock().unwrap();
+    if !stop.load(Ordering::Relaxed) && !stop_pending.load(Ordering::Acquire) {
+        let _ = wake
+            .condition
+            .wait_timeout_while(guard, duration, |_| {
+                !stop.load(Ordering::Relaxed) && !stop_pending.load(Ordering::Acquire)
+            })
             .unwrap();
     }
 }
@@ -543,15 +623,17 @@ fn run_with_timeout(command: &mut Command, timeout: Duration) -> std::io::Result
     let mut child = command.spawn()?;
     let mut stdout = child.stdout.take().expect("piped stdout");
     let mut stderr = child.stderr.take().expect("piped stderr");
-    let out = thread::spawn(move || {
+    let (out_tx, out_rx) = std::sync::mpsc::channel();
+    let (err_tx, err_rx) = std::sync::mpsc::channel();
+    let _out = thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stdout.read_to_end(&mut bytes);
-        bytes
+        let _ = out_tx.send(bytes);
     });
-    let err = thread::spawn(move || {
+    let _err = thread::spawn(move || {
         let mut bytes = Vec::new();
         let _ = stderr.read_to_end(&mut bytes);
-        bytes
+        let _ = err_tx.send(bytes);
     });
     let deadline = std::time::Instant::now() + timeout;
     let status = loop {
@@ -561,8 +643,6 @@ fn run_with_timeout(command: &mut Command, timeout: Duration) -> std::io::Result
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = out.join();
-            let _ = err.join();
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "command timed out",
@@ -570,11 +650,38 @@ fn run_with_timeout(command: &mut Command, timeout: Duration) -> std::io::Result
         }
         thread::sleep(Duration::from_millis(10));
     };
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    let stdout = out_rx.recv_timeout(remaining).unwrap_or_default();
+    let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+    let stderr = err_rx.recv_timeout(remaining).unwrap_or_default();
     Ok(Output {
         status,
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
+        stdout,
+        stderr,
     })
+}
+
+fn register_thread(state: &mut State, handle: thread::JoinHandle<()>) {
+    let mut index = 0;
+    while index < state.threads.len() {
+        if state.threads[index].is_finished() {
+            let finished = state.threads.swap_remove(index);
+            let _ = finished.join();
+        } else {
+            index += 1;
+        }
+    }
+    state.threads.push(handle);
+}
+
+fn kill_pty(pty: &Arc<Mutex<tty::Pty>>) {
+    let mut pty = pty.lock().unwrap();
+    if matches!(pty.next_child_event(), Some(ChildEvent::Exited(_))) {
+        return;
+    }
+    if let Some(pid) = rustix::process::Pid::from_raw(pty.child().id() as i32) {
+        let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+    }
 }
 
 fn client(stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
@@ -606,7 +713,7 @@ fn client(stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
             }
         }
     });
-    state_guard.threads.push(writer_thread);
+    register_thread(&mut state_guard, writer_thread);
     drop(state_guard);
     let mut lines = LineReader::new(BufReader::new(reader));
     let mut hello = false;
@@ -682,22 +789,29 @@ fn terminal_reader(
     mut reader: std::fs::File,
     session: String,
     inner: Arc<Mutex<TerminalInner>>,
-    pty: std::sync::Weak<Mutex<tty::Pty>>,
-    terminal: std::sync::Weak<Terminal>,
+    terminal: Arc<Terminal>,
     state: Arc<Mutex<State>>,
+    stopping: Arc<AtomicBool>,
 ) {
     use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
     let mut processor = Processor::<StdSyncHandler>::new();
     let mut buffer = [0u8; 8192];
     loop {
-        if !wait_fd(
+        match wait_fd(
             &reader,
             rustix::event::PollFlags::IN
                 | rustix::event::PollFlags::ERR
                 | rustix::event::PollFlags::HUP,
-            None,
+            Some(Duration::from_secs(1)),
         ) {
-            break;
+            Some(true) => {}
+            Some(false) => {
+                if stopping.load(Ordering::Relaxed) {
+                    break;
+                }
+                continue;
+            }
+            None => break,
         }
         match reader.read(&mut buffer) {
             Ok(0) => break,
@@ -725,26 +839,28 @@ fn terminal_reader(
         }
     }
     let mut code = None;
-    if let Some(pty) = pty.upgrade() {
-        for _ in 0..20 {
-            if let Some(ChildEvent::Exited(status)) = pty.lock().unwrap().next_child_event() {
-                code = status.and_then(|status| status.code());
-                break;
-            }
-            thread::sleep(Duration::from_millis(10));
+    for _ in 0..20 {
+        if let Some(ChildEvent::Exited(status)) = terminal.pty.lock().unwrap().next_child_event() {
+            code = status.and_then(|status| status.code());
+            break;
         }
+        thread::sleep(Duration::from_millis(10));
     }
     let mut state = state.lock().unwrap();
-    if let (Some(current), Some(old)) = (state.terminals.get(&session), terminal.upgrade())
-        && Arc::ptr_eq(current, &old)
-    {
+    let is_current = state
+        .terminals
+        .get(&session)
+        .is_some_and(|current| Arc::ptr_eq(current, &terminal));
+    let clients = {
+        let mut terminal_inner = terminal.inner.lock().unwrap();
+        terminal_inner.exited = true;
+        terminal_inner.clients.clone()
+    };
+    if is_current {
         state.terminals.remove(&session);
     }
     drop(state);
-    if let Some(terminal) = terminal.upgrade() {
-        terminal.inner.lock().unwrap().exited = true;
-    }
-    let clients = inner.lock().unwrap().clients.clone();
+    kill_pty(&terminal.pty);
     let message = encode_line(&Message::Notification(DaemonNotification::TerminalExited {
         session: session.clone(),
         code,
@@ -752,6 +868,7 @@ fn terminal_reader(
     for client in clients {
         let _ = client.enqueue(message.clone());
     }
+    drop(inner);
 }
 fn terminal_writer(
     mut writer: std::fs::File,
@@ -775,13 +892,17 @@ fn terminal_writer(
                         std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
                     ) =>
                 {
-                    let _ = wait_fd(
+                    if wait_fd(
                         &writer,
                         rustix::event::PollFlags::OUT
                             | rustix::event::PollFlags::ERR
                             | rustix::event::PollFlags::HUP,
                         Some(Duration::from_millis(500)),
-                    );
+                    )
+                    .is_none()
+                    {
+                        return;
+                    }
                 }
                 Err(_) => return,
             }
@@ -792,17 +913,24 @@ fn wait_fd(
     file: &std::fs::File,
     events: rustix::event::PollFlags,
     timeout: Option<Duration>,
-) -> bool {
-    let mut descriptors = [rustix::event::PollFd::new(file, events)];
+) -> Option<bool> {
+    wait_fd_borrowed(file.as_fd(), events, timeout)
+}
+fn wait_fd_borrowed(
+    fd: std::os::fd::BorrowedFd<'_>,
+    events: rustix::event::PollFlags,
+    timeout: Option<Duration>,
+) -> Option<bool> {
+    let mut descriptors = [rustix::event::PollFd::new(&fd, events)];
     let timespec = timeout.map(|duration| rustix::event::Timespec {
         tv_sec: duration.as_secs() as i64,
         tv_nsec: duration.subsec_nanos() as _,
     });
     loop {
         match rustix::event::poll(&mut descriptors, timespec.as_ref()) {
-            Ok(ready) => return ready > 0,
+            Ok(ready) => return Some(ready > 0),
             Err(rustix::io::Errno::INTR) => continue,
-            Err(_) => return false,
+            Err(_) => return None,
         }
     }
 }
@@ -867,173 +995,198 @@ fn handle(
                     return (true, false);
                 }
             }
-            let ses = state
+            let Some(s) = state
                 .lock()
                 .unwrap()
                 .sessions
                 .iter()
                 .find(|s| s.id == session)
-                .cloned();
-            match ses {
-                None => err(3, "unknown session"),
-                Some(s) if s.attach.is_none() => err(4, "session cannot be attached"),
-                Some(s) => {
-                    let gate = state.lock().unwrap().open_gate.clone();
-                    let _open_guard = gate.lock().unwrap();
-                    if state.lock().unwrap().stopping {
-                        reply(w, id, err(7, "daemon is stopping"));
-                        return (true, false);
-                    }
-                    let mut reader_file = None;
-                    let existing = state
-                        .lock()
-                        .unwrap()
-                        .terminals
-                        .get(&session)
-                        .filter(|t| !t.inner.lock().unwrap().exited)
-                        .cloned();
-                    let terminal = if let Some(t) = existing {
-                        let mut inner = t.inner.lock().unwrap();
-                        let mut pty = t.pty.lock().unwrap();
-                        pty.on_resize(WindowSize {
-                            num_lines: rows,
-                            num_cols: cols,
-                            cell_width: 0,
-                            cell_height: 0,
-                        });
-                        inner
-                            .term
-                            .resize(TermSize::new(cols as usize, rows as usize));
-                        inner.size = (cols, rows);
-                        drop(pty);
-                        drop(inner);
-                        t
-                    } else {
-                        let program = if s.cli == AgentCli::ClaudeCode {
-                            cfg.claude_program.clone()
-                        } else {
-                            cfg.codex_program.clone().unwrap_or_else(|| "codex".into())
-                        };
-                        let mut args = s.attach.clone().unwrap();
-                        if !args.is_empty() {
-                            args.remove(0);
-                        }
-                        let options = Options {
-                            shell: Some(Shell::new(program, args)),
-                            working_directory: Some(s.cwd.into()),
-                            env: HashMap::from([
-                                ("TERM".into(), "xterm-256color".into()),
-                                ("COLORTERM".into(), "truecolor".into()),
-                            ]),
-                            ..Options::default()
-                        };
-                        match tty::new(
-                            &options,
-                            WindowSize {
-                                num_lines: rows,
-                                num_cols: cols,
-                                cell_width: 0,
-                                cell_height: 0,
-                            },
-                            0,
-                        ) {
-                            Ok(pty) => {
-                                let inner = Arc::new(Mutex::new(TerminalInner {
-                                    term: Term::new(
-                                        Default::default(),
-                                        &TermSize::new(cols as usize, rows as usize),
-                                        VoidListener,
-                                    ),
-                                    size: (cols, rows),
-                                    clients: Vec::new(),
-                                    exited: false,
-                                }));
-                                let pty = Arc::new(Mutex::new(pty));
-                                let input_file = match pty.lock().unwrap().file().try_clone() {
-                                    Ok(file) => file,
-                                    Err(error) => {
-                                        reply(w, id, err(7, &error.to_string()));
-                                        return (true, false);
-                                    }
-                                };
-                                let (input_tx, input_rx) = std::sync::mpsc::sync_channel(1024);
-                                let terminal = Arc::new(Terminal {
-                                    pty: Arc::clone(&pty),
-                                    inner: Arc::clone(&inner),
-                                    input: input_tx,
-                                });
-                                let file = match terminal.pty.lock().unwrap().file().try_clone() {
-                                    Ok(file) => file,
-                                    Err(error) => {
-                                        reply(w, id, err(7, &error.to_string()));
-                                        return (true, false);
-                                    }
-                                };
-                                let mut state_guard = state.lock().unwrap();
-                                if state_guard.stopping {
-                                    reply(w, id, err(7, "daemon is stopping"));
-                                    return (true, false);
-                                }
-                                state_guard
-                                    .terminals
-                                    .insert(session.clone(), Arc::clone(&terminal));
-                                drop(state_guard);
-                                reader_file = Some((
-                                    file,
-                                    input_file,
-                                    input_rx,
-                                    inner,
-                                    Arc::downgrade(&pty),
-                                    Arc::downgrade(&terminal),
-                                ));
-                                terminal
-                            }
-                            Err(e) => {
-                                reply(w, id, err(7, &e.to_string()));
-                                return (true, false);
-                            }
-                        }
-                    };
-                    let mut inner = terminal.inner.lock().unwrap();
-                    if inner.exited {
-                        return (true, false);
-                    }
-                    if !inner.clients.iter().any(|c| Arc::ptr_eq(c, w)) {
-                        inner.clients.push(Arc::clone(w));
-                    }
-                    opened.insert(session.clone());
-                    let snap = snapshot_ansi(&inner.term);
-                    let _ = w.enqueue(encode_line(&Message::Response {
-                        id,
-                        result: Ok(json!({})),
-                    }));
-                    let _ = w.enqueue(encode_line(&Message::Notification(
-                        DaemonNotification::TerminalOutput {
-                            session: session.clone(),
-                            data: snap,
-                        },
-                    )));
-                    drop(inner);
-                    if let Some((file, input_file, input_rx, inner, pty_ref, terminal_ref)) =
-                        reader_file
-                    {
-                        let st = Arc::clone(state);
-                        let name = session.clone();
-                        let stopping = state.lock().unwrap().stop_flag.clone();
-                        let reader_thread = thread::spawn(move || {
-                            terminal_reader(file, name, inner, pty_ref, terminal_ref, st)
-                        });
-                        let writer_thread =
-                            thread::spawn(move || terminal_writer(input_file, input_rx, stopping));
-                        state
-                            .lock()
-                            .unwrap()
-                            .threads
-                            .extend([reader_thread, writer_thread]);
-                    }
-                    return (true, false);
-                }
+                .cloned()
+            else {
+                reply(w, id, err(3, "unknown session"));
+                return (true, false);
+            };
+            if s.attach.is_none() {
+                reply(w, id, err(4, "session cannot be attached"));
+                return (true, false);
             }
+            let gate = state.lock().unwrap().open_gate.clone();
+            let _open_guard = gate.lock().unwrap();
+            let mut state_guard = state.lock().unwrap();
+            if state_guard.stopping {
+                reply(w, id, err(7, "daemon is stopping"));
+                return (true, false);
+            }
+            let mut stale = None;
+            let existing = state_guard.terminals.get(&session).cloned();
+            let terminal = if let Some(existing) = existing {
+                let mut inner = existing.inner.lock().unwrap();
+                if inner.exited {
+                    state_guard.terminals.remove(&session);
+                    stale = Some(existing.clone());
+                    None
+                } else {
+                    existing.pty.lock().unwrap().on_resize(WindowSize {
+                        num_lines: rows,
+                        num_cols: cols,
+                        cell_width: 0,
+                        cell_height: 0,
+                    });
+                    inner
+                        .term
+                        .resize(TermSize::new(cols as usize, rows as usize));
+                    inner.size = (cols, rows);
+                    drop(inner);
+                    Some(existing)
+                }
+            } else {
+                None
+            };
+            let mut new_terminal = None;
+            let terminal = if let Some(terminal) = terminal {
+                terminal
+            } else {
+                let program = if s.cli == AgentCli::ClaudeCode {
+                    cfg.claude_program.clone()
+                } else {
+                    cfg.codex_program.clone().unwrap_or_else(|| "codex".into())
+                };
+                let mut args = s.attach.clone().unwrap();
+                if !args.is_empty() {
+                    args.remove(0);
+                }
+                let options = Options {
+                    shell: Some(Shell::new(program, args)),
+                    working_directory: Some(s.cwd.into()),
+                    env: HashMap::from([
+                        ("TERM".into(), "xterm-256color".into()),
+                        ("COLORTERM".into(), "truecolor".into()),
+                    ]),
+                    ..Options::default()
+                };
+                let pty = match tty::new(
+                    &options,
+                    WindowSize {
+                        num_lines: rows,
+                        num_cols: cols,
+                        cell_width: 0,
+                        cell_height: 0,
+                    },
+                    0,
+                ) {
+                    Ok(pty) => Arc::new(Mutex::new(pty)),
+                    Err(error) => {
+                        drop(state_guard);
+                        if let Some(stale) = stale {
+                            kill_pty(&stale.pty);
+                            drop(stale);
+                        }
+                        reply(w, id, err(7, &error.to_string()));
+                        return (true, false);
+                    }
+                };
+                let inner = Arc::new(Mutex::new(TerminalInner {
+                    term: Term::new(
+                        Default::default(),
+                        &TermSize::new(cols as usize, rows as usize),
+                        VoidListener,
+                    ),
+                    size: (cols, rows),
+                    clients: Vec::new(),
+                    exited: false,
+                }));
+                let input_file_result = { pty.lock().unwrap().file().try_clone() };
+                let input_file = match input_file_result {
+                    Ok(file) => file,
+                    Err(error) => {
+                        kill_pty(&pty);
+                        drop(state_guard);
+                        drop(pty);
+                        if let Some(stale) = stale {
+                            kill_pty(&stale.pty);
+                            drop(stale);
+                        }
+                        reply(w, id, err(7, &error.to_string()));
+                        return (true, false);
+                    }
+                };
+                let reader_file_result = { pty.lock().unwrap().file().try_clone() };
+                let reader_file = match reader_file_result {
+                    Ok(file) => file,
+                    Err(error) => {
+                        kill_pty(&pty);
+                        drop(state_guard);
+                        drop(pty);
+                        if let Some(stale) = stale {
+                            kill_pty(&stale.pty);
+                            drop(stale);
+                        }
+                        reply(w, id, err(7, &error.to_string()));
+                        return (true, false);
+                    }
+                };
+                let (input_tx, input_rx) = std::sync::mpsc::sync_channel(1024);
+                let terminal = Arc::new(Terminal {
+                    pty: Arc::clone(&pty),
+                    inner: Arc::clone(&inner),
+                    input: input_tx,
+                });
+                state_guard
+                    .terminals
+                    .insert(session.clone(), Arc::clone(&terminal));
+                new_terminal = Some((reader_file, input_file, input_rx, inner));
+                terminal
+            };
+            let mut inner = terminal.inner.lock().unwrap();
+            if inner.exited {
+                drop(inner);
+                state_guard.terminals.remove(&session);
+                drop(state_guard);
+                kill_pty(&terminal.pty);
+                drop(terminal);
+                if let Some(stale) = stale {
+                    kill_pty(&stale.pty);
+                    drop(stale);
+                }
+                reply(w, id, err(7, "terminal exited while opening"));
+                return (true, false);
+            }
+            if !inner.clients.iter().any(|client| Arc::ptr_eq(client, w)) {
+                inner.clients.push(Arc::clone(w));
+            }
+            opened.insert(session.clone());
+            let snapshot = snapshot_ansi(&inner.term);
+            let _ = w.enqueue(encode_line(&Message::Response {
+                id,
+                result: Ok(json!({})),
+            }));
+            let _ = w.enqueue(encode_line(&Message::Notification(
+                DaemonNotification::TerminalOutput {
+                    session: session.clone(),
+                    data: snapshot,
+                },
+            )));
+            if let Some((file, input_file, input_rx, inner)) = new_terminal {
+                let st = Arc::clone(state);
+                let name = session.clone();
+                let stopping = Arc::clone(&state_guard.stop_flag);
+                let writer_stopping = Arc::clone(&stopping);
+                let terminal = Arc::clone(&terminal);
+                let reader_thread = thread::spawn(move || {
+                    terminal_reader(file, name, inner, terminal, st, stopping)
+                });
+                register_thread(&mut state_guard, reader_thread);
+                let writer_thread =
+                    thread::spawn(move || terminal_writer(input_file, input_rx, writer_stopping));
+                register_thread(&mut state_guard, writer_thread);
+            }
+            drop(inner);
+            drop(state_guard);
+            if let Some(stale) = stale {
+                kill_pty(&stale.pty);
+                drop(stale);
+            }
+            return (true, false);
         }
         ClientRequest::TerminalInput { session, data } => terminal_for(state, &session, w)
             .map_or_else(
@@ -1104,15 +1257,38 @@ fn handle(
                             )
                                 .1;
                         };
-                        let sender = state.lock().unwrap().codex_stops.clone();
+                        let (sender, wake, pending) = {
+                            let state = state.lock().unwrap();
+                            (
+                                state.codex_stops.clone(),
+                                Arc::clone(&state.codex_wake),
+                                Arc::clone(&state.codex_stop_pending),
+                            )
+                        };
                         let outcome = if let Some(sender) = sender {
                             let (tx, rx) = std::sync::mpsc::sync_channel(1);
-                            sender
-                                .try_send((thread_id.to_owned(), tx))
+                            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                            let queued = {
+                                let _guard = wake.mutex.lock().unwrap();
+                                let result = sender.try_send(StopRequest {
+                                    thread_id: thread_id.to_owned(),
+                                    deadline,
+                                    response: tx,
+                                });
+                                if result.is_ok() {
+                                    pending.store(true, Ordering::Release);
+                                    wake.condition.notify_all();
+                                }
+                                result
+                            };
+                            queued
                                 .map_err(|_| "Codex stop queue is full".to_owned())
                                 .and_then(|_| {
-                                    rx.recv_timeout(Duration::from_secs(10))
-                                        .map_err(|_| "Codex interrupt timed out".to_owned())?
+                                    rx.recv_timeout(
+                                        deadline
+                                            .saturating_duration_since(std::time::Instant::now()),
+                                    )
+                                    .map_err(|_| "Codex interrupt timed out".to_owned())?
                                 })
                         } else {
                             Err("Codex unavailable".to_owned())
@@ -1168,5 +1344,25 @@ mod timeout_tests {
             .unwrap_err();
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
         assert!(start.elapsed() < Duration::from_secs(2));
+    }
+
+    #[test]
+    fn inherited_pipe_does_not_extend_command_timeout() {
+        let started = std::time::Instant::now();
+        let pid_file =
+            std::env::temp_dir().join(format!("titan-agentd-timeout-child-{}", std::process::id()));
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "sleep 60 & echo $! > \"$1\"; exit 0",
+            "sh",
+            pid_file.to_str().unwrap(),
+        ]);
+        let output = run_with_timeout(&mut command, Duration::from_millis(200)).unwrap();
+        assert!(output.status.success());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let _ = Command::new("kill").args(["-KILL", pid.trim()]).status();
+        let _ = std::fs::remove_file(pid_file);
     }
 }
