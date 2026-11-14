@@ -24,6 +24,12 @@ pub struct Span {
 pub struct StyledLine {
     pub spans: Vec<Span>,
 }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CellSpan {
+    pub column: u16,
+    pub cells: u16,
+    pub span: Span,
+}
 pub struct TerminalModel {
     term: Term<VoidListener>,
     parser: Processor,
@@ -35,7 +41,7 @@ impl TerminalModel {
         Self {
             term: Term::new(Config::default(), &size, VoidListener),
             parser: Processor::new(),
-            size: (cols.max(1), rows.max(1)),
+            size: (cols, rows),
         }
     }
     pub fn feed(&mut self, bytes: &[u8]) {
@@ -45,21 +51,24 @@ impl TerminalModel {
         }
     }
     pub fn resize(&mut self, cols: u16, rows: u16) {
-        self.size = (cols.max(1), rows.max(1));
+        self.size = (cols, rows);
         self.term.resize(TermSize::new(
             self.size.0.max(2) as usize,
-            self.size.1 as usize,
+            self.size.1.max(1) as usize,
         ));
     }
     pub fn size(&self) -> (u16, u16) {
         self.size
     }
     pub fn cursor(&self) -> Option<(u16, u16)> {
-        if !self.term.mode().contains(TermMode::SHOW_CURSOR) {
+        if self.size.0 == 0 || self.size.1 == 0 || !self.term.mode().contains(TermMode::SHOW_CURSOR)
+        {
             return None;
         }
         let p = self.term.grid().cursor.point;
-        Some((p.line.0.max(0) as u16, p.column.0 as u16))
+        let row = p.line.0.clamp(0, i32::from(self.size.1.saturating_sub(1))) as u16;
+        let col = p.column.0.min(usize::from(self.size.0.saturating_sub(1))) as u16;
+        Some((row, col))
     }
     pub fn key_modes(&self) -> KeyModes {
         KeyModes {
@@ -68,9 +77,17 @@ impl TerminalModel {
         }
     }
     pub fn lines(&self) -> Vec<StyledLine> {
+        self.cell_lines()
+            .into_iter()
+            .map(|line| StyledLine {
+                spans: line.into_iter().map(|item| item.span).collect(),
+            })
+            .collect()
+    }
+    pub fn cell_lines(&self) -> Vec<Vec<CellSpan>> {
         let mut result = Vec::new();
         for row in 0..self.size.1 {
-            let mut spans: Vec<Span> = Vec::new();
+            let mut spans: Vec<CellSpan> = Vec::new();
             let mut col = 0;
             while col < usize::from(self.size.0) {
                 let cell = &self.term.grid()[Line(row as i32)][Column(col)];
@@ -82,6 +99,9 @@ impl TerminalModel {
                     if index < 8 {
                         fg = theme::ANSI[index + 8];
                     }
+                }
+                if bold && let Color::Indexed(index @ 0..=7) = cell.fg {
+                    fg = theme::ANSI[index as usize + 8];
                 }
                 if flags.contains(Flags::INVERSE) {
                     std::mem::swap(&mut fg, &mut bg)
@@ -104,35 +124,46 @@ impl TerminalModel {
                     col += 1;
                     continue;
                 }
+                let remaining = usize::from(self.size.0).saturating_sub(col);
+                let wide = flags.contains(Flags::WIDE_CHAR);
                 let mut text = String::new();
-                text.push(cell.c);
-                if let Some(z) = cell.zerowidth() {
+                text.push(if wide && remaining < 2 { ' ' } else { cell.c });
+                if !(wide && remaining < 2)
+                    && let Some(z) = cell.zerowidth()
+                {
                     text.extend(z)
                 }
-                let width = if flags.contains(Flags::WIDE_CHAR) {
-                    2
+                let width = if wide && remaining >= 2 { 2 } else { 1 };
+                if let Some(last) = spans.last_mut().filter(|s| {
+                    (
+                        s.span.fg,
+                        s.span.bg,
+                        s.span.bold,
+                        s.span.italic,
+                        s.span.underline,
+                        s.span.strikeout,
+                    ) == style
+                }) {
+                    last.span.text.push_str(&text);
+                    last.cells = last.cells.saturating_add(width as u16);
                 } else {
-                    1
-                };
-                if let Some(last) = spans
-                    .last_mut()
-                    .filter(|s| (s.fg, s.bg, s.bold, s.italic, s.underline, s.strikeout) == style)
-                {
-                    last.text.push_str(&text)
-                } else {
-                    spans.push(Span {
-                        text,
-                        fg,
-                        bg,
-                        bold,
-                        italic: style.3,
-                        underline: style.4,
-                        strikeout: style.5,
+                    spans.push(CellSpan {
+                        column: col as u16,
+                        cells: width as u16,
+                        span: Span {
+                            text,
+                            fg,
+                            bg,
+                            bold,
+                            italic: style.3,
+                            underline: style.4,
+                            strikeout: style.5,
+                        },
                     })
                 }
                 col += width;
             }
-            result.push(StyledLine { spans });
+            result.push(spans);
         }
         result
     }
@@ -163,4 +194,66 @@ fn color(c: Color) -> u32 {
 fn mix(fg: u32, bg: u32) -> u32 {
     let ch = |shift: u32| ((2 * ((fg >> shift) & 255) + ((bg >> shift) & 255)) / 3) & 255;
     (ch(16) << 16) | (ch(8) << 8) | ch(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declared_one_column_size_clamps_cursor_and_output_width() {
+        let mut model = TerminalModel::new(1, 2);
+        model.feed("界".as_bytes());
+        assert_eq!(model.size(), (1, 2));
+        assert_eq!(model.cursor(), Some((0, 0)));
+        assert_eq!(model.lines().len(), 2);
+        assert_eq!(
+            model.lines()[0]
+                .spans
+                .iter()
+                .map(|s| s.text.as_str())
+                .collect::<String>()
+                .chars()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn zero_declared_dimensions_are_preserved() {
+        let mut model = TerminalModel::new(0, 0);
+        assert_eq!(model.size(), (0, 0));
+        assert!(model.lines().is_empty());
+        assert_eq!(model.cursor(), None);
+        model.resize(0, 2);
+        assert_eq!(model.size(), (0, 2));
+        assert_eq!(model.lines().len(), 2);
+        assert!(model.lines().iter().all(|line| line.spans.is_empty()));
+    }
+
+    #[test]
+    fn bold_brightens_low_indexed_foreground_colors() {
+        for index in 0..=7 {
+            let mut model = TerminalModel::new(4, 1);
+            model.feed(format!("\x1b[1;38;5;{index}mX").as_bytes());
+            assert_eq!(
+                model.lines()[0].spans[0].fg,
+                theme::ANSI[index as usize + 8]
+            );
+        }
+    }
+
+    #[test]
+    fn cell_spans_report_their_start_columns_and_widths() {
+        let mut model = TerminalModel::new(8, 1);
+        model.feed("A\x1b[31m界\x1b[32mB".as_bytes());
+        let spans = model.cell_lines();
+        assert_eq!(
+            spans[0]
+                .iter()
+                .map(|s| (s.column, s.cells))
+                .collect::<Vec<_>>(),
+            vec![(0, 1), (1, 2), (3, 1), (4, 4)]
+        );
+    }
 }
