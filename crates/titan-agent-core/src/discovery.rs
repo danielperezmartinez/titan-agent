@@ -112,10 +112,7 @@ pub fn session_from_codex_thread(
                 .map(|s| s.chars().take(60).collect())
         })
         .unwrap_or_else(|| id.chars().take(8).collect());
-    let started_at = t
-        .get("createdAt")
-        .and_then(Value::as_f64)
-        .and_then(|n| (n.trunc() as i64).checked_mul(1000));
+    let started_at = t.get("createdAt").and_then(created_at_millis);
     Some(Session {
         id: format!("codex:{id}"),
         cli: AgentCli::Codex,
@@ -137,6 +134,23 @@ pub fn session_from_codex_thread(
             None
         },
     })
+}
+fn created_at_millis(value: &Value) -> Option<i64> {
+    let number = value.as_number()?;
+    if let Some(seconds) = number.as_i64() {
+        return seconds.checked_mul(1000);
+    }
+    if let Some(seconds) = number.as_u64() {
+        return i64::try_from(seconds).ok()?.checked_mul(1000);
+    }
+    let seconds = number.as_f64()?;
+    if !seconds.is_finite()
+        || seconds.trunc() < i64::MIN as f64
+        || seconds.trunc() >= 9_223_372_036_854_775_808.0
+    {
+        return None;
+    }
+    (seconds.trunc() as i64).checked_mul(1000)
 }
 pub fn project_name(root: &str) -> String {
     let p = root.trim_end_matches('/');
@@ -168,6 +182,9 @@ pub fn fallback_project(cwd: &str, has_git: &dyn Fn(&str) -> bool) -> Project {
             break;
         }
     }
+    if start.is_empty() {
+        start = "/".into();
+    }
     let mut p = start.clone();
     loop {
         if has_git(&p) {
@@ -194,5 +211,47 @@ pub fn fallback_project(cwd: &str, has_git: &dyn Fn(&str) -> bool) -> Project {
     Project {
         root: cwd.into(),
         name: project_name(cwd),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::cell::RefCell;
+
+    fn project(_: &str) -> Project {
+        Project {
+            root: "/work/example".into(),
+            name: "example".into(),
+        }
+    }
+
+    #[test]
+    fn created_at_integer_precision_and_overflow_are_preserved() {
+        for (input, expected) in [
+            ("9007199254740993", Some(9_007_199_254_740_993_000_i64)),
+            ("9223372036854775", Some(9_223_372_036_854_775_000_i64)),
+            ("9223372036854776", None),
+        ] {
+            let thread = json!({"id":"thread", "cwd":"/work/example", "createdAt":input.parse::<serde_json::Number>().unwrap()});
+            assert_eq!(
+                session_from_codex_thread(&thread, &project)
+                    .unwrap()
+                    .started_at,
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn worktree_cut_at_root_checks_root_for_git() {
+        let calls = RefCell::new(Vec::new());
+        let result = fallback_project("/.claude/worktrees/example", &|path| {
+            calls.borrow_mut().push(path.to_owned());
+            path == "/"
+        });
+        assert_eq!(*calls.borrow(), vec!["/"]);
+        assert_eq!(result.root, "/");
     }
 }
