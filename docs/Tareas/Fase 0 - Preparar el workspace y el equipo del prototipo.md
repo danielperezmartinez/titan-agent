@@ -1,11 +1,11 @@
 ---
 Nombre: Fase 0 - Preparar el workspace y el equipo del prototipo
-Estado: Pendiente
+Estado: En curso
 Resumen: Copiar al repo el prototipo del equipo (bin/team, .agents/team.toml adaptado a Rust, prompts, esquema del revisor y skill equipo) desde la sandbox multiagente, sin modificar la sandbox, y crear el workspace de Cargo con la versión de Rust y de GPUI fijadas y el CI compilando.
-Decisiones: ''
+Decisiones: 'Usuario (2026-11-14): revisor gpt-6.1-sol con esfuerzo high; diseñador de tests gpt-6.1-sol (esfuerzo medium, a criterio de Opus); vocabularios del catálogo técnico aceptados. GPUI fijado al tag estable v1.28.1 de Zed por git (ADR-0006). Rust 1.99.1.'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T15:28:51+01:00
+Última modificación: 2026-11-14T17:50:00+01:00
 ---
 
 # Fase 0 - Preparar el workspace y el equipo del prototipo
@@ -50,4 +50,42 @@ Dejar el repo listo para construir titan-agent con el equipo
 
 ## Verificación
 
+En local, rama `chore/fase-0-workspace` (2026-11-14):
+
+- `cargo build --workspace`, `cargo fmt --all --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings` y
+  `cargo test --workspace` en verde (9 tests del núcleo). Primer build con GPUI:
+  unos 3,5 min.
+- `python3 -m unittest discover -s bin -p 'test_*.py'`: 11 tests del prototipo
+  adaptado, en verde (sin llamar a Codex).
+- `bin/team roles` muestra el equipo de este repo.
+- Encargo de prueba `tipos-sesion` por el flujo completo: tests (Sol medium,
+  62 s), implementación (Luna medium, 56 s, 9/9), revisión (Sol high, 32 s,
+  `changes_requested` por la entrada del catálogo, que añadió el director sin
+  otra ronda). 3 llamadas a Codex, 2 de cuota de Sol.
+- Hooks de gitleaks en cada commit, sin fugas.
+- PR [#1](https://github.com/danielperezmartinez/titan-agent/pull/1): `Cambios`,
+  `Verificar` (9 tests de Rust y 11 de `bin/team`; 4 min 19 s sin caché),
+  `Fugas` y `Windows` (4 min 43 s) en verde.
+- **Pendiente**: la autorización del usuario para integrar la PR.
+
 ## Resultado
+
+- Workspace de Cargo con `titan-agent-core`, `titan-agentd`, `titan-agent`
+  (GPUI) y `titan-team` (vacío hasta la fase 3); Rust 1.99.1; GPUI por git al
+  tag v1.28.1 de Zed ([[Decisiones/ADR-0006 GPUI desde el repositorio de Zed fijado a un tag estable]]).
+  En Linux enlaza con xcb, xkbcommon, fontconfig y freetype; el CI los instala.
+- Prototipo del equipo copiado sin tocar la sandbox y adaptado: `team.toml` de
+  este repo, prompts para Rust, rutas con comodines (`crates/*/tests/`),
+  `project.test_timeout_s`, `team new --base <rama>` y sin el adaptador
+  `claude -p` (ADR-0001). La skill `equipo` explica `--base` y la publicación
+  por PR.
+- Hallazgo del encargo de prueba: los roles de Codex leen `AGENTS.md` y aplican
+  el protocolo de la bóveda; Luna marcó la fase 1 como `En curso`. Se revirtió y
+  los prompts y `forbidden_paths` dejan `docs/` al director.
+- Cuota: cada llamada a Codex entra con 130–195k tokens (la mayoría en caché)
+  porque lee el protocolo de la bóveda; vigilar en encargos grandes.
+- Primera pieza del catálogo: [[Catálogo técnico/Tipos de sesión]].
+- CI: librerías de GPUI, caché de Cargo, tests de `bin/team` y job `Windows`
+  (no obligatorio).
+

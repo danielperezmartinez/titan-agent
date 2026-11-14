@@ -4,3 +4,11 @@ docs/.obsidian/workspace-mobile.json
 docs/.obsidian/cache
 .claude/settings.local.json
 .previa/
+# Rust
+/target/
+# Worktrees locales (sesiones de Claude Code y encargos del equipo)
+.claude/worktrees/
+.agents/worktrees/
+# Estado del equipo: sus salidas pueden contener datos del entorno
+.agents/state/
+__pycache__/

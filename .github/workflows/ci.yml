@@ -2,9 +2,11 @@
 # "Seguridad, coste y cumplimiento".
 # - Cambios: detecta si hay algo fuera de docs/. Un cambio de solo bóveda omite
 #   Verificar (un check omitido cuenta como superado).
-# - Verificar: versión, formato, clippy y tests de Rust. Se omite mientras no
-#   exista Cargo.toml. GPUI necesita librerías del sistema en Linux: la fase 1
-#   las añade aquí.
+# - Verificar: versión, formato, clippy y tests de Rust, y los tests del
+#   prototipo del equipo (bin/team). Se omite mientras no exista Cargo.toml.
+#   GPUI enlaza en Linux con xcb, xkbcommon, fontconfig y freetype.
+# - Windows: compila y prueba el workspace en Windows. No es un check
+#   obligatorio para integrar.
 # - Fugas: gitleaks sobre el historial, los mensajes, la rama y el texto de la
 #   PR. Corre siempre. Solo usa los patrones genéricos del repo.
 name: CI
@@ -56,16 +58,56 @@ jobs:
       - name: La versión supera la de la rama principal
         if: github.event_name == 'pull_request' && hashFiles('Cargo.toml') != ''
         run: sh scripts/comprobar-version.sh "${{ github.event.pull_request.base.sha }}"
+      - name: Librerías del sistema para GPUI
+        if: hashFiles('Cargo.toml') != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libwayland-dev libfontconfig-dev libfreetype-dev
+      - name: Caché de Cargo
+        if: hashFiles('Cargo.toml') != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
       - name: Formato, clippy y tests
         if: hashFiles('Cargo.toml') != ''
         run: |
-          rustup component add rustfmt clippy
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
+      - name: Tests del prototipo del equipo
+        if: hashFiles('bin/team') != ''
+        run: python3 -m unittest discover -s bin -p 'test_*.py' -v
       - name: Sin proyecto Rust todavía
         if: hashFiles('Cargo.toml') == ''
         run: echo "Aún no hay Cargo.toml; nada que compilar."
+
+  windows:
+    name: Windows
+    needs: cambios
+    if: needs.cambios.outputs.codigo == 'true'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Caché de Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - name: Build y tests
+        run: |
+          cargo build --workspace
+          cargo test --workspace
 
   fugas:
     name: Fugas
