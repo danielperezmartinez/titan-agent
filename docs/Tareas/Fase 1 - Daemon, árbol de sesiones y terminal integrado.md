@@ -3,9 +3,9 @@ Nombre: Fase 1 - Daemon, árbol de sesiones y terminal integrado
 Estado: Pendiente
 Resumen: Primera versión usable - titan-agentd descubre las sesiones de Claude Code y Codex y mantiene los terminales; la interfaz GPUI muestra la ventana principal con el árbol de sesiones por proyecto y, al elegir una, su terminal con el CLI oficial en el que escribe el usuario.
 Decisiones: ''
-Bloqueada: ["[[Fase 0 - Preparar el workspace y el equipo del prototipo]]"]
+Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T15:28:51+01:00
+Última modificación: 2026-11-14T18:40:00+01:00
 ---
 
 # Fase 1 - Daemon, árbol de sesiones y terminal integrado

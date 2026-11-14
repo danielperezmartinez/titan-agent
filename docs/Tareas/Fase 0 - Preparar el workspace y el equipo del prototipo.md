@@ -1,11 +1,11 @@
 ---
 Nombre: Fase 0 - Preparar el workspace y el equipo del prototipo
-Estado: En curso
+Estado: Hecha
 Resumen: Copiar al repo el prototipo del equipo (bin/team, .agents/team.toml adaptado a Rust, prompts, esquema del revisor y skill equipo) desde la sandbox multiagente, sin modificar la sandbox, y crear el workspace de Cargo con la versión de Rust y de GPUI fijadas y el CI compilando.
 Decisiones: 'Usuario (2026-11-14): revisor gpt-6.1-sol con esfuerzo high; diseñador de tests gpt-6.1-sol (esfuerzo medium, a criterio de Opus); vocabularios del catálogo técnico aceptados. GPUI fijado al tag estable v1.28.1 de Zed por git (ADR-0006). Rust 1.99.1.'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T17:50:00+01:00
+Última modificación: 2026-11-14T18:40:00+01:00
 ---
 
 # Fase 0 - Preparar el workspace y el equipo del prototipo
@@ -67,7 +67,10 @@ En local, rama `chore/fase-0-workspace` (2026-11-14):
 - PR [#1](https://github.com/danielperezmartinez/titan-agent/pull/1): `Cambios`,
   `Verificar` (9 tests de Rust y 11 de `bin/team`; 4 min 19 s sin caché),
   `Fugas` y `Windows` (4 min 43 s) en verde.
-- **Pendiente**: la autorización del usuario para integrar la PR.
+- PR #1 integrada con squash con autorización del usuario: commit `317eea3` en
+  `main`. No publica versión (sin tag). El squash salió con el correo principal
+  de la cuenta (ver [[Seguridad/Checklist de lanzamiento]]); el usuario lo dio
+  por bueno.
 
 ## Resultado
 

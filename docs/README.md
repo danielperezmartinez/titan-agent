@@ -252,6 +252,9 @@ enlazan en vez de repetirla.
   propia versión.
 - Los commits, incluidos los squash que hace la plataforma, usan el correo
   privado de la forja (p. ej. `…@users.noreply.github.com`), nunca uno personal.
+  Al integrar con `gh pr merge --squash` se pasa siempre
+  `--author-email <correo noreply>`: sin él, GitHub usa el correo principal de
+  la cuenta si no está activado *Keep my email address private*.
 - Configuración: job `Cambios` en el CI (un cambio de solo bóveda omite
   `Verificar`); guarda en `.githooks/pre-push`. En GitHub: protección de `main`
   con los checks estrictos, `enforce_admins=false`, historial lineal e

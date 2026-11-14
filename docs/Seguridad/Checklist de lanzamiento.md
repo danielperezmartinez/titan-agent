@@ -4,7 +4,7 @@ Tipo: Checklist
 Estado: Pendiente
 Resumen: Estado de la configuración fuera del código (ajustes del repo en GitHub, hooks en cada clon, firma y canales de distribución) que ningún test del repo comprueba. Sección GitHub revisada el 2026-11-14 salvo el correo privado de la cuenta; distribución y accesibilidad pendientes.
 Última revisión: 2026-11-14
-Última modificación: 2026-11-14T18:10:00+01:00
+Última modificación: 2026-11-14T18:40:00+01:00
 ---
 
 # Checklist de lanzamiento
@@ -35,7 +35,11 @@ trimestre.
       `.github/dependabot.yml`; GPUI se excluye porque se sube a mano (ADR-0006).
 - [ ] Correo privado de GitHub activado (*Keep my email address private*). Los
       commits usan el correo noreply; el ajuste de la cuenta no se puede
-      comprobar por API y lo revisa el usuario.
+      comprobar por API y lo revisa el usuario. Incidencia del 2026-11-14: el
+      squash de la PR #1 (`317eea3`) salió con el correo principal de la
+      cuenta; el usuario decidió dejarlo (ya es público en su perfil). Desde
+      entonces se integra con `--author-email`. Conviene activar también
+      *Block command line pushes that expose my email*.
 
 ## Distribución
 
@@ -52,4 +56,4 @@ autoactualización) antes de la primera versión. -->
 | Fecha | Quién | Notas |
 | --- | --- | --- |
 | 2026-11-14 | diseño: titan-agent | Checklist creada; repo aún sin remoto. |
-| 2026-11-14 | titan-agent: implementación | Repo creado; sección GitHub revisada salvo el correo privado de la cuenta. |
+| 2026-11-14 | titan-agent: implementación | Repo creado; sección GitHub revisada salvo el correo privado de la cuenta. Squash de la PR #1 con el correo principal: aceptado por el usuario. |
