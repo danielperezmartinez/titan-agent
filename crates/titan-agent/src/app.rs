@@ -39,6 +39,9 @@ pub(crate) struct MainWindow {
     notification_generation: Arc<AtomicU64>,
     open_pending: bool,
     open_queued: bool,
+    terminal_open_size: Option<(u16, u16)>,
+    pending_terminal_resize: Option<(u16, u16)>,
+    terminal_snapshot_received: bool,
     terminal_size: Option<(u16, u16)>,
     terminal: Option<TerminalModel>,
     terminal_session: Option<String>,
@@ -75,6 +78,9 @@ impl MainWindow {
             notification_generation: Arc::new(AtomicU64::new(0)),
             open_pending: false,
             open_queued: false,
+            terminal_open_size: None,
+            pending_terminal_resize: None,
+            terminal_snapshot_received: false,
             terminal_size: None,
             terminal: None,
             terminal_session: None,
@@ -206,11 +212,28 @@ impl MainWindow {
                 self.open_queued = false;
                 match event.result {
                     Ok(_) => {
-                        let mut terminal = TerminalModel::new(cols, rows);
+                        let open_size = self.terminal_open_size.unwrap_or((cols, rows));
+                        let mut terminal = TerminalModel::new(open_size.0, open_size.1);
                         self.terminal_output_after = event.notification_cutoff;
-                        for (sequence, bytes) in self.terminal_pending.drain(..) {
+                        for (sequence, bytes) in std::mem::take(&mut self.terminal_pending) {
                             if sequence > event.notification_cutoff {
                                 terminal.feed(&bytes);
+                                if !self.terminal_snapshot_received {
+                                    self.terminal_snapshot_received = true;
+                                    self.terminal_open_size = None;
+                                    if let Some((cols, rows)) = self.pending_terminal_resize.take()
+                                    {
+                                        terminal.resize(cols, rows);
+                                        self.enqueue(
+                                            ClientRequest::TerminalResize {
+                                                session: session.clone(),
+                                                cols,
+                                                rows,
+                                            },
+                                            event.generation,
+                                        );
+                                    }
+                                }
                             }
                         }
                         self.exited = self
@@ -218,24 +241,14 @@ impl MainWindow {
                             .take()
                             .filter(|(sequence, _)| *sequence > event.notification_cutoff)
                             .map(|(_, code)| code);
-                        if let Some((target_cols, target_rows)) = self.terminal_size
-                            && (target_cols, target_rows) != (cols, rows)
-                        {
-                            terminal.resize(target_cols, target_rows);
-                            self.enqueue(
-                                ClientRequest::TerminalResize {
-                                    session,
-                                    cols: target_cols,
-                                    rows: target_rows,
-                                },
-                                event.generation,
-                            );
-                        }
                         self.terminal = Some(terminal);
                     }
                     Err(error) => {
                         self.stop_error = Some(error_text(&error));
                         self.terminal_session = None;
+                        self.terminal_open_size = None;
+                        self.pending_terminal_resize = None;
+                        self.terminal_snapshot_received = false;
                         self.terminal_pending.clear();
                         self.terminal_pending_exit = None;
                     }
@@ -272,10 +285,34 @@ impl MainWindow {
                     && self.terminal_session.as_deref() == Some(&session)
                     && sequence > self.terminal_output_after
                 {
+                    let mut pending_resize = None;
                     if let Some(t) = &mut self.terminal {
                         t.feed(&data);
+                        if !self.terminal_snapshot_received {
+                            self.terminal_snapshot_received = true;
+                            self.terminal_open_size = None;
+                            if let Some((sequence, code)) = self.terminal_pending_exit.take()
+                                && sequence > self.terminal_output_after
+                            {
+                                self.exited = Some(code);
+                            }
+                            pending_resize = self.pending_terminal_resize.take();
+                            if let Some((cols, rows)) = pending_resize {
+                                t.resize(cols, rows);
+                            }
+                        }
                     } else if self.open_pending {
                         self.terminal_pending.push((sequence, data));
+                    }
+                    if let Some((cols, rows)) = pending_resize {
+                        self.enqueue(
+                            ClientRequest::TerminalResize {
+                                session,
+                                cols,
+                                rows,
+                            },
+                            generation,
+                        );
                     }
                 }
             }
@@ -284,7 +321,7 @@ impl MainWindow {
                     && self.terminal_generation == self.generation
                     && self.terminal_session.as_deref() == Some(&session)
                 {
-                    if self.open_pending {
+                    if !self.terminal_snapshot_received {
                         self.terminal_pending_exit = Some((sequence, code));
                     } else if sequence > self.terminal_output_after {
                         self.exited = Some(code);
@@ -306,6 +343,9 @@ impl MainWindow {
             .store(self.generation, Ordering::Release);
         self.open_pending = false;
         self.open_queued = false;
+        self.terminal_open_size = None;
+        self.pending_terminal_resize = None;
+        self.terminal_snapshot_received = false;
         self.terminal = None;
         self.terminal_pending.clear();
         self.terminal_pending_exit = None;
@@ -343,6 +383,9 @@ impl MainWindow {
         self.terminal_size = None;
         self.open_pending = true;
         self.open_queued = false;
+        self.terminal_open_size = None;
+        self.pending_terminal_resize = None;
+        self.terminal_snapshot_received = false;
         self.exited = None;
         cx.notify();
     }
@@ -352,9 +395,6 @@ impl MainWindow {
             return;
         }
         self.terminal_size = Some(size);
-        if let Some(model) = &mut self.terminal {
-            model.resize(size.0, size.1);
-        }
         if self.open_pending {
             if size.0 == 0 || size.1 == 0 {
                 return;
@@ -362,6 +402,7 @@ impl MainWindow {
             if !self.open_queued {
                 self.open_queued = true;
                 if let Some(session) = self.terminal_session.clone() {
+                    self.terminal_open_size = Some(size);
                     self.enqueue(
                         ClientRequest::TerminalOpen {
                             session,
@@ -371,8 +412,18 @@ impl MainWindow {
                         self.generation,
                     );
                 }
+            } else {
+                self.pending_terminal_resize =
+                    self.terminal_open_size.ne(&Some(size)).then_some(size);
             }
             return;
+        }
+        if self.terminal_open_size.is_some() && !self.terminal_snapshot_received {
+            self.pending_terminal_resize = self.terminal_open_size.ne(&Some(size)).then_some(size);
+            return;
+        }
+        if let Some(model) = &mut self.terminal {
+            model.resize(size.0, size.1);
         }
         if self.terminal.is_some()
             && let Some(session) = self.terminal_session.clone()

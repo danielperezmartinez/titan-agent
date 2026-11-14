@@ -74,7 +74,28 @@ impl Connection {
         if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             return Err(ClientError::Timeout);
         }
-        let stream = UnixStream::connect(socket).map_err(ClientError::Io)?;
+        let stream = match deadline {
+            None => UnixStream::connect(socket).map_err(ClientError::Io)?,
+            Some(deadline) => {
+                let remaining = deadline
+                    .checked_duration_since(Instant::now())
+                    .ok_or(ClientError::Timeout)?;
+                let path = socket.to_path_buf();
+                let (tx, rx) = mpsc::channel();
+                std::thread::spawn(move || {
+                    let _ = tx.send(UnixStream::connect(path));
+                });
+                let result = match rx.recv_timeout(remaining) {
+                    Ok(result) => result,
+                    Err(mpsc::RecvTimeoutError::Timeout) => return Err(ClientError::Timeout),
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Err(ClientError::Closed),
+                };
+                if Instant::now() >= deadline {
+                    return Err(ClientError::Timeout);
+                }
+                result.map_err(ClientError::Io)?
+            }
+        };
         let reader = stream.try_clone().map_err(ClientError::Io)?;
         let control = stream.try_clone().map_err(ClientError::Io)?;
         let (ntx, nrx) = mpsc::channel();
