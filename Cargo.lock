@@ -4933,6 +4933,7 @@ version = "0.2.0"
 dependencies = [
  "alacritty_terminal",
  "base64",
+ "rustix",
  "serde",
  "serde_json",
  "titan-agent-core",
