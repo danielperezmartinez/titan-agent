@@ -94,8 +94,7 @@ fn configuration_child() {
     for args in [vec!["--unknown".into()], vec!["--socket".into()]] {
         assert!(
             !Config::from_env_and_args(args)
-                .err()
-                .expect("must reject invalid arguments")
+                .expect_err("must reject invalid arguments")
                 .is_empty()
         );
     }

@@ -207,10 +207,7 @@ impl Client {
                 if matches!(
                     error.kind(),
                     io::ErrorKind::ConnectionReset | io::ErrorKind::BrokenPipe
-                ) =>
-            {
-                ()
-            }
+                ) => {}
             other => panic!("connection should close: {other:?}"),
         }
     }

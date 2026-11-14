@@ -1,10 +1,15 @@
 use crate::{config::Config, discovery::CodexClient, snapshot::snapshot_ansi};
-use alacritty_terminal::term::{Term, test::TermSize};
+use alacritty_terminal::{
+    event::{OnResize, VoidListener, WindowSize},
+    term::{Term, test::TermSize},
+    tty::{self, Options, Shell},
+};
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, HashSet},
     fs,
-    io::{BufReader, Write},
+    io::{BufReader, Read, Write},
+    net::Shutdown,
     os::unix::{
         fs::DirBuilderExt,
         net::{UnixListener, UnixStream},
@@ -29,8 +34,14 @@ use titan_agent_core::{
 
 struct State {
     sessions: Vec<titan_agent_core::protocol::Session>,
-    subscribers: Vec<UnixStream>,
-    running: HashSet<String>,
+    subscribers: Vec<Arc<Mutex<UnixStream>>>,
+    clients: Vec<Arc<Mutex<UnixStream>>>,
+    terminals: HashMap<String, Arc<Terminal>>,
+}
+struct Terminal {
+    pty: Mutex<tty::Pty>,
+    term: Arc<Mutex<Term<VoidListener>>>,
+    clients: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
 }
 pub struct Daemon;
 pub struct DaemonHandle {
@@ -59,7 +70,8 @@ impl Daemon {
         let state = Arc::new(Mutex::new(State {
             sessions: vec![],
             subscribers: vec![],
-            running: HashSet::new(),
+            clients: vec![],
+            terminals: HashMap::new(),
         }));
         let ac = Arc::clone(&stop);
         let ast = Arc::clone(&state);
@@ -84,12 +96,13 @@ impl Daemon {
         let pc = config.clone();
         let poll = thread::spawn(move || {
             let mut old = Vec::new();
+            let mut old_claude = Vec::new();
             let projects = std::cell::RefCell::new(HashMap::<
                 String,
                 titan_agent_core::protocol::Project,
             >::new());
             while !ps.load(Ordering::Relaxed) {
-                let mut sessions = Vec::new();
+                let mut claude_sessions = old_claude.clone();
                 let output = Command::new(&pc.claude_program)
                     .args(["agents", "--json"])
                     .stdin(Stdio::null())
@@ -101,13 +114,15 @@ impl Daemon {
                                 project(cwd, &pc, &mut projects.borrow_mut())
                             });
                             if let Ok(v) = result {
-                                sessions = v
+                                claude_sessions = v
                             }
                         }
                     }
                 } else {
                     eprintln!("claude discovery failed")
                 }
+                old_claude = claude_sessions.clone();
+                let mut sessions = claude_sessions;
                 if let Some(program) = &pc.codex_program {
                     if let Ok(mut child) = Command::new(program)
                         .args(["app-server", "proxy"])
@@ -139,7 +154,7 @@ impl Daemon {
                     s.sessions = sessions.clone();
                     old = sessions.clone();
                     for stream in &mut s.subscribers {
-                        let _ = stream.write_all(
+                        let _ = stream.lock().unwrap().write_all(
                             encode_line(&Message::Notification(
                                 DaemonNotification::SessionsChanged {
                                     sessions: sessions.clone(),
@@ -150,7 +165,11 @@ impl Daemon {
                     }
                 }
                 drop(s);
-                thread::sleep(pc.poll_subscribed.min(Duration::from_millis(200)));
+                thread::sleep(if pst.lock().unwrap().subscribers.is_empty() {
+                    pc.poll_idle
+                } else {
+                    pc.poll_subscribed
+                });
             }
         });
         Ok(DaemonHandle {
@@ -174,7 +193,13 @@ impl DaemonHandle {
         if let Some(h) = self.poll.take() {
             let _ = h.join();
         }
-        self.state.lock().unwrap().subscribers.clear();
+        let mut state = self.state.lock().unwrap();
+        state.subscribers.clear();
+        for client in &state.clients {
+            let _ = client.lock().unwrap().shutdown(Shutdown::Both);
+        }
+        state.clients.clear();
+        state.terminals.clear();
         let _ = fs::remove_file(&self.socket);
     }
 }
@@ -215,12 +240,13 @@ fn project(
     cache.insert(cwd.into(), p.clone());
     p
 }
-fn client(mut stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
-    let _ = stream.set_read_timeout(Some(Duration::from_millis(100)));
+fn client(stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
+    let writer = Arc::new(Mutex::new(stream.try_clone().unwrap()));
     let reader = match stream.try_clone() {
         Ok(s) => s,
         Err(_) => return,
     };
+    state.lock().unwrap().clients.push(Arc::clone(&writer));
     let mut lines = LineReader::new(BufReader::new(reader));
     let mut hello = false;
     let mut opened = HashSet::new();
@@ -229,7 +255,7 @@ fn client(mut stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
             Ok(Some(line)) => match decode_line(&line) {
                 Ok(Message::Request { id, request }) => {
                     let (res, close) = handle(
-                        &mut stream,
+                        &writer,
                         &state,
                         &config,
                         &mut hello,
@@ -247,7 +273,7 @@ fn client(mut stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
                 Ok(_) => {}
                 Err(DecodeError::UnknownMethod { id: Some(id), .. }) => {
                     reply(
-                        &mut stream,
+                        &writer,
                         id,
                         Err((error_code::UNKNOWN_METHOD, "unknown method".into())),
                     );
@@ -255,7 +281,7 @@ fn client(mut stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
                 Err(DecodeError::InvalidParams {
                     id: Some(id),
                     message,
-                }) => reply(&mut stream, id, Err((error_code::INVALID_PARAMS, message))),
+                }) => reply(&writer, id, Err((error_code::INVALID_PARAMS, message))),
                 Err(DecodeError::InvalidJson(_) | DecodeError::TooLong) => break,
                 Err(_) => {}
             },
@@ -263,18 +289,81 @@ fn client(mut stream: UnixStream, state: Arc<Mutex<State>>, config: Config) {
             Err(_) => break,
         }
     }
-    state
+    let mut state = state.lock().unwrap();
+    state.subscribers.retain(|s| !Arc::ptr_eq(s, &writer));
+    state.clients.retain(|s| !Arc::ptr_eq(s, &writer));
+    for terminal in state.terminals.values() {
+        terminal
+            .clients
+            .lock()
+            .unwrap()
+            .retain(|s| !Arc::ptr_eq(s, &writer));
+    }
+}
+fn reply(w: &Arc<Mutex<UnixStream>>, id: u64, result: Result<Value, (i32, String)>) {
+    let r = result.map_err(|(code, message)| RpcError { code, message });
+    let _ = w
         .lock()
         .unwrap()
-        .subscribers
-        .retain(|s| s.peer_addr().is_ok());
+        .write_all(encode_line(&Message::Response { id, result: r }).as_bytes());
 }
-fn reply(w: &mut UnixStream, id: u64, result: Result<Value, (i32, String)>) {
-    let r = result.map_err(|(code, message)| RpcError { code, message });
-    let _ = w.write_all(encode_line(&Message::Response { id, result: r }).as_bytes());
+fn terminal_for(
+    state: &Arc<Mutex<State>>,
+    session: &str,
+    writer: &Arc<Mutex<UnixStream>>,
+) -> Option<Arc<Terminal>> {
+    let state = state.lock().unwrap();
+    let terminal = state.terminals.get(session)?.clone();
+    if terminal
+        .clients
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| Arc::ptr_eq(c, writer))
+    {
+        Some(terminal)
+    } else {
+        None
+    }
+}
+fn terminal_reader(
+    mut reader: std::fs::File,
+    session: String,
+    term: Arc<Mutex<Term<VoidListener>>>,
+    clients: Arc<Mutex<Vec<Arc<Mutex<UnixStream>>>>>,
+    state: Arc<Mutex<State>>,
+) {
+    use alacritty_terminal::vte::ansi::{Processor, StdSyncHandler};
+    let mut processor = Processor::<StdSyncHandler>::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        match reader.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => {
+                processor.advance(&mut *term.lock().unwrap(), &buffer[..n]);
+                let message =
+                    encode_line(&Message::Notification(DaemonNotification::TerminalOutput {
+                        session: session.clone(),
+                        data: buffer[..n].to_vec(),
+                    }));
+                let mut clients = clients.lock().unwrap();
+                clients
+                    .retain(|client| client.lock().unwrap().write_all(message.as_bytes()).is_ok());
+            }
+        }
+    }
+    let clients = clients.lock().unwrap().clone();
+    let message = encode_line(&Message::Notification(DaemonNotification::TerminalExited {
+        session: session.clone(),
+        code: None,
+    }));
+    for client in clients {
+        let _ = client.lock().unwrap().write_all(message.as_bytes());
+    }
+    state.lock().unwrap().terminals.remove(&session);
 }
 fn handle(
-    w: &mut UnixStream,
+    w: &Arc<Mutex<UnixStream>>,
     state: &Arc<Mutex<State>>,
     cfg: &Config,
     hello: &mut bool,
@@ -304,9 +393,7 @@ fn handle(
         }
         ClientRequest::SessionsList => Ok(json!({"sessions":state.lock().unwrap().sessions})),
         ClientRequest::SessionsSubscribe => {
-            if let Ok(s) = w.try_clone() {
-                state.lock().unwrap().subscribers.push(s)
-            }
+            state.lock().unwrap().subscribers.push(Arc::clone(w));
             Ok(json!({"sessions":state.lock().unwrap().sessions}))
         }
         ClientRequest::TerminalOpen {
@@ -331,60 +418,155 @@ fn handle(
                 None => err(3, "unknown session"),
                 Some(s) if s.attach.is_none() => err(4, "session cannot be attached"),
                 Some(s) => {
-                    let mut term = Term::new(
-                        Default::default(),
-                        &TermSize::new(cols as usize, rows as usize),
-                        alacritty_terminal::event::VoidListener,
-                    );
-                    let snap = snapshot_ansi(&term);
-                    let _ = &mut term;
+                    let existing = state.lock().unwrap().terminals.get(&session).cloned();
+                    let terminal = if let Some(t) = existing {
+                        let mut pty = t.pty.lock().unwrap();
+                        pty.on_resize(WindowSize {
+                            num_lines: rows,
+                            num_cols: cols,
+                            cell_width: 0,
+                            cell_height: 0,
+                        });
+                        drop(pty);
+                        t.term
+                            .lock()
+                            .unwrap()
+                            .resize(TermSize::new(cols as usize, rows as usize));
+                        t
+                    } else {
+                        let program = if s.cli == AgentCli::ClaudeCode {
+                            cfg.claude_program.clone()
+                        } else {
+                            cfg.codex_program.clone().unwrap_or_else(|| "codex".into())
+                        };
+                        let mut args = s.attach.clone().unwrap();
+                        if !args.is_empty() {
+                            args.remove(0);
+                        }
+                        let options = Options {
+                            shell: Some(Shell::new(program, args)),
+                            working_directory: Some(s.cwd.into()),
+                            env: HashMap::from([
+                                ("TERM".into(), "xterm-256color".into()),
+                                ("COLORTERM".into(), "truecolor".into()),
+                            ]),
+                            ..Options::default()
+                        };
+                        match tty::new(
+                            &options,
+                            WindowSize {
+                                num_lines: rows,
+                                num_cols: cols,
+                                cell_width: 0,
+                                cell_height: 0,
+                            },
+                            0,
+                        ) {
+                            Ok(pty) => {
+                                let term = Arc::new(Mutex::new(Term::new(
+                                    Default::default(),
+                                    &TermSize::new(cols as usize, rows as usize),
+                                    VoidListener,
+                                )));
+                                let clients = Arc::new(Mutex::new(Vec::new()));
+                                let terminal = Arc::new(Terminal {
+                                    pty: Mutex::new(pty),
+                                    term: Arc::clone(&term),
+                                    clients: Arc::clone(&clients),
+                                });
+                                let file = terminal.pty.lock().unwrap().file().try_clone();
+                                if let Ok(file) = file {
+                                    state
+                                        .lock()
+                                        .unwrap()
+                                        .terminals
+                                        .insert(session.clone(), Arc::clone(&terminal));
+                                    let st = Arc::clone(state);
+                                    let name = session.clone();
+                                    thread::spawn(move || {
+                                        terminal_reader(file, name, term, clients, st)
+                                    });
+                                }
+                                terminal
+                            }
+                            Err(e) => {
+                                reply(w, id, err(7, &e.to_string()));
+                                return (true, false);
+                            }
+                        }
+                    };
+                    {
+                        let mut clients = terminal.clients.lock().unwrap();
+                        if !clients.iter().any(|c| Arc::ptr_eq(c, w)) {
+                            clients.push(Arc::clone(w));
+                        }
+                    }
                     opened.insert(session.clone());
-                    let mut st = state.lock().unwrap();
-                    st.running.insert(session.clone());
-                    drop(st);
-                    let _ = w.write_all(
+                    let snap = snapshot_ansi(&terminal.term.lock().unwrap());
+                    let mut writer = w.lock().unwrap();
+                    let _ = writer.write_all(
                         encode_line(&Message::Response {
                             id,
                             result: Ok(json!({})),
                         })
                         .as_bytes(),
                     );
-                    let _ = w.write_all(
+                    let _ = writer.write_all(
                         encode_line(&Message::Notification(DaemonNotification::TerminalOutput {
-                            session,
+                            session: session.clone(),
                             data: snap,
                         }))
                         .as_bytes(),
                     );
-                    let program = if s.cli == AgentCli::ClaudeCode {
-                        cfg.claude_program.clone()
-                    } else {
-                        cfg.codex_program.clone().unwrap_or_else(|| "codex".into())
-                    };
-                    let mut args = s.attach.unwrap();
-                    if !args.is_empty() {
-                        args.remove(0);
-                    }
-                    let child = Command::new(program)
-                        .args(args)
-                        .current_dir(s.cwd)
-                        .env("TERM", "xterm-256color")
-                        .env("COLORTERM", "truecolor")
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn();
-                    if let Ok(mut child) = child {
-                        let _ = child.kill();
-                        let _ = child.wait();
-                    }
                     return (true, false);
                 }
             }
         }
-        ClientRequest::TerminalInput { .. }
-        | ClientRequest::TerminalResize { .. }
-        | ClientRequest::TerminalClose { .. } => err(3, "terminal not attached"),
+        ClientRequest::TerminalInput { session, data } => terminal_for(state, &session, w)
+            .map_or_else(
+                || err(3, "terminal not attached"),
+                |t| {
+                    let p = t.pty.lock().unwrap();
+                    p.file()
+                        .write_all(&data)
+                        .map(|_| json!({}))
+                        .map_err(|e| (7, e.to_string()))
+                },
+            ),
+        ClientRequest::TerminalResize {
+            session,
+            cols,
+            rows,
+        } => {
+            if cols == 0 || rows == 0 {
+                reply(w, id, err(5, "invalid dimensions"));
+                return (true, false);
+            }
+            terminal_for(state, &session, w).map_or_else(
+                || err(3, "terminal not attached"),
+                |t| {
+                    t.pty.lock().unwrap().on_resize(WindowSize {
+                        num_lines: rows,
+                        num_cols: cols,
+                        cell_width: 0,
+                        cell_height: 0,
+                    });
+                    t.term
+                        .lock()
+                        .unwrap()
+                        .resize(TermSize::new(cols as usize, rows as usize));
+                    Ok(json!({}))
+                },
+            )
+        }
+        ClientRequest::TerminalClose { session } => terminal_for(state, &session, w).map_or_else(
+            || err(3, "terminal not attached"),
+            |t| {
+                t.clients.lock().unwrap().retain(|c| !Arc::ptr_eq(c, w));
+                opened.remove(&session);
+                Ok(json!({}))
+            },
+        ),
         ClientRequest::SessionStop { session } => {
             let ses = state
                 .lock()
@@ -397,10 +579,56 @@ fn handle(
                 None => err(3, "unknown session"),
                 Some(s) if s.stop.is_none() => err(4, "stop unavailable"),
                 Some(s) => {
+                    if s.cli == AgentCli::Codex {
+                        let Some(program) = cfg.codex_program.as_ref() else {
+                            return (reply(w, id, err(4, "stop unavailable")), (true, false)).1;
+                        };
+                        let Some(thread_id) = session.strip_prefix("codex:") else {
+                            return (
+                                reply(w, id, err(7, "invalid Codex session id")),
+                                (true, false),
+                            )
+                                .1;
+                        };
+                        let outcome = (|| -> Result<(), String> {
+                            let mut child = Command::new(program)
+                                .args(["app-server", "proxy"])
+                                .stdin(Stdio::piped())
+                                .stdout(Stdio::piped())
+                                .stderr(Stdio::null())
+                                .spawn()
+                                .map_err(|e| e.to_string())?;
+                            let result = if let (Some(input), Some(output)) =
+                                (child.stdin.take(), child.stdout.take())
+                            {
+                                let mut client = CodexClient::new(BufReader::new(output), input);
+                                client
+                                    .initialize(env!("CARGO_PKG_VERSION"))
+                                    .and_then(|_| client.interrupt(thread_id))
+                                    .map(|_| ())
+                                    .map_err(|e| format!("{e:?}"))
+                            } else {
+                                Err("Codex app-server pipes unavailable".into())
+                            };
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            result
+                        })();
+                        return match outcome {
+                            Ok(()) => {
+                                reply(w, id, Ok(json!({})));
+                                (true, false)
+                            }
+                            Err(message) => {
+                                reply(w, id, Err((7, message)));
+                                (true, false)
+                            }
+                        };
+                    }
                     let program = if s.cli == AgentCli::ClaudeCode {
                         cfg.claude_program.clone()
                     } else {
-                        "codex".into()
+                        cfg.codex_program.clone().unwrap_or_else(|| "codex".into())
                     };
                     let args: Vec<String> = if s.cli == AgentCli::ClaudeCode {
                         vec!["stop".into(), session.trim_start_matches("claude:").into()]
