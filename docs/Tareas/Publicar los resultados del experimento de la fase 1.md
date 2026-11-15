@@ -5,7 +5,7 @@ Resumen: Archivar en origin las tres variantes de la fase 1 (equipo v1, solo Opu
 Decisiones: 'Ramas de archivo experimento/fase-1-equipo-v1, experimento/fase-1-opus y experimento/fase-1-equipo-v2 (usuario, 2026-11-15) · Página en GitHub Pages desde experimentos/ con un workflow propio, enlazada desde un README.md raíz (usuario) · Versión 0.2.1, patch (usuario) · Capturas con datos inventados: --fixture en la v2 y CLI falsos en la v1 y la opus'
 Bloqueada: []
 Fecha de creación: 2026-11-15T20:08:00+01:00
-Última modificación: 2026-11-15T20:08:00+01:00
+Última modificación: 2026-11-15T20:12:00+01:00
 ---
 
 # Publicar los resultados del experimento de la fase 1
@@ -44,8 +44,11 @@ honestidad lo que no se pudo medir igual en las tres.
   puede abrir una sesión ya elegida: en su copia se añadió un preselector por
   variable de entorno, solo para la captura. Capturas con
   `spectacle -b -n -a -e`, revisadas una a una.
-- **Pendiente**: CI de la PR, integración, activar Pages y comprobar la
-  ejecución del workflow `Pages` y la página publicada.
+- **PR #5** abierta con aprobación del usuario; Pages activado (origen
+  «GitHub Actions», `https://danielperezmartinez.github.io/titan-agent/`) con
+  su aprobación.
+- **Pendiente**: CI de la PR, integración (la autoriza el usuario) y comprobar
+  la ejecución del workflow `Pages` y la página publicada.
 
 ## Resultado
 
