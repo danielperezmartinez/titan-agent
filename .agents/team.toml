@@ -32,17 +32,20 @@ config = [
 ]
 
 [flow]
-# Orden del bucle que sigue la skill. Opus (director) diseña antes y decide después.
-steps = ["disenador_tests", "implementador", "revisor"]
-review_role = "revisor"            # su veredicto cierra o reabre el bucle
-fix_role = "implementador"         # quién corrige tras una revisión con cambios
-max_review_rounds = 3              # tope duro: bin/team rechaza más rondas sin --force
+# Equipo v3 (2026-11-15): se reparte por contexto, no por rol. Opus (director)
+# implementa cada parte con sus propios tests; Codex solo escribe los tests de
+# aceptación antes (a partir de la especificación) y hace UNA revisión al final
+# con contexto limpio. Ver la skill "equipo".
+steps = ["disenador_tests", "revisor"]  # entre los dos, implementa el director
+review_role = "revisor"            # su informe lo decide el director
+fix_role = "director"              # quien corrige es el director, no Codex
+max_review_rounds = 1              # una sola ronda; más solo con permiso del usuario
 
 [roles.director]
 cli = "claude"                     # la sesión actual de Claude Code; bin/team no la lanza
 model = "opus"
 launch = false
-purpose = "Debate con el usuario, diseña, redacta los encargos y decide a partir de los informes."
+purpose = "Diseña, implementa cada parte con sus tests, decide qué hallazgos acepta y lanza el evaluador visual."
 
 # Los tests de aceptación viven en las carpetas tests/ de cada crate (tests de
 # integración de Cargo). Las rutas admiten comodines (fnmatch); una ruta que
@@ -55,17 +58,20 @@ sandbox = "workspace-write"
 prompt_file = ".agents/prompts/disenador_tests.md"
 allowed_paths = ["crates/*/tests/"] # aviso si toca algo fuera de aquí
 timeout_s = 1200
-purpose = "Escribe los tests de aceptación a partir del encargo, sin ver la implementación."
+purpose = "Antes de implementar, escribe POCOS tests de aceptación a partir de la especificación. El director no puede tocarlos."
 
-[roles.implementador]
+# Luna solo para trabajo mecánico sin criterio (código repetitivo, investigar una
+# API en paralelo). Nunca la interfaz ni decisiones de diseño. No está en el flujo:
+# el director la llama cuando le sirve.
+[roles.mecanico]
 cli = "codex"
 model = "gpt-6-luna"
 effort = "medium"
 sandbox = "workspace-write"
-prompt_file = ".agents/prompts/implementador.md"
-forbidden_paths = ["crates/*/tests/", "docs/"] # aviso si toca los tests o la bóveda
+prompt_file = ".agents/prompts/mecanico.md"
+forbidden_paths = ["crates/*/tests/", "docs/", "crates/titan-agent/"] # aviso: tests, bóveda o interfaz
 timeout_s = 1800
-purpose = "Implementa el encargo hasta que pasen los tests; corrige lo que pida la revisión."
+purpose = "Trabajo mecánico sin criterio que le encarga el director; nunca la interfaz."
 
 [roles.revisor]
 cli = "codex"
@@ -75,4 +81,4 @@ sandbox = "read-only"
 prompt_file = ".agents/prompts/revisor.md"
 output_schema = ".agents/schemas/review.json"
 timeout_s = 900
-purpose = "Revisa encargo + diff + resultado de los tests y entrega un informe estructurado al director."
+purpose = "Una revisión al final, en un hilo nuevo (contexto limpio): solo la especificación y el diff. Informa; decide el director."
