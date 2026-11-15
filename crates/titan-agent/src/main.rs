@@ -3,6 +3,7 @@ use gpui_platform::application;
 use titan_agent::app::MainWindow;
 
 fn main() {
+    // TITAN_AGENT_SELECT supports "new", "project:<name>", and "session:<id>" for demo startup selection.
     application().run(|cx: &mut App| {
         if let Err(error) = titan_agent::fonts::load(cx) {
             eprintln!("could not load embedded fonts: {error}");

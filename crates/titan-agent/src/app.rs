@@ -44,6 +44,7 @@ pub struct MainWindow {
     confirm_stop: Option<(SessionKey, std::time::Instant)>,
     focused_session: Option<SessionKey>,
     monitor_tab: &'static str,
+    initial_selection: Option<String>,
 }
 
 impl MainWindow {
@@ -65,6 +66,7 @@ impl MainWindow {
             confirm_stop: None,
             focused_session: None,
             monitor_tab: "grafo",
+            initial_selection: std::env::var("TITAN_AGENT_SELECT").ok(),
         };
         this.connect(cx);
         cx.spawn(async move |this, cx| {
@@ -259,7 +261,27 @@ impl MainWindow {
             Some(Selection::NewSession) => true,
             None => false,
         };
-        if !selection_exists {
+        if !selection_exists && let Some(requested) = self.initial_selection.take() {
+            self.selection = match requested.as_str() {
+                "new" => Some(Selection::NewSession),
+                value if value.starts_with("project:") => {
+                    let name = &value[8..];
+                    self.sessions
+                        .iter()
+                        .find(|session| session.project.name == name)
+                        .map(|session| Selection::Project(session.project.clone()))
+                }
+                value if value.starts_with("session:") => {
+                    let id = &value[8..];
+                    self.sessions
+                        .iter()
+                        .find(|session| session.key.id == id)
+                        .map(|session| Selection::Session(session.key.clone()))
+                }
+                _ => None,
+            };
+        }
+        if !selection_exists && self.selection.is_none() {
             self.selection = build_tree(&self.sessions, &self.filter)
                 .into_iter()
                 .find_map(|row| match row {
@@ -1000,13 +1022,13 @@ impl Render for MainWindow {
                             .grid()
                             .grid_cols(2)
                             .gap(px(8.0))
-                            .child(Self::text("proyecto", 11.0, theme::MUTE))
+                            .child(Self::text("proyecto", 12.0, theme::MUTE))
                             .child(Self::text(detail.project.clone(), 12.0, theme::BODY))
-                            .child(Self::text("rol", 11.0, theme::MUTE))
+                            .child(Self::text("rol", 12.0, theme::MUTE))
                             .child(Self::text(detail.role, 12.0, theme::BODY))
-                            .child(Self::text("lanzada por", 11.0, theme::MUTE))
+                            .child(Self::text("lanzada por", 12.0, theme::MUTE))
                             .child(Self::text(detail.launched_by, 12.0, theme::BODY))
-                            .child(Self::text("estado desde", 11.0, theme::MUTE))
+                            .child(Self::text("estado desde", 12.0, theme::MUTE))
                             .child(Self::text(detail.since, 12.0, theme::BODY)),
                     )
                     .child(Self::text("HABLA CON", 12.0, theme::MUTE));
@@ -1020,6 +1042,8 @@ impl Render for MainWindow {
                     for talk in detail.talks {
                         panel = panel.child(
                             div()
+                                .w_full()
+                                .min_w(px(0.0))
                                 .p(px(8.0))
                                 .flex()
                                 .flex_col()
@@ -1029,11 +1053,15 @@ impl Render for MainWindow {
                                 .child(
                                     div()
                                         .flex()
+                                        .flex_wrap()
                                         .gap(px(4.0))
+                                        .min_w(px(0.0))
                                         .child(Self::text(talk.direction, 12.0, theme::MUTE))
                                         .child(Self::text(talk.who, 12.0, talk.color)),
                                 )
-                                .child(Self::text(talk.what, 12.0, theme::MUTE)),
+                                .child(
+                                    Self::text(talk.what, 12.0, theme::MUTE).whitespace_normal(),
+                                ),
                         );
                     }
                 }
