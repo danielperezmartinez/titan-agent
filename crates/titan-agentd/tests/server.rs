@@ -6,7 +6,7 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -928,6 +928,58 @@ fn fixture_file_and_empty_source_use_the_public_source_contract() {
     ));
 }
 
+struct CountingSource {
+    polls: Arc<AtomicUsize>,
+}
+impl SessionSource for CountingSource {
+    fn poll(&mut self) -> Vec<Session> {
+        self.polls.fetch_add(1, Ordering::SeqCst);
+        Vec::new()
+    }
+}
+
+#[test]
+fn discovery_stops_after_last_subscriber_disconnects_and_resumes_on_subscribe() {
+    let interval = Duration::from_millis(40);
+    let polls = Arc::new(AtomicUsize::new(0));
+    let daemon = Running::source_with_interval(
+        Box::new(CountingSource {
+            polls: polls.clone(),
+        }),
+        4096,
+        interval,
+    );
+    // Keep a greeted, unsubscribed client connected throughout the idle period.
+    let mut observer = daemon.client();
+    observer.hello();
+    for _ in 0..2 {
+        let mut subscriber = daemon.client();
+        subscriber.hello();
+        assert!(subscribe(&mut subscriber).is_empty());
+        let before = polls.load(Ordering::SeqCst);
+        let deadline = Instant::now() + LIMIT;
+        while polls.load(Ordering::SeqCst) < before + 2 {
+            assert!(
+                Instant::now() < deadline,
+                "subscribed discovery did not advance"
+            );
+            thread::sleep(interval);
+        }
+        drop(subscriber);
+        // Allow disconnect processing and any poll already in flight to finish.
+        thread::sleep(interval * 2);
+        let idle = polls.load(Ordering::SeqCst);
+        for _ in 0..5 {
+            thread::sleep(interval);
+            assert_eq!(
+                polls.load(Ordering::SeqCst),
+                idle,
+                "discovery continued without subscribers"
+            );
+        }
+    }
+}
+
 struct ControlledSource {
     sessions: Arc<Mutex<Vec<Session>>>,
     polls: mpsc::Sender<()>,
@@ -1040,9 +1092,23 @@ impl Drop for ChildGuard {
         let _ = self.0.wait();
     }
 }
-fn binary() -> std::process::Command {
+fn binary(dir: &TempDir) -> std::process::Command {
+    let bin = dir.0.join("bin");
+    let home = dir.0.join("home");
+    let codex = dir.0.join("codex");
+    let claude = dir.0.join("claude");
+    for folder in [&bin, &home, &codex, &claude] {
+        fs::create_dir_all(folder).unwrap();
+        assert_eq!(fs::read_dir(folder).unwrap().count(), 0);
+    }
+    assert!(!bin.join("claude").exists(), "claude must not be reachable");
     let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_titan-agentd"));
     command
+        .env_clear()
+        .env("PATH", &bin)
+        .env("HOME", &home)
+        .env("CODEX_HOME", &codex)
+        .env("CLAUDE_CONFIG_DIR", &claude)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped());
     command
@@ -1074,7 +1140,8 @@ fn binary_reports_argument_errors_with_usage_and_exit_code_two() {
         vec!["--fixture"],
         vec!["unexpected-argument"],
     ] {
-        let mut child = ChildGuard(binary().args(args).spawn().unwrap());
+        let dir = TempDir::new();
+        let mut child = ChildGuard(binary(&dir).args(args).spawn().unwrap());
         assert_eq!(child.wait().code(), Some(2));
         let stderr = child.stderr();
         assert!(
@@ -1096,7 +1163,7 @@ fn binary_reads_fixture_honors_explicit_socket_and_exits_cleanly_if_already_runn
     .unwrap();
     let ignored_socket = dir.0.join("ignored");
     let mut child = ChildGuard(
-        binary()
+        binary(&dir)
             .arg("--socket")
             .arg(&socket)
             .arg("--fixture")
@@ -1111,7 +1178,7 @@ fn binary_reads_fixture_honors_explicit_socket_and_exits_cleanly_if_already_runn
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].key, key("binary-fixture"));
     assert!(!ignored_socket.exists());
-    let mut second = ChildGuard(binary().arg("--socket").arg(&socket).spawn().unwrap());
+    let mut second = ChildGuard(binary(&dir).arg("--socket").arg(&socket).spawn().unwrap());
     assert_eq!(second.wait().code(), Some(0));
     assert!(!second.stderr().trim().is_empty());
     client.done(Request::Shutdown);
@@ -1125,7 +1192,7 @@ fn binary_uses_socket_environment_and_handles_termination_signals() {
         let dir = TempDir::new();
         let socket = dir.socket();
         let mut child = ChildGuard(
-            binary()
+            binary(&dir)
                 .env(titan_agent_core::paths::SOCKET_ENV, &socket)
                 .spawn()
                 .unwrap(),
@@ -1279,6 +1346,22 @@ fn concurrent_opens_share_one_terminal_and_spawn_only_one_process() {
         fs::read_to_string(dir.0.join("started")).unwrap(),
         "started\n"
     );
+}
+
+#[test]
+fn terminal_answers_initial_cursor_query_before_program_prints_ok() {
+    let daemon = Running::start(vec![session(
+        "initial-cursor-query",
+        Some(
+            "stty raw -echo; printf '\\033[6n'; dd bs=1 count=6 2>/dev/null >/dev/null; printf ok; exec cat",
+        ),
+    )]);
+    let mut client = daemon.client();
+    client.hello();
+    let (terminal, snapshot) = client.open(key("initial-cursor-query"), 80, 24, false);
+    if !contains(&snapshot, b"ok") {
+        client.output_contains(terminal, b"ok");
+    }
 }
 
 #[test]
