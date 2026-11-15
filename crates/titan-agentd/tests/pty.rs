@@ -459,3 +459,98 @@ fn dropping_a_live_process_finishes_the_reader() {
         .expect("Drop must terminate the child and join its threads");
     recorder.assert_finished();
 }
+
+#[cfg(target_os = "linux")]
+struct DescendantCleanup(rustix::process::Pid);
+
+#[cfg(target_os = "linux")]
+impl Drop for DescendantCleanup {
+    fn drop(&mut self) {
+        // Also release the slave if an assertion detects a broken shutdown.
+        let _ = rustix::process::kill_process(self.0, rustix::process::Signal::KILL);
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn spawn_with_slave_holding_descendant() -> (PtyProcess, Recorder, DescendantCleanup) {
+    let recorder = Recorder::default();
+    let process = PtyProcess::spawn(
+        shell("trap '' HUP; sleep 100 & printf 'descendant:%s\\nready\\n' \"$!\"; wait"),
+        recorder.clone(),
+    )
+    .unwrap();
+    recorder.wait_for_output(b"ready");
+    let observation = recorder.0.lock().unwrap();
+    let output = String::from_utf8_lossy(&observation.bytes);
+    let pid = output
+        .lines()
+        .find_map(|line| line.strip_prefix("descendant:"))
+        .expect("the shell must report its descendant PID")
+        .trim()
+        .parse::<i32>()
+        .unwrap();
+    let descendant = DescendantCleanup(rustix::process::Pid::from_raw(pid).unwrap());
+    drop(observation);
+    (process, recorder, descendant)
+}
+
+#[cfg(target_os = "linux")]
+fn assert_descendant_has_stopped(descendant: &DescendantCleanup) {
+    let status_path = format!("/proc/{}/stat", descendant.0.as_raw_nonzero());
+    wait_until(
+        "the slave-holding descendant to disappear or become a zombie",
+        || {
+            match fs::read_to_string(&status_path) {
+                Ok(status) => {
+                    // The command name is parenthesized and may contain spaces.
+                    let (_, fields) = status.rsplit_once(')').expect("valid process stat");
+                    fields.split_whitespace().next() == Some("Z")
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Err(error) => panic!("could not inspect descendant: {error}"),
+            }
+        },
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn kill_finishes_when_a_descendant_holds_the_slave_and_ignores_sighup() {
+    let (process, recorder, descendant) = spawn_with_slave_holding_descendant();
+    let running = Running {
+        process: Arc::new(process),
+        recorder,
+    };
+    let process = Arc::clone(&running.process);
+    let (sender, receiver) = mpsc::channel();
+    let started = Instant::now();
+    thread::spawn(move || {
+        process.kill(Duration::from_millis(200));
+        let _ = sender.send(());
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(3))
+        .expect("kill must finish even while a descendant holds the slave open");
+    assert!(started.elapsed() < Duration::from_secs(3));
+    assert!(running.process.has_exited());
+    running.recorder.assert_finished();
+    assert_descendant_has_stopped(&descendant);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn drop_finishes_when_a_descendant_holds_the_slave_and_ignores_sighup() {
+    let (process, recorder, descendant) = spawn_with_slave_holding_descendant();
+    let (sender, receiver) = mpsc::channel();
+    let started = Instant::now();
+    thread::spawn(move || {
+        drop(process);
+        let _ = sender.send(());
+    });
+    receiver
+        .recv_timeout(Duration::from_secs(3))
+        .expect("Drop must finish even while a descendant holds the slave open");
+    assert!(started.elapsed() < Duration::from_secs(3));
+    recorder.assert_finished();
+    assert_descendant_has_stopped(&descendant);
+}
