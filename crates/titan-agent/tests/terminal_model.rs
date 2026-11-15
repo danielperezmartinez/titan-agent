@@ -26,7 +26,7 @@ fn rendered(input: &[u8]) -> Frame {
 }
 
 fn dim(fg: u32, bg: u32) -> u32 {
-    let channel = |shift| (((2 * ((fg >> shift) & 255)) + ((bg >> shift) & 255)) / 3) << shift;
+    let channel = |shift: u32| (((2 * ((fg >> shift) & 255)) + ((bg >> shift) & 255)) / 3) << shift;
     channel(16) | channel(8) | channel(0)
 }
 
