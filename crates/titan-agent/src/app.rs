@@ -643,7 +643,9 @@ impl MainWindow {
                     list = list.child(
                         div()
                             .id(format!("project-{}", project.name))
-                            .h(px(32.0))
+                            .min_h(px(32.0))
+                            .mt(px(8.0))
+                            .flex_none()
                             .px(px(12.0))
                             .flex()
                             .items_center()
@@ -708,7 +710,8 @@ impl MainWindow {
                         list = list.child(
                             div()
                                 .id(format!("session-{}", key.id))
-                                .h(px(36.0))
+                                .min_h(px(36.0))
+                                .flex_none()
                                 .pl(px(if depth == 0 {
                                     12.0
                                 } else {
@@ -1134,9 +1137,8 @@ impl Render for MainWindow {
             );
             let detail_panel = div()
                 .w(px(260.0))
-                .flex_1()
+                .flex_none()
                 .min_h(px(0.0))
-                .min_w(px(260.0))
                 .p(px(16.0))
                 .flex()
                 .flex_col()
@@ -1147,24 +1149,23 @@ impl Render for MainWindow {
                 .child(Self::text("DETALLE", 12.0, theme::MUTE));
             let detail_panel = if let Some(detail) = detail {
                 let key_project = session.project.clone();
-                let mut talks = div()
+                let mut talk_cards = div()
                     .id("detail-talks")
                     .flex_1()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .gap(px(8.0))
-                    .child(Self::text("HABLA CON", 12.0, theme::MUTE));
+                    .gap(px(8.0));
                 if detail.talks.is_empty() {
-                    talks = talks.child(Self::text(
+                    talk_cards = talk_cards.child(Self::text(
                         "sin comunicaciones conocidas",
                         12.0,
                         theme::MUTE,
                     ));
                 } else {
                     for talk in detail.talks {
-                        talks = talks.child(
+                        talk_cards = talk_cards.child(
                             div()
                                 .w_full()
                                 .min_w(px(0.0))
@@ -1207,7 +1208,8 @@ impl Render for MainWindow {
                             .child(Self::text("estado desde", 12.0, theme::MUTE))
                             .child(Self::text(detail.since, 12.0, theme::BODY)),
                     )
-                    .child(talks)
+                    .child(Self::text("HABLA CON", 12.0, theme::MUTE))
+                    .child(talk_cards)
                     .child(
                         Self::text("[>] ver el monitor del proyecto", 12.0, theme::ACCENT)
                             .on_mouse_down(
@@ -1344,10 +1346,13 @@ impl Render for MainWindow {
                             }),
                         ),
                 );
+            let detail_panel = detail_panel.child(div().flex_1());
             let detail_panel = if let Some(message) = stop_error {
-                detail_panel.child(Self::text(message, 12.0, theme::DANGER))
-            } else {
                 detail_panel
+                    .child(Self::text(message, 12.0, theme::DANGER))
+                    .child(bottom)
+            } else {
+                detail_panel.child(bottom)
             };
             div()
                 .flex_1()
@@ -1363,7 +1368,7 @@ impl Render for MainWindow {
                         .min_w(px(0.0))
                         .flex()
                         .child(body)
-                        .child(detail_panel.child(bottom)),
+                        .child(detail_panel),
                 )
         } else if let Some(Selection::Project(project)) = self.selection.clone() {
             self.render_monitor(&project, cx)
