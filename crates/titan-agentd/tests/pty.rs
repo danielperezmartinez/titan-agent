@@ -252,7 +252,7 @@ fn resizing_changes_the_size_seen_by_the_program() {
 #[test]
 fn resizing_notifies_the_foreground_program_with_sigwinch() {
     let running = Running::spawn(shell(
-        "trap 'stty size; exit 0' WINCH; printf 'ready\\n'; while :; do read x; done",
+        "trap 'stty size; exit 0' WINCH; printf 'ready\\n'; while :; do sleep 0.05; done",
     ));
     running.recorder.wait_for_output(b"ready");
     running.process.resize(101, 41).unwrap();
