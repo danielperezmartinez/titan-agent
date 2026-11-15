@@ -118,6 +118,19 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// Takes a terminal the daemon already opened for this view (a launched
+    /// TUI) and tells it the view's size.
+    pub fn adopt(&mut self, terminal: String, cx: &mut Context<Self>) {
+        self.client.notify(Request::Resize {
+            terminal: terminal.clone(),
+            cols: self.size.cols as u16,
+            rows: self.size.rows as u16,
+        });
+        self.terminal = Some(terminal);
+        self.ended = None;
+        cx.notify();
+    }
+
     pub fn feed(&mut self, bytes: &[u8], cx: &mut Context<Self>) {
         self.parser.advance(&mut self.term, bytes);
         let events: Vec<TermEvent> = self.listener.0.borrow_mut().drain(..).collect();

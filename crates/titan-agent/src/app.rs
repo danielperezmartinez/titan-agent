@@ -3,23 +3,29 @@
 //! selection in the centre.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::time::Duration;
 
 use futures::StreamExt;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
     AnyElement, App, ClickEvent, Context, Div, ElementId, Entity, FocusHandle, Focusable,
-    FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, SharedString, Stateful, Window, div,
-    prelude::*, px,
+    FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, PathPromptOptions, Role, SharedString,
+    Stateful, Subscription, Window, div, prelude::*, px,
 };
-use titan_agent_core::project::tilde;
+use titan_agent_core::launch::{
+    LaunchDefaults, LaunchSpec, efforts, folder_name, models, permissions,
+};
+use titan_agent_core::project::{project_name, tilde};
 use titan_agent_core::protocol::{
-    AttachResult, Event, Request, ServerMessage, SourceStatus, decode_bytes,
+    AttachResult, Event, LaunchRef, LaunchResult, Request, ServerMessage, SourceStatus,
+    decode_bytes,
 };
 use titan_agent_core::session::{AgentCli, Session, SessionKind, SessionState, StateCounts};
 use titan_agent_core::time::ago;
 use titan_agent_core::tree::{TreeRow, build_rows};
 
+use crate::brief::{BriefEvent, BriefInput};
 use crate::client::{DaemonClient, Incoming};
 use crate::terminal::TerminalView;
 use crate::theme::{self, color, hairline};
@@ -30,12 +36,38 @@ enum Selection {
     Session(String),
     Project(String),
     New,
+    Settings,
 }
 
 enum Pending {
     Attach(String),
     Stop,
     Open,
+    Launch,
+}
+
+/// The setting a button of the "new session" box opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Menu {
+    Agent,
+    Model,
+    Effort,
+    Permission,
+    Project,
+}
+
+/// State of the "new session" box (ADR-0002: the brief is only what the
+/// user types; one click, one launch; the exact command is shown).
+struct NewSession {
+    brief: Entity<BriefInput>,
+    /// Current choices, starting from the configured defaults.
+    form: LaunchDefaults,
+    /// Working folder (a project root or a folder picked with `[d]`).
+    folder: Option<String>,
+    menu: Option<Menu>,
+    /// A launch request is on its way: the button does nothing meanwhile.
+    launching: bool,
+    error: Option<String>,
 }
 
 pub struct MainView {
@@ -59,6 +91,15 @@ pub struct MainView {
     /// without a window at hand).
     focus_terminal: bool,
     focus: FocusHandle,
+    new: NewSession,
+    /// Defaults of the "new session" box, edited from `[*]`.
+    defaults: LaunchDefaults,
+    settings_menu: Option<(AgentCli, Menu)>,
+    /// Folders picked with `[d]`, offered next to the projects.
+    folders: Vec<String>,
+    /// Focus the brief on the next frame.
+    focus_brief: bool,
+    _brief_events: Subscription,
 }
 
 fn now_ms() -> i64 {
@@ -102,6 +143,35 @@ impl MainView {
         })
         .detach();
         let preselect = std::env::var("TITAN_AGENT_SELECT").ok();
+        let defaults = crate::config::load();
+        let brief = cx.new(|cx| {
+            let mut input = BriefInput::new(
+                "Escribe el encargo. titan-agent no lo completa ni lo reescribe.",
+                cx,
+            );
+            // Screenshots only: text typed beforehand by a person, shown in
+            // the field. It is never launched without a click.
+            if let Ok(text) = std::env::var("TITAN_AGENT_DEMO_BRIEF") {
+                input.content.text = text.replace("\\n", "\n");
+                input.content.move_to(input.content.text.len());
+            }
+            input
+        });
+        let brief_events = cx.subscribe(&brief, |this, _, event: &BriefEvent, cx| match event {
+            BriefEvent::Changed => {
+                this.new.error = None;
+                cx.notify();
+            }
+            BriefEvent::Submit => this.launch(cx),
+        });
+        let demo_menu = match std::env::var("TITAN_AGENT_DEMO_MENU").as_deref() {
+            Ok("agent") => Some(Menu::Agent),
+            Ok("model") => Some(Menu::Model),
+            Ok("effort") => Some(Menu::Effort),
+            Ok("permission") => Some(Menu::Permission),
+            Ok("project") => Some(Menu::Project),
+            _ => None,
+        };
         MainView {
             client,
             connected: false,
@@ -110,6 +180,8 @@ impl MainView {
             sources: Vec::new(),
             selection: if std::env::var("TITAN_AGENT_NEW").is_ok() {
                 Selection::New
+            } else if std::env::var("TITAN_AGENT_SETTINGS").is_ok() {
+                Selection::Settings
             } else {
                 Selection::None
             },
@@ -123,6 +195,20 @@ impl MainView {
             preselect,
             focus_terminal: false,
             focus: cx.focus_handle(),
+            new: NewSession {
+                brief,
+                form: defaults.clone(),
+                folder: std::env::var("TITAN_AGENT_FOLDER").ok(),
+                menu: demo_menu,
+                launching: false,
+                // Screenshots only: how a refused launch looks.
+                error: std::env::var("TITAN_AGENT_DEMO_ERROR").ok(),
+            },
+            defaults,
+            settings_menu: None,
+            folders: Vec::new(),
+            focus_brief: true,
+            _brief_events: brief_events,
         }
     }
 
@@ -168,25 +254,43 @@ impl MainView {
                 Some(Pending::Stop) => {
                     self.notice = Some(("orden de detener enviada al CLI".into(), false));
                 }
+                Some(Pending::Launch) => {
+                    self.new.launching = false;
+                    match serde_json::from_value::<LaunchResult>(result) {
+                        Ok(launched) => self.launched(launched, cx),
+                        Err(error) => self.new.error = Some(error.to_string()),
+                    }
+                }
                 Some(Pending::Open) | None => {}
             },
             ServerMessage::Error { id, error } => {
-                if let Some(Pending::Attach(session)) = self.pending.remove(&id)
-                    && let Some(view) = self.terminals.get(&session)
-                {
-                    let text = error.message.clone();
-                    view.update(cx, |view, cx| {
-                        view.ended = Some(text);
-                        cx.notify();
-                    });
+                match id.and_then(|id| self.pending.remove(&id)) {
+                    Some(Pending::Attach(session)) => {
+                        if let Some(view) = self.terminals.get(&session) {
+                            let text = error.message.clone();
+                            view.update(cx, |view, cx| {
+                                view.ended = Some(text);
+                                cx.notify();
+                            });
+                        }
+                        self.notice = Some((error.message, true));
+                    }
+                    Some(Pending::Launch) => {
+                        self.new.launching = false;
+                        self.new.error = Some(error.message);
+                    }
+                    _ => self.notice = Some((error.message, true)),
                 }
-                self.notice = Some((error.message, true));
             }
             ServerMessage::Event(Event::Sessions {
-                sessions, sources, ..
+                sessions,
+                sources,
+                launches,
+                ..
             }) => {
                 self.sessions = sessions;
                 self.sources = sources;
+                self.follow_launches(&launches, cx);
                 if let Some(fragment) = self.preselect.clone()
                     && let Some(key) = self
                         .sessions
@@ -296,12 +400,185 @@ impl MainView {
         cx.notify();
     }
 
-    fn root_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn root_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         if keystroke.modifiers.control && keystroke.key == "n" {
-            self.selection = Selection::New;
+            self.open_new(window, cx);
+        } else if keystroke.key == "escape" && self.new.menu.is_some() {
+            self.new.menu = None;
             cx.notify();
         }
+    }
+
+    // ----- new session -----------------------------------------------------
+
+    /// Shows the "new session" box, in the project of the current selection
+    /// when there is one.
+    fn open_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let current = match &self.selection {
+            Selection::Session(key) => self.session(key).map(|s| s.project_root.clone()),
+            Selection::Project(root) => Some(root.clone()),
+            _ => None,
+        };
+        if let Some(root) = current {
+            self.new.folder = Some(root);
+        }
+        self.selection = Selection::New;
+        self.new.menu = None;
+        let handle = self.new.brief.read(cx).focus_handle(cx);
+        handle.focus(window, cx);
+        cx.notify();
+    }
+
+    /// Projects offered as working folder: every project in the tree, then
+    /// the folders picked with `[d]`. As `(folder, name)`.
+    fn folder_choices(&self) -> Vec<(String, String)> {
+        let mut choices: Vec<(String, String)> = Vec::new();
+        for session in &self.sessions {
+            if !choices
+                .iter()
+                .any(|(root, _)| *root == session.project_root)
+            {
+                choices.push((session.project_root.clone(), session.project.clone()));
+            }
+        }
+        choices.sort_by(|a, b| a.1.cmp(&b.1));
+        for folder in &self.folders {
+            if !choices.iter().any(|(root, _)| root == folder) {
+                choices.push((folder.clone(), folder_name(folder).to_string()));
+            }
+        }
+        choices
+    }
+
+    fn folder(&self) -> Option<String> {
+        self.new
+            .folder
+            .clone()
+            .or_else(|| self.folder_choices().first().map(|(root, _)| root.clone()))
+    }
+
+    /// The spec the box would launch now. With an empty brief, the command
+    /// line shows a marker instead (it cannot be launched).
+    fn spec(&self, cx: &App) -> Option<LaunchSpec> {
+        let agent = self.new.form.agent;
+        let chosen = self.new.form.get(agent).clone();
+        Some(LaunchSpec {
+            agent,
+            cwd: self.folder()?,
+            model: chosen.model,
+            effort: chosen.effort,
+            permission: chosen.permission,
+            brief: self.new.brief.read(cx).text().to_string(),
+        })
+    }
+
+    /// One click of `[ok] lanzar` (or ctrl+enter): one launch request with
+    /// a fresh token. Nothing is retried.
+    fn launch(&mut self, cx: &mut Context<Self>) {
+        if self.new.launching {
+            return;
+        }
+        let Some(spec) = self.spec(cx) else {
+            self.new.error = Some("elige la carpeta de trabajo con [#] o [d]".into());
+            cx.notify();
+            return;
+        };
+        if let Err(error) = spec.validate() {
+            self.new.error = Some(error.to_string());
+            cx.notify();
+            return;
+        }
+        let id = self.client.request(Request::Launch {
+            token: new_token(),
+            command: spec.command_line(),
+            spec,
+        });
+        self.pending.insert(id, Pending::Launch);
+        self.new.launching = true;
+        self.new.error = None;
+        self.new.menu = None;
+        cx.notify();
+    }
+
+    /// The daemon launched it: select its provisional session (with the
+    /// TUI's terminal for Codex) and empty the box for the next one.
+    fn launched(&mut self, launched: LaunchResult, cx: &mut Context<Self>) {
+        self.new.brief.update(cx, |brief, cx| brief.clear(cx));
+        if let Some(terminal) = launched.terminal {
+            let client = self.client.clone();
+            let key = launched.launch.clone();
+            let view = cx.new(|cx| TerminalView::new(key, client, cx));
+            view.update(cx, |view, cx| view.adopt(terminal, cx));
+            self.terminals.insert(launched.launch.clone(), view);
+        }
+        self.selection = Selection::Session(launched.launch);
+        self.focus_terminal = true;
+        cx.notify();
+    }
+
+    /// Moves what belongs to a launch (selection, terminal) to the real
+    /// session once the daemon knows it.
+    fn follow_launches(&mut self, launches: &[LaunchRef], cx: &mut Context<Self>) {
+        for launch in launches {
+            let Some(real) = &launch.session else {
+                continue;
+            };
+            if let Some(view) = self.terminals.remove(&launch.launch) {
+                view.update(cx, |view, _| view.session = real.clone());
+                self.terminals.entry(real.clone()).or_insert(view);
+            }
+            if self.selection == Selection::Session(launch.launch.clone()) {
+                self.select_session(real.clone(), None, cx);
+            }
+        }
+    }
+
+    fn pick_folder(&mut self, cx: &mut Context<Self>) {
+        self.new.menu = None;
+        let answer = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Elegir carpeta de trabajo".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = answer.await
+                && let Some(path) = paths.into_iter().next()
+            {
+                let folder = path.to_string_lossy().into_owned();
+                let _ = this.update(cx, |view, cx| {
+                    if !view.folders.contains(&folder) {
+                        view.folders.push(folder.clone());
+                    }
+                    view.new.folder = Some(folder);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn set_default(&mut self, agent: AgentCli, menu: Menu, value: &str) {
+        match menu {
+            Menu::Agent => {
+                if let Some(agent) = AgentCli::ALL.into_iter().find(|a| a.tag() == value) {
+                    self.defaults.agent = agent;
+                }
+            }
+            Menu::Model => self.defaults.get_mut(agent).model = value.into(),
+            Menu::Effort => self.defaults.get_mut(agent).effort = value.into(),
+            Menu::Permission => self.defaults.get_mut(agent).permission = value.into(),
+            Menu::Project => {}
+        }
+        self.settings_menu = None;
+        self.notice = Some(match crate::config::save(&self.defaults) {
+            Ok(()) => ("valores por defecto guardados".into(), false),
+            Err(error) => (format!("no se pudieron guardar: {error}"), true),
+        });
+        // The box starts from the new defaults unless it is being filled.
+        self.new.form = self.defaults.clone();
     }
 
     fn session(&self, key: &str) -> Option<&Session> {
@@ -310,7 +587,7 @@ impl MainView {
 
     // ----- rendering -------------------------------------------------------
 
-    fn header(&self) -> impl IntoElement + use<> {
+    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let counts = StateCounts::tally(self.sessions.iter().map(|s| s.state));
         let link = |id: &'static str, label: &'static str| {
             div()
@@ -384,7 +661,21 @@ impl MainView {
                     .child(format!("[+] {} en espera", counts.waiting)),
             )
             .child(link("about", "[i]"))
-            .child(link("settings", "[*]"))
+            .child(
+                link("settings", "[*]")
+                    .role(Role::Button)
+                    .aria_label("configuración")
+                    .text_color(color(if self.selection == Selection::Settings {
+                        theme::ACCENT
+                    } else {
+                        theme::BODY
+                    }))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.selection = Selection::Settings;
+                        this.settings_menu = None;
+                        cx.notify();
+                    })),
+            )
     }
 
     fn nav(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -413,9 +704,10 @@ impl MainView {
             .text_size(px(13.))
             .font_weight(FontWeight::MEDIUM)
             .cursor_pointer()
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.selection = Selection::New;
-                cx.notify();
+            .role(Role::Button)
+            .aria_label("Nueva sesión")
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.open_new(window, cx);
             }))
             .child("[+]")
             .child(div().flex_grow_1().child("Nueva sesión"))
@@ -712,7 +1004,8 @@ impl MainView {
                 .into_any_element(),
             },
             Selection::Project(root) => self.project_view(&root).into_any_element(),
-            Selection::New => self.new_session_view().into_any_element(),
+            Selection::New => self.new_session_view(window, cx).into_any_element(),
+            Selection::Settings => self.settings_view(cx).into_any_element(),
             Selection::None => placeholder(
                 "Elige una sesión",
                 vec![
@@ -1151,25 +1444,118 @@ impl MainView {
             .child(placeholder(&title, lines))
     }
 
-    fn new_session_view(&self) -> impl IntoElement + use<> {
-        let chip = |tag: &'static str, tag_color: u32, label: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .min_h(px(32.))
-                .px(px(8.))
-                .border_1()
-                .border_color(hairline())
-                .rounded(px(4.))
-                .text_size(px(12.))
-                .text_color(color(theme::BODY))
-                .when(!tag.is_empty(), |d| {
-                    d.child(div().text_color(color(tag_color)).child(tag))
-                })
-                .child(label)
-                .child(div().text_color(color(theme::MUTE)).child("[v]"))
+    fn new_session_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let agent = self.new.form.agent;
+        let chosen = self.new.form.get(agent).clone();
+        let agent_color = theme::agent_color(agent);
+        let folder = self.folder();
+        let project = folder
+            .as_deref()
+            .map(project_name)
+            .unwrap_or_else(|| "sin carpeta".into());
+        let empty = self.new.brief.read(cx).text().trim().is_empty();
+        let command = self.spec(cx).map(|mut spec| {
+            if spec.brief.trim().is_empty() {
+                spec.brief = "<tu encargo>".into();
+            }
+            spec.command_line()
+        });
+        let open = self.new.menu;
+        let toggle = |menu: Menu| -> Pick {
+            Rc::new(move |this: &mut MainView, cx: &mut Context<MainView>| {
+                this.new.menu = if this.new.menu == Some(menu) {
+                    None
+                } else {
+                    Some(menu)
+                };
+                cx.notify();
+            })
         };
+        let chips = vec![
+            chip(
+                "new-agent",
+                agent.tag(),
+                agent_color,
+                agent.to_string(),
+                "Agente",
+                open == Some(Menu::Agent),
+                toggle(Menu::Agent),
+                cx,
+            ),
+            chip(
+                "new-model",
+                "",
+                theme::MUTE,
+                chosen.model.clone(),
+                "Modelo",
+                open == Some(Menu::Model),
+                toggle(Menu::Model),
+                cx,
+            ),
+            chip(
+                "new-effort",
+                "",
+                theme::MUTE,
+                chosen.effort.clone(),
+                "Esfuerzo",
+                open == Some(Menu::Effort),
+                toggle(Menu::Effort),
+                cx,
+            ),
+            chip(
+                "new-permission",
+                "",
+                theme::MUTE,
+                chosen.permission.clone(),
+                permission_title(agent),
+                open == Some(Menu::Permission),
+                toggle(Menu::Permission),
+                cx,
+            ),
+            chip(
+                "new-project",
+                "[#]",
+                theme::MUTE,
+                project.clone(),
+                "Proyecto",
+                open == Some(Menu::Project),
+                toggle(Menu::Project),
+                cx,
+            ),
+        ];
+        let menu = open.map(|menu| {
+            let (title, items) = self.new_menu_items(menu);
+            menu_list(title, items, cx)
+        });
+        let disabled = empty || self.new.launching || command.is_none();
+        let launch = div()
+            .id("launch")
+            .role(Role::Button)
+            .aria_label("lanzar")
+            .ml_auto()
+            .flex()
+            .items_center()
+            .min_h(px(32.))
+            .px(px(16.))
+            .border_1()
+            .border_color(color(if disabled {
+                theme::HAIRLINE_STRONG
+            } else {
+                theme::ACCENT
+            }))
+            .rounded(px(4.))
+            .bg(color(theme::SURFACE_ELEVATED))
+            .text_size(px(13.))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(color(if disabled { theme::STONE } else { theme::INK }))
+            .when(!disabled, |d| d.cursor_pointer())
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.launch(cx)))
+            .child(if self.new.launching {
+                "[>] lanzando…"
+            } else {
+                "[ok] lanzar"
+            });
+
         div()
             .flex()
             .flex_col()
@@ -1185,6 +1571,7 @@ impl MainView {
                     .items_center()
                     .justify_center()
                     .gap(px(8.))
+                    .py(px(48.))
                     .child(
                         div()
                             .text_color(color(theme::INK))
@@ -1194,9 +1581,22 @@ impl MainView {
                     )
                     .child(
                         div()
+                            .flex()
+                            .gap(px(8.))
                             .text_size(px(13.))
                             .text_color(color(theme::MUTE))
-                            .child("se activa en la fase 2, con las salvaguardas de ADR-0002"),
+                            .child("en")
+                            .child(
+                                div()
+                                    .text_color(color(theme::BODY))
+                                    .child(format!("[#] {project}")),
+                            )
+                            .child("con")
+                            .child(
+                                div()
+                                    .text_color(color(agent_color))
+                                    .child(agent.to_string()),
+                            ),
                     ),
             )
             .child(
@@ -1206,22 +1606,16 @@ impl MainView {
                     .flex()
                     .flex_col()
                     .gap(px(8.))
+                    .children(menu)
                     .child(
                         div()
                             .flex()
                             .flex_col()
                             .border_1()
-                            .border_color(color(theme::HAIRLINE_STRONG))
+                            .border_color(color(theme::ACCENT))
                             .rounded(px(4.))
                             .bg(color(theme::CANVAS))
-                            .child(
-                                div()
-                                    .p(px(12.))
-                                    .h(px(96.))
-                                    .text_size(px(13.))
-                                    .text_color(color(theme::MUTE))
-                                    .child("Escribe el encargo. titan-agent no lo completa ni lo reescribe."),
-                            )
+                            .child(self.new.brief.clone())
                             .child(
                                 div()
                                     .flex()
@@ -1231,42 +1625,477 @@ impl MainView {
                                     .p(px(8.))
                                     .border_t_1()
                                     .border_color(hairline())
-                                    .child(chip("cl", theme::CLAUDE, "Claude Code"))
-                                    .child(chip("", theme::MUTE, "opus"))
-                                    .child(chip("", theme::MUTE, "high"))
-                                    .child(chip("", theme::MUTE, "default"))
-                                    .child(chip("[#]", theme::MUTE, "proyecto"))
-                                    .child(div().flex_grow_1())
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .min_h(px(32.))
-                                            .px(px(16.))
-                                            .border_1()
-                                            .border_color(color(theme::HAIRLINE_STRONG))
-                                            .rounded(px(4.))
-                                            .text_size(px(13.))
-                                            .text_color(color(theme::STONE))
-                                            .child("[ok] lanzar"),
-                                    ),
+                                    .children(chips)
+                                    .child(launch),
                             ),
                     )
                     .child(
                         div()
                             .flex()
+                            .flex_wrap()
                             .gap(px(8.))
                             .px(px(4.))
                             .text_size(px(11.))
-                            .child(div().text_color(color(theme::STONE)).child("se ejecutará"))
                             .child(
                                 div()
+                                    .flex_none()
+                                    .text_color(color(theme::STONE))
+                                    .child("se ejecutará"),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.))
                                     .text_color(color(theme::MUTE))
-                                    .child("claude --bg --model opus --effort high --permission-mode default \"<tu encargo>\""),
+                                    .child(command.unwrap_or_else(|| {
+                                        "elige la carpeta de trabajo con [#] o [d]".into()
+                                    })),
                             ),
+                    )
+                    .when_some(self.new.error.clone(), |d, error| {
+                        d.child(
+                            div()
+                                .px(px(4.))
+                                .text_size(px(11.))
+                                .text_color(color(theme::DANGER))
+                                .child(format!("[x] {error}")),
+                        )
+                    }),
+            )
+    }
+
+    /// Title and options of a menu of the "new session" box.
+    fn new_menu_items(&self, menu: Menu) -> (&'static str, Vec<MenuItem>) {
+        let agent = self.new.form.agent;
+        let chosen = self.new.form.get(agent).clone();
+        let set = |menu: Menu, value: String| -> Pick {
+            Rc::new(move |this: &mut MainView, cx: &mut Context<MainView>| {
+                let agent = this.new.form.agent;
+                let form = this.new.form.get_mut(agent);
+                match menu {
+                    Menu::Model => form.model = value.clone(),
+                    Menu::Effort => form.effort = value.clone(),
+                    Menu::Permission => form.permission = value.clone(),
+                    Menu::Agent | Menu::Project => {}
+                }
+                this.new.menu = None;
+                cx.notify();
+            })
+        };
+        match menu {
+            Menu::Agent => (
+                "agente",
+                AgentCli::ALL
+                    .into_iter()
+                    .map(|a| MenuItem {
+                        tag: a.tag().into(),
+                        tag_color: theme::agent_color(a),
+                        label: a.to_string(),
+                        hint: match a {
+                            AgentCli::ClaudeCode => "claude --bg".into(),
+                            AgentCli::Codex => "TUI de codex".into(),
+                        },
+                        selected: a == agent,
+                        pick: Rc::new(move |this: &mut MainView, cx: &mut Context<MainView>| {
+                            this.new.form.agent = a;
+                            this.new.menu = None;
+                            cx.notify();
+                        }),
+                    })
+                    .collect(),
+            ),
+            Menu::Model => (
+                "modelo",
+                with_current(models(agent), &chosen.model)
+                    .into_iter()
+                    .map(|m| plain_item(&m, m == chosen.model, set(Menu::Model, m.clone())))
+                    .collect(),
+            ),
+            Menu::Effort => (
+                "esfuerzo",
+                efforts(agent)
+                    .iter()
+                    .map(|e| plain_item(e, *e == chosen.effort, set(Menu::Effort, e.to_string())))
+                    .collect(),
+            ),
+            Menu::Permission => (
+                permission_title(agent),
+                permissions(agent)
+                    .iter()
+                    .map(|p| {
+                        plain_item(
+                            p,
+                            *p == chosen.permission,
+                            set(Menu::Permission, p.to_string()),
+                        )
+                    })
+                    .collect(),
+            ),
+            Menu::Project => {
+                let current = self.folder();
+                let mut items: Vec<MenuItem> = self
+                    .folder_choices()
+                    .into_iter()
+                    .map(|(root, name)| MenuItem {
+                        tag: "[#]".into(),
+                        tag_color: theme::MUTE,
+                        label: name,
+                        hint: tilde(&root, self.home.as_deref()),
+                        selected: current.as_deref() == Some(root.as_str()),
+                        pick: Rc::new(move |this: &mut MainView, cx: &mut Context<MainView>| {
+                            this.new.folder = Some(root.clone());
+                            this.new.menu = None;
+                            cx.notify();
+                        }),
+                    })
+                    .collect();
+                items.push(MenuItem {
+                    tag: "[d]".into(),
+                    tag_color: theme::ACCENT,
+                    label: "elegir otra carpeta…".into(),
+                    hint: String::new(),
+                    selected: false,
+                    pick: Rc::new(|this: &mut MainView, cx: &mut Context<MainView>| {
+                        this.pick_folder(cx)
+                    }),
+                });
+                ("proyecto (carpeta de trabajo)", items)
+            }
+        }
+    }
+
+    /// `[*]`: the defaults of the "new session" box.
+    fn settings_view(&self, cx: &mut Context<Self>) -> Div {
+        let open = self.settings_menu;
+        let toggle = |agent: AgentCli, menu: Menu| -> Pick {
+            Rc::new(move |this: &mut MainView, cx: &mut Context<MainView>| {
+                this.settings_menu = if this.settings_menu == Some((agent, menu)) {
+                    None
+                } else {
+                    Some((agent, menu))
+                };
+                cx.notify();
+            })
+        };
+        let pick = |agent: AgentCli, menu: Menu, value: String| -> Pick {
+            Rc::new(move |this: &mut MainView, cx: &mut Context<MainView>| {
+                this.set_default(agent, menu, &value);
+                cx.notify();
+            })
+        };
+        let label = |text: String, text_color: u32| {
+            div()
+                .w(px(160.))
+                .flex_none()
+                .text_size(px(12.))
+                .text_color(color(text_color))
+                .child(text)
+        };
+        let default_agent = self.defaults.agent;
+        let mut rows = vec![
+            div()
+                .flex()
+                .items_center()
+                .gap(px(4.))
+                .child(label("agente".into(), theme::MUTE))
+                .child(chip(
+                    "default-agent",
+                    default_agent.tag(),
+                    theme::agent_color(default_agent),
+                    default_agent.to_string(),
+                    "Agente por defecto",
+                    open.is_some_and(|(_, m)| m == Menu::Agent),
+                    toggle(default_agent, Menu::Agent),
+                    cx,
+                ))
+                .into_any_element(),
+        ];
+        if let Some((_, Menu::Agent)) = open {
+            let items = AgentCli::ALL
+                .into_iter()
+                .map(|a| MenuItem {
+                    tag: a.tag().into(),
+                    tag_color: theme::agent_color(a),
+                    label: a.to_string(),
+                    hint: String::new(),
+                    selected: a == default_agent,
+                    pick: pick(a, Menu::Agent, a.tag().to_string()),
+                })
+                .collect();
+            rows.push(menu_list("agente por defecto", items, cx).into_any_element());
+        }
+        for agent in AgentCli::ALL {
+            let values = self.defaults.get(agent).clone();
+            let ids: [&'static str; 3] = match agent {
+                AgentCli::ClaudeCode => ["cl-model", "cl-effort", "cl-permission"],
+                AgentCli::Codex => ["cx-model", "cx-effort", "cx-permission"],
+            };
+            rows.push(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(4.))
+                    .child(label(agent.to_string(), theme::agent_color(agent)))
+                    .child(chip(
+                        ids[0],
+                        "",
+                        theme::MUTE,
+                        values.model.clone(),
+                        "Modelo",
+                        open == Some((agent, Menu::Model)),
+                        toggle(agent, Menu::Model),
+                        cx,
+                    ))
+                    .child(chip(
+                        ids[1],
+                        "",
+                        theme::MUTE,
+                        values.effort.clone(),
+                        "Esfuerzo",
+                        open == Some((agent, Menu::Effort)),
+                        toggle(agent, Menu::Effort),
+                        cx,
+                    ))
+                    .child(chip(
+                        ids[2],
+                        "",
+                        theme::MUTE,
+                        values.permission.clone(),
+                        permission_title(agent),
+                        open == Some((agent, Menu::Permission)),
+                        toggle(agent, Menu::Permission),
+                        cx,
+                    ))
+                    .into_any_element(),
+            );
+            if let Some((menu_agent, menu)) = open
+                && menu_agent == agent
+                && menu != Menu::Agent
+            {
+                let (title, current, options): (&str, &str, Vec<String>) = match menu {
+                    Menu::Model => (
+                        "modelo",
+                        &values.model,
+                        with_current(models(agent), &values.model),
+                    ),
+                    Menu::Effort => (
+                        "esfuerzo",
+                        &values.effort,
+                        efforts(agent).iter().map(|e| e.to_string()).collect(),
+                    ),
+                    _ => (
+                        permission_title(agent),
+                        &values.permission,
+                        permissions(agent).iter().map(|p| p.to_string()).collect(),
+                    ),
+                };
+                let items = options
+                    .into_iter()
+                    .map(|v| plain_item(&v, v == current, pick(agent, menu, v.clone())))
+                    .collect();
+                rows.push(menu_list(title, items, cx).into_any_element());
+            }
+        }
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .size_full()
+            .p(px(16.))
+            .bg(color(theme::TERMINAL_BG))
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(820.))
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.))
+                    .pt(px(48.))
+                    .child(
+                        div()
+                            .text_color(color(theme::INK))
+                            .text_size(px(28.))
+                            .font_weight(FontWeight::BOLD)
+                            .child("Configuración"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .text_color(color(theme::MUTE))
+                            .child("Valores con los que empieza el cuadro de Nueva sesión. Se guardan al elegirlos."),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(8.))
+                            .p(px(12.))
+                            .border_1()
+                            .border_color(hairline())
+                            .rounded(px(4.))
+                            .bg(color(theme::CANVAS))
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(color(theme::STONE))
+                                    .child("NUEVA SESIÓN · VALORES POR DEFECTO"),
+                            )
+                            .children(rows),
                     ),
             )
     }
+}
+
+/// What a menu option does when picked.
+type Pick = Rc<dyn Fn(&mut MainView, &mut Context<MainView>)>;
+
+struct MenuItem {
+    tag: String,
+    tag_color: u32,
+    label: String,
+    hint: String,
+    selected: bool,
+    pick: Pick,
+}
+
+fn plain_item(label: &str, selected: bool, pick: Pick) -> MenuItem {
+    MenuItem {
+        tag: String::new(),
+        tag_color: theme::MUTE,
+        label: label.to_string(),
+        hint: String::new(),
+        selected,
+        pick,
+    }
+}
+
+/// The offered options plus the current value when it is not one of them
+/// (a model set by hand in the defaults file).
+fn with_current(options: &[&str], current: &str) -> Vec<String> {
+    let mut list: Vec<String> = options.iter().map(|o| o.to_string()).collect();
+    if !list.iter().any(|o| o == current) {
+        list.push(current.to_string());
+    }
+    list
+}
+
+fn permission_title(agent: AgentCli) -> &'static str {
+    match agent {
+        AgentCli::ClaudeCode => "modo de permisos",
+        AgentCli::Codex => "sandbox",
+    }
+}
+
+/// A setting button: `tag label [v]`, with an `accent` border while its
+/// list is open.
+#[allow(clippy::too_many_arguments)]
+fn chip(
+    id: &'static str,
+    tag: &str,
+    tag_color: u32,
+    label: String,
+    aria: &'static str,
+    open: bool,
+    toggle: Pick,
+    cx: &mut Context<MainView>,
+) -> Stateful<Div> {
+    div()
+        .id(id)
+        .role(Role::Button)
+        .aria_label(aria)
+        .flex()
+        .items_center()
+        .gap(px(6.))
+        .min_h(px(32.))
+        .px(px(8.))
+        .border_1()
+        .border_color(if open {
+            color(theme::ACCENT)
+        } else {
+            hairline()
+        })
+        .rounded(px(4.))
+        .text_size(px(12.))
+        .text_color(color(theme::BODY))
+        .cursor_pointer()
+        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| toggle(this, cx)))
+        .when(!tag.is_empty(), |d| {
+            d.child(div().text_color(color(tag_color)).child(tag.to_string()))
+        })
+        .child(label)
+        .child(div().text_color(color(theme::MUTE)).child("[v]"))
+}
+
+/// The short list a setting button opens.
+fn menu_list(title: &'static str, items: Vec<MenuItem>, cx: &mut Context<MainView>) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(2.))
+        .p(px(8.))
+        .bg(color(theme::SURFACE_ELEVATED))
+        .border_1()
+        .border_color(color(theme::HAIRLINE_STRONG))
+        .rounded(px(4.))
+        .text_size(px(12.))
+        .child(
+            div()
+                .px(px(8.))
+                .py(px(4.))
+                .text_color(color(theme::MUTE))
+                .child(title),
+        )
+        .children(items.into_iter().enumerate().map(|(i, item)| {
+            let pick = item.pick.clone();
+            div()
+                .id(ElementId::named_usize("menu-item", i))
+                .role(Role::ListBoxOption)
+                .aria_label(SharedString::from(item.label.clone()))
+                .flex()
+                .items_center()
+                .gap(px(8.))
+                .min_h(px(32.))
+                .px(px(8.))
+                .rounded(px(4.))
+                .bg(if item.selected {
+                    color(theme::SURFACE)
+                } else {
+                    gpui::transparent_black().into()
+                })
+                .text_color(color(if item.selected {
+                    theme::INK
+                } else {
+                    theme::BODY
+                }))
+                .cursor_pointer()
+                .hover(|style| style.bg(color(theme::SURFACE)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| pick(this, cx)))
+                .child(
+                    div()
+                        .w(px(32.))
+                        .flex_none()
+                        .text_color(color(theme::ACCENT))
+                        .child(if item.selected { "[ok]" } else { "" }),
+                )
+                .when(!item.tag.is_empty(), |d| {
+                    d.child(div().text_color(color(item.tag_color)).child(item.tag))
+                })
+                .child(div().flex_grow_1().child(item.label))
+                .child(div().text_color(color(theme::MUTE)).child(item.hint))
+        }))
+}
+
+/// A launch token: unique per click, so the daemon refuses a request sent
+/// twice.
+fn new_token() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or_default();
+    format!("{}-{nanos:x}-{n}", std::process::id())
 }
 
 impl Render for MainView {
@@ -1279,6 +2108,11 @@ impl Render for MainView {
                 let handle = view.read(cx).focus_handle(cx);
                 handle.focus(window, cx);
             }
+        }
+        if self.focus_brief && self.selection == Selection::New {
+            self.focus_brief = false;
+            let handle = self.new.brief.read(cx).focus_handle(cx);
+            handle.focus(window, cx);
         }
         let nav = self.nav(window, cx);
         let center = self.center(window, cx);
@@ -1299,7 +2133,7 @@ impl Render for MainView {
             .font_family(theme::FONT)
             .font_features(gpui::FontFeatures::disable_ligatures())
             .text_size(px(14.))
-            .child(self.header())
+            .child(self.header(cx))
             .child(
                 div().flex().flex_grow_1().min_h(px(0.)).child(nav).child(
                     div()
@@ -1400,18 +2234,28 @@ fn placeholder(title: &str, lines: Vec<String>) -> Div {
 
 fn not_attachable(session: &Session) -> Div {
     let mut lines = Vec::new();
-    match (session.agent, session.kind) {
-        (AgentCli::ClaudeCode, SessionKind::Interactive) => {
-            lines.push(match session.pid {
-                Some(pid) => {
-                    format!("Es una sesión interactiva: vive en su propio terminal (pid {pid}).")
-                }
-                None => "Es una sesión interactiva: vive en su propio terminal.".into(),
-            });
-            lines
-                .push("claude attach solo adjunta sesiones en segundo plano (claude --bg).".into());
+    let mut title = "Sin terminal adjuntable";
+    if session.key.starts_with("launch:") {
+        title = "Lanzando la sesión";
+        lines.push(format!("Esperando a que {} la registre…", session.agent));
+        lines.push("Su terminal aparece aquí en cuanto el CLI la muestra.".into());
+    } else {
+        match (session.agent, session.kind) {
+            (AgentCli::ClaudeCode, SessionKind::Interactive) => {
+                lines.push(match session.pid {
+                    Some(pid) => {
+                        format!(
+                            "Es una sesión interactiva: vive en su propio terminal (pid {pid})."
+                        )
+                    }
+                    None => "Es una sesión interactiva: vive en su propio terminal.".into(),
+                });
+                lines.push(
+                    "claude attach solo adjunta sesiones en segundo plano (claude --bg).".into(),
+                );
+            }
+            _ => lines.push("El CLI no ofrece un comando para adjuntar esta sesión.".into()),
         }
-        _ => lines.push("El CLI no ofrece un comando para adjuntar esta sesión.".into()),
     }
     div()
         .flex()
@@ -1425,7 +2269,7 @@ fn not_attachable(session: &Session) -> Div {
                 .text_color(color(theme::INK))
                 .text_size(px(20.))
                 .font_weight(FontWeight::BOLD)
-                .child("Sin terminal adjuntable"),
+                .child(title),
         )
         .children(lines.into_iter().map(|line| {
             div()

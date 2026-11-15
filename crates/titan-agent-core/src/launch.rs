@@ -71,6 +71,87 @@ impl fmt::Display for LaunchError {
 
 impl std::error::Error for LaunchError {}
 
+/// Models offered in the "new session" box. Any other valid model name can
+/// still be set in the defaults file.
+pub fn models(agent: AgentCli) -> &'static [&'static str] {
+    match agent {
+        AgentCli::ClaudeCode => &["opus", "sonnet", "haiku", "fable"],
+        AgentCli::Codex => &["gpt-6-luna", "gpt-6.1-sol", "gpt-6.1-terra"],
+    }
+}
+
+/// Default model, effort and permission of one CLI.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentDefaults {
+    pub model: String,
+    pub effort: String,
+    pub permission: String,
+}
+
+/// Values the "new session" box starts with, configured from `[*]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LaunchDefaults {
+    pub agent: AgentCli,
+    pub claude_code: AgentDefaults,
+    pub codex: AgentDefaults,
+}
+
+impl Default for LaunchDefaults {
+    fn default() -> LaunchDefaults {
+        LaunchDefaults {
+            agent: AgentCli::ClaudeCode,
+            claude_code: AgentDefaults {
+                model: "opus".into(),
+                effort: "high".into(),
+                permission: "manual".into(),
+            },
+            codex: AgentDefaults {
+                model: "gpt-6-luna".into(),
+                effort: "medium".into(),
+                permission: "workspace-write".into(),
+            },
+        }
+    }
+}
+
+impl LaunchDefaults {
+    /// Reads the defaults file, keeping the built-in value of anything
+    /// missing or not accepted by [`LaunchSpec::validate`].
+    pub fn parse(text: &str) -> LaunchDefaults {
+        let mut defaults: LaunchDefaults = serde_json::from_str(text).unwrap_or_default();
+        let fallback = LaunchDefaults::default();
+        for agent in AgentCli::ALL {
+            let good = fallback.get(agent).clone();
+            let value = defaults.get_mut(agent);
+            if !is_model(&value.model) {
+                value.model = good.model;
+            }
+            if !efforts(agent).contains(&value.effort.as_str()) {
+                value.effort = good.effort;
+            }
+            if !permissions(agent).contains(&value.permission.as_str()) {
+                value.permission = good.permission;
+            }
+        }
+        defaults
+    }
+
+    pub fn get(&self, agent: AgentCli) -> &AgentDefaults {
+        match agent {
+            AgentCli::ClaudeCode => &self.claude_code,
+            AgentCli::Codex => &self.codex,
+        }
+    }
+
+    pub fn get_mut(&mut self, agent: AgentCli) -> &mut AgentDefaults {
+        match agent {
+            AgentCli::ClaudeCode => &mut self.claude_code,
+            AgentCli::Codex => &mut self.codex,
+        }
+    }
+}
+
 /// Effort levels offered for each CLI.
 pub fn efforts(agent: AgentCli) -> &'static [&'static str] {
     match agent {
@@ -413,6 +494,34 @@ mod tests {
         real.started_at_ms = None;
         real.cwd = "/srv/demo/other".into();
         assert!(!s.matches_new_session(&real, 10_000));
+    }
+
+    #[test]
+    fn defaults_fall_back_per_field() {
+        assert_eq!(LaunchDefaults::parse("no json"), LaunchDefaults::default());
+        let d = LaunchDefaults::parse(
+            r#"{"agent":"codex","codex":{"model":"gpt-6.1-sol","effort":"max","permission":"danger-full-access"}}"#,
+        );
+        assert_eq!(d.agent, AgentCli::Codex);
+        assert_eq!(d.codex.model, "gpt-6.1-sol");
+        assert_eq!(d.codex.effort, "medium");
+        assert_eq!(d.codex.permission, "workspace-write");
+        assert_eq!(d.claude_code, LaunchDefaults::default().claude_code);
+        let text = serde_json::to_string(&d).unwrap();
+        assert_eq!(LaunchDefaults::parse(&text), d);
+        for agent in AgentCli::ALL {
+            let v = LaunchDefaults::default().get(agent).clone();
+            let spec = LaunchSpec {
+                agent,
+                cwd: "/x".into(),
+                model: v.model,
+                effort: v.effort,
+                permission: v.permission,
+                brief: "x".into(),
+            };
+            assert_eq!(spec.validate(), Ok(()));
+            assert!(models(agent).iter().all(|m| is_model(m)));
+        }
     }
 
     #[test]
