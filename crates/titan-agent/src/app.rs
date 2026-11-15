@@ -43,6 +43,7 @@ pub struct MainWindow {
     subscriptions: Vec<gpui::Subscription>,
     confirm_stop: Option<(SessionKey, std::time::Instant)>,
     focused_session: Option<SessionKey>,
+    monitor_tab: &'static str,
 }
 
 impl MainWindow {
@@ -63,6 +64,7 @@ impl MainWindow {
             subscriptions: Vec::new(),
             confirm_stop: None,
             focused_session: None,
+            monitor_tab: "grafo",
         };
         this.connect(cx);
         cx.spawn(async move |this, cx| {
@@ -279,6 +281,251 @@ impl MainWindow {
             return None;
         };
         self.sessions.iter().find(|s| &s.key == key)
+    }
+
+    fn fallback_project(&self) -> Option<Project> {
+        if let Some(session) = self.selected_session() {
+            return Some(session.project.clone());
+        }
+        if let Some(Selection::Project(project)) = &self.selection {
+            return Some(project.clone());
+        }
+        self.sessions
+            .last()
+            .map(|session| session.project.clone())
+            .or_else(|| self.sessions.first().map(|session| session.project.clone()))
+    }
+
+    fn render_monitor(&self, project: &Project, cx: &mut Context<Self>) -> gpui::Div {
+        let (title, subtitle, sessions_line) = view_model::monitor_text(&self.sessions, project);
+        let tabs = ["grafo", "carriles", "mesa de control"];
+        let mut tab_row = div().flex().items_center().gap(px(4.0));
+        for tab in tabs {
+            let active = self.monitor_tab == tab;
+            tab_row = tab_row.child(
+                div()
+                    .id(format!("monitor-tab-{tab}"))
+                    .h(px(30.0))
+                    .px(px(12.0))
+                    .flex()
+                    .items_center()
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(rgb(if active {
+                        theme::ACCENT
+                    } else {
+                        theme::HAIRLINE_STRONG
+                    }))
+                    .bg(if active {
+                        rgb(theme::SURFACE_ELEVATED)
+                    } else {
+                        rgb(theme::CANVAS)
+                    })
+                    .child(Self::text(
+                        tab,
+                        12.0,
+                        if active { theme::INK } else { theme::MUTE },
+                    ))
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(move |this, _, _, cx| {
+                            this.monitor_tab = tab;
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+        let count = self
+            .sessions
+            .iter()
+            .filter(|session| session.project == *project)
+            .count();
+        let team_live = self.sessions.iter().any(|session| {
+            session.project == *project
+                && session.parent.as_ref().is_some_and(|parent| {
+                    self.sessions
+                        .iter()
+                        .any(|candidate| candidate.project == *project && &candidate.key == parent)
+                })
+        });
+        div()
+            .flex_1()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .min_h(px(40.0))
+                    .px(px(16.0))
+                    .py(px(4.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(12.0))
+                    .border_b_1()
+                    .border_color(rgb(theme::HAIRLINE_RGBA))
+                    .child(Self::text(
+                        format!("[#] {}", project.name),
+                        13.0,
+                        theme::INK,
+                    ))
+                    .child(Self::text(format!("{count} sesiones"), 12.0, theme::MUTE))
+                    .when(team_live, |el| {
+                        el.child(Self::text("[*] en vivo", 12.0, theme::SUCCESS))
+                    })
+                    .child(div().flex_1())
+                    .child(tab_row),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(12.0))
+                    .bg(rgb(theme::TERMINAL_BG))
+                    .child(div().max_w(px(720.0)).text_center().child(Self::text(
+                        title,
+                        20.0,
+                        theme::INK,
+                    )))
+                    .child(div().max_w(px(720.0)).text_center().child(Self::text(
+                        subtitle,
+                        13.0,
+                        theme::MUTE,
+                    )))
+                    .child(div().max_w(px(720.0)).text_center().child(Self::text(
+                        sessions_line,
+                        13.0,
+                        theme::MUTE,
+                    ))),
+            )
+    }
+
+    fn render_new_session(&self) -> gpui::Div {
+        let project = self.fallback_project();
+        let project_name = project
+            .as_ref()
+            .map(|p| p.name.as_str())
+            .unwrap_or("proyecto");
+        let chips = div()
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .child(
+                div()
+                    .h(px(32.0))
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .border_1()
+                    .border_color(rgb(theme::HAIRLINE_STRONG))
+                    .rounded(px(4.0))
+                    .child(Self::text("cl", 12.0, theme::CLAUDE))
+                    .child(Self::text("Claude Code", 12.0, theme::BODY))
+                    .child(Self::text("[v]", 12.0, theme::MUTE)),
+            )
+            .children(["opus", "high", "default"].into_iter().map(|label| {
+                div()
+                    .h(px(32.0))
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .border_1()
+                    .border_color(rgb(theme::HAIRLINE_STRONG))
+                    .rounded(px(4.0))
+                    .child(Self::text(label, 12.0, theme::BODY))
+                    .child(Self::text("[v]", 12.0, theme::MUTE))
+            }))
+            .child(
+                div()
+                    .h(px(32.0))
+                    .px(px(8.0))
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .border_1()
+                    .border_color(rgb(theme::HAIRLINE_STRONG))
+                    .rounded(px(4.0))
+                    .child(Self::text(format!("[#] {project_name}"), 12.0, theme::BODY))
+                    .child(Self::text("[v]", 12.0, theme::MUTE)),
+            );
+        div()
+            .flex_1()
+            .p(px(16.0))
+            .flex()
+            .flex_col()
+            .bg(rgb(theme::TERMINAL_BG))
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.0))
+                    .child(Self::text("Nueva sesión", 28.0, theme::INK))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(4.0))
+                            .child(Self::text("en", 13.0, theme::MUTE))
+                            .child(Self::text(format!("[#] {project_name}"), 13.0, theme::BODY))
+                            .child(Self::text("con", 13.0, theme::MUTE))
+                            .child(Self::text("Claude Code", 13.0, theme::CLAUDE)),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(820.0))
+                    .mx_auto()
+                    .border_1()
+                    .border_color(rgb(theme::ACCENT))
+                    .rounded(px(4.0))
+                    .bg(rgb(theme::CANVAS))
+                    .child(div().h(px(100.0)).p(px(12.0)).child(Self::text(
+                        "Escribe el encargo. titan-agent no lo completa ni lo reescribe.",
+                        13.0,
+                        theme::MUTE,
+                    )))
+                    .child(
+                        div()
+                            .border_t_1()
+                            .border_color(rgb(theme::HAIRLINE_RGBA))
+                            .p(px(8.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(4.0))
+                            .child(chips)
+                            .child(div().flex_1())
+                            .child(
+                                div()
+                                    .h(px(32.0))
+                                    .px(px(16.0))
+                                    .flex()
+                                    .items_center()
+                                    .border_1()
+                                    .border_color(rgb(theme::ACCENT))
+                                    .rounded(px(4.0))
+                                    .bg(rgb(theme::SURFACE_ELEVATED))
+                                    .child(Self::text("[ok] lanzar", 13.0, theme::INK)),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .w_full()
+                    .max_w(px(820.0))
+                    .mx_auto()
+                    .mt(px(8.0))
+                    .px(px(4.0))
+                    .flex()
+                    .gap(px(8.0))
+                    .child(Self::text("se ejecutará", 11.0, theme::STONE))
+                    .child(Self::text("disponible en la fase 2", 11.0, theme::MUTE)),
+            )
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -901,8 +1148,10 @@ impl Render for MainWindow {
                     .child(body)
                     .child(detail_panel.child(bottom)),
             )
+        } else if let Some(Selection::Project(project)) = self.selection.clone() {
+            self.render_monitor(&project, cx)
         } else {
-            div().flex_1().flex().items_center().justify_center().bg(rgb(theme::TERMINAL_BG)).child(Self::text("Nueva sesión\n\nen [#] proyecto con Claude Code\n\nEscribe el encargo. titan-agent no lo completa ni lo reescribe.\n\ncl Claude Code   opus   high   default   [#] proyecto   [ok] lanzar\n\ndisponible en la fase 2", 20.0, theme::INK))
+            self.render_new_session()
         };
         div()
             .size_full()
