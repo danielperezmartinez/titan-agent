@@ -309,7 +309,7 @@ fn normalize(mut rows: Vec<Session>, previous: Option<&[Session]>) -> Vec<Sessio
         row.state_since_ms = match old {
             Some(x) if x.state == row.state => x.state_since_ms,
             Some(_) => Some(unix_ms()),
-            None => Some(unix_ms()),
+            None => row.state_since_ms.or_else(|| Some(unix_ms())),
         };
     }
     rows.sort_by(|a, b| a.key.cmp(&b.key));
@@ -954,4 +954,71 @@ fn exit_terminal(t: &Arc<Terminal>, code: Option<i32>) {
         }
     });
     workers.lock().unwrap().push(worker);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session(
+        state_since_ms: Option<i64>,
+        state: titan_agent_core::session::SessionState,
+    ) -> Session {
+        Session {
+            key: SessionKey::new(titan_agent_core::session::AgentCli::Codex, "test"),
+            name: "test".into(),
+            kind: titan_agent_core::session::SessionKind::Interactive,
+            state,
+            cwd: String::new(),
+            project: titan_agent_core::session::Project {
+                name: "test".into(),
+                root: String::new(),
+            },
+            model: None,
+            parent: None,
+            started_at_ms: Some(0),
+            state_since_ms,
+            attach: None,
+        }
+    }
+
+    #[test]
+    fn normalize_preserves_or_sets_state_timestamp() {
+        let initial = normalize(
+            vec![session(
+                Some(17),
+                titan_agent_core::session::SessionState::Working,
+            )],
+            None,
+        );
+        assert_eq!(initial[0].state_since_ms, Some(17));
+
+        let initial_missing = normalize(
+            vec![session(
+                None,
+                titan_agent_core::session::SessionState::Working,
+            )],
+            None,
+        );
+        let timestamp = initial_missing[0].state_since_ms.unwrap();
+        assert!(timestamp > 0);
+
+        let unchanged = normalize(
+            vec![session(
+                None,
+                titan_agent_core::session::SessionState::Working,
+            )],
+            Some(&initial_missing),
+        );
+        assert_eq!(unchanged[0].state_since_ms, Some(timestamp));
+
+        let changed = normalize(
+            vec![session(
+                None,
+                titan_agent_core::session::SessionState::Waiting,
+            )],
+            Some(&initial_missing),
+        );
+        assert!(changed[0].state_since_ms.unwrap() >= timestamp);
+    }
 }
