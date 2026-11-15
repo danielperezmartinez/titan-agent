@@ -411,10 +411,12 @@ fn oversized_line_closes_connection() {
 
 #[test]
 fn subscriptions_sort_sessions_and_fixture_stop_updates_state_timestamps() {
+    let mut without_timestamp = session("zeta", None);
+    without_timestamp.state_since_ms = None;
     let before = unix_ms();
     let mut daemon = Running::source_with_interval(
         Box::new(FixtureSource::new(vec![
-            session("zeta", None),
+            without_timestamp,
             session("alpha", None),
         ])),
         4096,
@@ -427,13 +429,13 @@ fn subscriptions_sort_sessions_and_fixture_stop_updates_state_timestamps() {
         initial.iter().map(|s| s.key.clone()).collect::<Vec<_>>(),
         vec![key("alpha"), key("zeta")]
     );
-    for item in &initial {
-        assert!((before..=unix_ms()).contains(&item.state_since_ms.unwrap()));
-    }
+    assert_eq!(initial[0].state_since_ms, Some(-1));
+    assert!((before..=unix_ms()).contains(&initial[1].state_since_ms.unwrap()));
     let mut second = daemon.client();
     second.hello();
     assert_eq!(subscribe(&mut second), initial);
     // Stop must poll immediately, even when the periodic interval is long.
+    let before_stop = unix_ms();
     first.done(Request::StopSession {
         session: key("alpha"),
     });
@@ -444,7 +446,7 @@ fn subscriptions_sort_sessions_and_fixture_stop_updates_state_timestamps() {
             other => panic!("expected changed sessions, got {other:?}"),
         };
         assert_eq!(updated[0].state, SessionState::Finished { failed: false });
-        assert!(updated[0].state_since_ms.unwrap() >= initial[0].state_since_ms.unwrap());
+        assert!((before_stop..=unix_ms()).contains(&updated[0].state_since_ms.unwrap()));
         assert_eq!(updated[1], initial[1]);
         assert_eq!(subscribe(client), updated);
     }
@@ -956,6 +958,7 @@ fn discovery_polls_when_subscribed_and_preserves_timestamp_until_state_changes()
     let mut client = daemon.client();
     client.hello();
     let initial = subscribe(&mut client);
+    assert_eq!(initial[0].state_since_ms, Some(-1));
     rx.recv_timeout(LIMIT).unwrap();
     assert_eq!(subscribe(&mut client), initial);
     assert!(
@@ -971,20 +974,25 @@ fn discovery_polls_when_subscribed_and_preserves_timestamp_until_state_changes()
         }),
         Err(ErrorCode::Unsupported)
     );
-    state.lock().unwrap()[0].name = "renamed-fixture".into();
+    {
+        let mut sessions = state.lock().unwrap();
+        sessions[0].name = "renamed-fixture".into();
+        sessions[0].state_since_ms = Some(-2);
+    }
     let changed = match client.event_until(Instant::now() + LIMIT) {
         Event::Sessions { sessions } => sessions,
         other => panic!("expected session update: {other:?}"),
     };
     assert_eq!(changed[0].name, "renamed-fixture");
     assert_eq!(changed[0].state_since_ms, initial[0].state_since_ms);
+    let before_state_change = unix_ms();
     state.lock().unwrap()[0].state = SessionState::Waiting;
     let changed = match client.event_until(Instant::now() + LIMIT) {
         Event::Sessions { sessions } => sessions,
         other => panic!("expected state update: {other:?}"),
     };
     assert_eq!(changed[0].state, SessionState::Waiting);
-    assert!(changed[0].state_since_ms.unwrap() > initial[0].state_since_ms.unwrap());
+    assert!((before_state_change..=unix_ms()).contains(&changed[0].state_since_ms.unwrap()));
     state.lock().unwrap().clear();
     assert!(matches!(
         client.event_until(Instant::now() + LIMIT),
