@@ -67,6 +67,9 @@ struct NewSession {
     menu: Option<Menu>,
     /// A launch request is on its way: the button does nothing meanwhile.
     launching: bool,
+    /// The brief of the launch on its way, to empty the field only if it
+    /// was not edited meanwhile.
+    sent: Option<String>,
     error: Option<String>,
 }
 
@@ -99,6 +102,9 @@ pub struct MainView {
     folders: Vec<String>,
     /// Focus the brief on the next frame.
     focus_brief: bool,
+    /// Real session of each launch, from the last snapshot (it can arrive
+    /// before the launch's own answer).
+    resolved: HashMap<String, String>,
     _brief_events: Subscription,
 }
 
@@ -201,6 +207,7 @@ impl MainView {
                 folder: std::env::var("TITAN_AGENT_FOLDER").ok(),
                 menu: demo_menu,
                 launching: false,
+                sent: None,
                 // Screenshots only: how a refused launch looks.
                 error: std::env::var("TITAN_AGENT_DEMO_ERROR").ok(),
             },
@@ -208,6 +215,7 @@ impl MainView {
             settings_menu: None,
             folders: Vec::new(),
             focus_brief: true,
+            resolved: HashMap::new(),
             _brief_events: brief_events,
         }
     }
@@ -232,6 +240,18 @@ impl MainView {
             Incoming::Disconnected(reason) => {
                 self.connected = false;
                 self.status = Some(reason);
+                // The answer will never come: say so instead of waiting, and
+                // never send it again on our own.
+                let before = self.pending.len();
+                self.pending.retain(|_, p| !matches!(p, Pending::Launch));
+                if self.new.launching || self.pending.len() != before {
+                    self.new.launching = false;
+                    self.new.sent = None;
+                    self.new.error = Some(
+                        "se perdió la conexión con titan-agentd: no se sabe si la sesión llegó a lanzarse; mira el árbol antes de repetir"
+                            .into(),
+                    );
+                }
             }
             Incoming::Message(message) => self.message(message, cx),
         }
@@ -277,6 +297,7 @@ impl MainView {
                     }
                     Some(Pending::Launch) => {
                         self.new.launching = false;
+                        self.new.sent = None;
                         self.new.error = Some(error.message);
                     }
                     _ => self.notice = Some((error.message, true)),
@@ -479,6 +500,11 @@ impl MainView {
         if self.new.launching {
             return;
         }
+        if !self.connected {
+            self.new.error = Some("sin conexión con titan-agentd".into());
+            cx.notify();
+            return;
+        }
         let Some(spec) = self.spec(cx) else {
             self.new.error = Some("elige la carpeta de trabajo con [#] o [d]".into());
             cx.notify();
@@ -489,6 +515,7 @@ impl MainView {
             cx.notify();
             return;
         }
+        self.new.sent = Some(spec.brief.clone());
         let id = self.client.request(Request::Launch {
             token: new_token(),
             command: spec.command_line(),
@@ -504,17 +531,30 @@ impl MainView {
     /// The daemon launched it: select its provisional session (with the
     /// TUI's terminal for Codex) and empty the box for the next one.
     fn launched(&mut self, launched: LaunchResult, cx: &mut Context<Self>) {
-        self.new.brief.update(cx, |brief, cx| brief.clear(cx));
+        let sent = self.new.sent.take();
+        if sent.as_deref() == Some(self.new.brief.read(cx).text()) {
+            self.new.brief.update(cx, |brief, cx| brief.clear(cx));
+        }
+        // The snapshot may already have told us the real session.
+        let key = self
+            .resolved
+            .get(&launched.launch)
+            .cloned()
+            .unwrap_or(launched.launch);
         if let Some(terminal) = launched.terminal {
             let client = self.client.clone();
-            let key = launched.launch.clone();
-            let view = cx.new(|cx| TerminalView::new(key, client, cx));
+            let session = key.clone();
+            let view = cx.new(|cx| TerminalView::new(session, client, cx));
             view.update(cx, |view, cx| view.adopt(terminal, cx));
-            self.terminals.insert(launched.launch.clone(), view);
+            self.terminals.insert(key.clone(), view);
         }
-        self.selection = Selection::Session(launched.launch);
-        self.focus_terminal = true;
-        cx.notify();
+        if key.starts_with("launch:") {
+            self.selection = Selection::Session(key);
+            self.focus_terminal = true;
+            cx.notify();
+        } else {
+            self.select_session(key, None, cx);
+        }
     }
 
     /// Moves what belongs to a launch (selection, terminal) to the real
@@ -524,6 +564,7 @@ impl MainView {
             let Some(real) = &launch.session else {
                 continue;
             };
+            self.resolved.insert(launch.launch.clone(), real.clone());
             if let Some(view) = self.terminals.remove(&launch.launch) {
                 view.update(cx, |view, _| view.session = real.clone());
                 self.terminals.entry(real.clone()).or_insert(view);

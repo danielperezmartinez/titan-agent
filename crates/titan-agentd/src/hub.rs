@@ -34,6 +34,8 @@ const CLAUDE_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the provisional session of a Claude Code launch stays in the
 /// tree if the CLI never reports the real one.
 const PROVISIONAL_TTL: Duration = Duration::from_secs(120);
+/// How long a launched TUI must stay up before its launch counts as done.
+const EARLY_EXIT_WINDOW: Duration = Duration::from_millis(1000);
 /// Terminal size of a launched TUI until the interface resizes it.
 const LAUNCH_SIZE: (u16, u16) = (120, 40);
 
@@ -82,6 +84,9 @@ struct State {
     used_tokens: HashSet<String>,
     /// Launches that succeeded recently, to refuse a repeat.
     recent: Vec<(Instant, LaunchSpec)>,
+    /// Launched TUIs that ended before their launch was confirmed, as
+    /// terminal id → (exit code, last output).
+    ended_early: HashMap<String, (Option<u32>, String)>,
 }
 
 /// A session launched by this daemon (ADR-0002).
@@ -137,6 +142,7 @@ impl Hub {
                 next_launch: 1,
                 used_tokens: HashSet::new(),
                 recent: Vec::new(),
+                ended_early: HashMap::new(),
             }),
         })
     }
@@ -585,16 +591,50 @@ impl Hub {
                     LAUNCH_SIZE,
                     client,
                 );
-                let answer = spawned.map(|terminal| LaunchResult {
-                    launch: key.clone(),
-                    agent: spec.agent,
-                    terminal: Some(terminal),
-                    cli_id: None,
+                let terminal = match spawned {
+                    Ok(terminal) => terminal,
+                    Err(error) => {
+                        finish_launch(&mut state, &key, None);
+                        if let Some(id) = id {
+                            send_to(&state, client, launch_answer(id, Err(error)));
+                        }
+                        return;
+                    }
+                };
+                drop(state);
+                // A TUI that ends right away (bad option, no login…) is a
+                // failed launch, with what it printed as the reason.
+                let hub = Arc::clone(self);
+                std::thread::spawn(move || {
+                    let start = Instant::now();
+                    let early = loop {
+                        let ended = hub.lock().ended_early.remove(&terminal);
+                        if ended.is_some() || start.elapsed() >= EARLY_EXIT_WINDOW {
+                            break ended;
+                        }
+                        std::thread::sleep(Duration::from_millis(40));
+                    };
+                    let answer = match early {
+                        None => Ok(LaunchResult {
+                            launch: key.clone(),
+                            agent: spec.agent,
+                            terminal: Some(terminal),
+                            cli_id: None,
+                        }),
+                        Some((code, output)) => Err((
+                            "launch_failed",
+                            failure_message(
+                                &output,
+                                &code.map_or("un error".into(), |c| format!("el código {c}")),
+                            ),
+                        )),
+                    };
+                    let mut state = hub.lock();
+                    finish_launch(&mut state, &key, answer.as_ref().ok().map(|_| None));
+                    if let Some(id) = id {
+                        send_to(&state, client, launch_answer(id, answer));
+                    }
                 });
-                finish_launch(&mut state, &key, answer.as_ref().ok().map(|_| None));
-                if let Some(id) = id {
-                    send_to(&state, client, launch_answer(id, answer));
-                }
             }
             AgentCli::ClaudeCode => {
                 drop(state);
@@ -652,6 +692,16 @@ impl Hub {
         let Some(t) = state.terminals.remove(terminal) else {
             return;
         };
+        if state
+            .launches
+            .iter()
+            .any(|l| l.running && l.key == t.session)
+        {
+            let tail: Vec<u8> = t.history.iter().copied().collect();
+            state
+                .ended_early
+                .insert(terminal.to_string(), (exit_code, plain_text(&tail)));
+        }
         let line = encode_line(&ServerMessage::Event(Event::TerminalClosed {
             terminal: terminal.to_string(),
             session: t.session.clone(),
@@ -739,6 +789,15 @@ fn resolve_launches(state: &mut State, sessions: &mut Vec<Session>) {
         ..
     } = state;
     let mut claimed: HashSet<String> = launches.iter().filter_map(|l| l.session.clone()).collect();
+    let pending_codex: Vec<(String, String)> = launches
+        .iter()
+        .filter(|l| {
+            l.spec.agent == AgentCli::Codex
+                && l.session.is_none()
+                && terminals.values().any(|t| t.session == l.key)
+        })
+        .map(|l| (l.key.clone(), l.spec.cwd.clone()))
+        .collect();
     let mut provisional = Vec::new();
     for launch in launches.iter_mut() {
         if launch.session.is_none() {
@@ -748,14 +807,27 @@ fn resolve_launches(state: &mut State, sessions: &mut Vec<Session>) {
                         .iter()
                         .find(|s| s.agent == AgentCli::ClaudeCode && &s.cli_id == cli_id)
                 }),
-                AgentCli::Codex => sessions
-                    .iter()
-                    .filter(|s| {
-                        !launch.known.contains(&s.key)
-                            && !claimed.contains(&s.key)
-                            && launch.spec.matches_new_session(s, launch.at_ms)
-                    })
-                    .min_by_key(|s| s.started_at_ms.unwrap_or(i64::MAX)),
+                AgentCli::Codex => {
+                    // Only while its TUI is open, and only when the match is
+                    // unambiguous: one new thread and one pending launch in
+                    // that folder.
+                    let alive = terminals.values().any(|t| t.session == launch.key);
+                    let candidates: Vec<&Session> = sessions
+                        .iter()
+                        .filter(|s| {
+                            !launch.known.contains(&s.key)
+                                && !claimed.contains(&s.key)
+                                && launch.spec.matches_new_session(s, launch.at_ms)
+                        })
+                        .collect();
+                    let rivals = pending_codex
+                        .iter()
+                        .filter(|(key, cwd)| {
+                            *key != launch.key && same_folder(cwd, &launch.spec.cwd)
+                        })
+                        .count();
+                    (alive && candidates.len() == 1 && rivals == 0).then(|| candidates[0])
+                }
             };
             if let Some(session) = found {
                 launch.session = Some(session.key.clone());
@@ -826,8 +898,11 @@ fn begin_launch(
         return Err(("duplicate_launch", "este clic ya lanzó una sesión".into()));
     }
     state.recent.retain(|(at, _)| at.elapsed() < REPEAT_WINDOW);
+    let folder = folder_identity(&spec.cwd);
     let same = |other: &LaunchSpec| {
-        other.agent == spec.agent && other.cwd == spec.cwd && other.brief == spec.brief
+        other.agent == spec.agent
+            && other.brief == spec.brief
+            && folder_identity(&other.cwd) == folder
     };
     let repeated = state.recent.iter().any(|(_, other)| same(other))
         || state.launches.iter().any(|l| l.running && same(&l.spec));
@@ -869,6 +944,48 @@ fn finish_launch(state: &mut State, key: &str, outcome: Option<Option<String>>) 
     }
     rebuild(state);
     broadcast_snapshot(state, true);
+}
+
+/// The same folder for de-duplication, whatever its spelling
+/// (`/a/b/`, `/a/./b`, a link to it).
+fn folder_identity(cwd: &str) -> PathBuf {
+    std::fs::canonicalize(cwd).unwrap_or_else(|_| PathBuf::from(cwd.trim_end_matches('/')))
+}
+
+fn same_folder(a: &str, b: &str) -> bool {
+    folder_identity(a) == folder_identity(b)
+}
+
+/// Terminal output without escape sequences, for an error message.
+fn plain_text(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes);
+    let mut plain = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // Skip `ESC [ … letter`, `ESC ] … BEL` and two-char escapes.
+            match chars.next() {
+                Some('[') => {
+                    for c in chars.by_ref() {
+                        if c.is_ascii_alphabetic() || c == '~' {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    for c in chars.by_ref() {
+                        if c == '\u{7}' {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        } else if c == '\n' || !c.is_control() {
+            plain.push(c);
+        }
+    }
+    plain
 }
 
 /// Spanish explanation of a failed launch, followed by what the CLI said
@@ -927,13 +1044,20 @@ fn run_once(
     let base = std::env::temp_dir().join(format!("titan-agentd-launch-{}-{n}", std::process::id()));
     let failed = |text: String| ("launch_failed", text);
     let out_path = base.with_extension("out");
-    let out = std::fs::File::create(&out_path).map_err(|e| failed(e.to_string()))?;
+    // Created exclusively (never through an existing file or link) and
+    // readable only by this user.
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true).write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut out = options.open(&out_path).map_err(|e| failed(e.to_string()))?;
+    let stdout = out.try_clone().map_err(|e| failed(e.to_string()))?;
     let err = out.try_clone().map_err(|e| failed(e.to_string()))?;
     let spawned = Command::new(program)
         .args(args)
         .current_dir(cwd)
         .stdin(std::process::Stdio::null())
-        .stdout(out)
+        .stdout(stdout)
         .stderr(err)
         .spawn();
     let result = (|| {
@@ -955,7 +1079,9 @@ fn run_once(
                 Err(e) => return Err(failed(e.to_string())),
             }
         };
-        let output = std::fs::read_to_string(&out_path).unwrap_or_default();
+        let mut output = String::new();
+        let _ = std::io::Seek::seek(&mut out, std::io::SeekFrom::Start(0));
+        let _ = std::io::Read::read_to_string(&mut out, &mut output);
         if status.success() {
             Ok(output)
         } else {
@@ -1037,6 +1163,45 @@ mod tests {
         })
     }
 
+    /// A real PTY (running `sleep`) bound to `session`.
+    fn fake_terminal(session: &str) -> Terminal {
+        let pair = native_pty_system()
+            .openpty(PtySize::default())
+            .expect("a pty for the test");
+        let mut sleep = CommandBuilder::new("sleep");
+        sleep.arg("30");
+        let child = pair.slave.spawn_command(sleep).expect("spawn sleep");
+        Terminal {
+            session: session.into(),
+            killer: child.clone_killer(),
+            master: pair.master,
+            input: channel().0,
+            history: VecDeque::new(),
+            viewers: HashSet::new(),
+            size: (80, 24),
+        }
+    }
+
+    fn codex_launch(key: &str, cwd: &str, known: &[&str]) -> Launched {
+        Launched {
+            key: key.into(),
+            spec: LaunchSpec {
+                agent: AgentCli::Codex,
+                cwd: cwd.into(),
+                model: "gpt-6-luna".into(),
+                effort: "low".into(),
+                permission: "read-only".into(),
+                brief: key.into(),
+            },
+            at_ms: now_ms(),
+            at: Instant::now(),
+            running: false,
+            cli_id: None,
+            known: known.iter().map(|k| k.to_string()).collect(),
+            session: None,
+        }
+    }
+
     fn codex_thread(key: &str, cwd: &str, started_at_ms: i64) -> Session {
         LaunchSpec {
             agent: AgentCli::Codex,
@@ -1047,6 +1212,24 @@ mod tests {
             brief: "x".into(),
         }
         .provisional_session(key, started_at_ms)
+    }
+
+    #[test]
+    fn folder_identity_ignores_spelling() {
+        let dir = std::env::temp_dir();
+        let plain = dir.to_string_lossy().trim_end_matches('/').to_string();
+        assert_eq!(
+            folder_identity(&plain),
+            folder_identity(&format!("{plain}/"))
+        );
+        assert_eq!(
+            folder_identity(&plain),
+            folder_identity(&format!("{plain}/./"))
+        );
+        assert_eq!(
+            plain_text(b"\x1b[31merror:\x1b[0m bad\r\n\x1b]0;title\x07x"),
+            "error: bad\nx"
+        );
     }
 
     #[test]
@@ -1066,26 +1249,14 @@ mod tests {
         let hub = hub();
         let old = codex_thread("cx:old", "/srv/demo/kite", now_ms() - 60_000);
         hub.set_source(AgentCli::Codex, Ok(vec![old.clone()]));
-        let spec = LaunchSpec {
-            agent: AgentCli::Codex,
-            cwd: "/srv/demo/kite".into(),
-            model: "gpt-6-luna".into(),
-            effort: "low".into(),
-            permission: "read-only".into(),
-            brief: "nuevo".into(),
-        };
         {
             let mut state = hub.lock();
-            state.launches.push(Launched {
-                key: "launch:1".into(),
-                spec,
-                at_ms: now_ms(),
-                at: Instant::now(),
-                running: true,
-                cli_id: None,
-                known: HashSet::from(["cx:old".to_string()]),
-                session: None,
-            });
+            state
+                .launches
+                .push(codex_launch("launch:1", "/srv/demo/kite", &["cx:old"]));
+            state
+                .terminals
+                .insert("t1".into(), fake_terminal("launch:1"));
             rebuild(&mut state);
             assert!(state.sessions.iter().any(|s| s.key == "launch:1"));
         }
@@ -1093,9 +1264,47 @@ mod tests {
         let other = codex_thread("cx:other", "/srv/demo/else", now_ms());
         let new = codex_thread("cx:new", "/srv/demo/kite/", now_ms());
         hub.set_source(AgentCli::Codex, Ok(vec![old, other, new]));
-        let state = hub.lock();
+        let mut state = hub.lock();
         assert_eq!(state.launches[0].session.as_deref(), Some("cx:new"));
         assert!(!state.sessions.iter().any(|s| s.key == "launch:1"));
+        assert_eq!(state.terminals["t1"].session, "cx:new");
+        let _ = state.terminals.get_mut("t1").map(|t| t.killer.kill());
+    }
+
+    #[test]
+    fn codex_launch_without_its_tui_or_with_rivals_stays_unresolved() {
+        let hub = hub();
+        {
+            let mut state = hub.lock();
+            // launch:1 closed its TUI; launch:2 and launch:3 share a folder.
+            state
+                .launches
+                .push(codex_launch("launch:1", "/srv/demo/a", &[]));
+            state
+                .launches
+                .push(codex_launch("launch:2", "/srv/demo/b", &[]));
+            state
+                .launches
+                .push(codex_launch("launch:3", "/srv/demo/b", &[]));
+            state
+                .terminals
+                .insert("t2".into(), fake_terminal("launch:2"));
+            state
+                .terminals
+                .insert("t3".into(), fake_terminal("launch:3"));
+        }
+        hub.set_source(
+            AgentCli::Codex,
+            Ok(vec![
+                codex_thread("cx:a", "/srv/demo/a", now_ms()),
+                codex_thread("cx:b", "/srv/demo/b", now_ms()),
+            ]),
+        );
+        let mut state = hub.lock();
+        assert!(state.launches.iter().all(|l| l.session.is_none()));
+        for t in state.terminals.values_mut() {
+            let _ = t.killer.kill();
+        }
     }
 
     #[test]
@@ -1103,52 +1312,17 @@ mod tests {
         let hub = hub();
         let mut thread = codex_thread("cx:new", "/srv/demo/kite", now_ms());
         thread.state = SessionState::Finished { failed: false };
-        {
-            let mut state = hub.lock();
-            state.launches.push(Launched {
-                key: "launch:1".into(),
-                spec: LaunchSpec {
-                    agent: AgentCli::Codex,
-                    cwd: "/srv/demo/kite".into(),
-                    model: "gpt-6-luna".into(),
-                    effort: "low".into(),
-                    permission: "read-only".into(),
-                    brief: "x".into(),
-                },
-                at_ms: now_ms(),
-                at: Instant::now(),
-                running: false,
-                cli_id: None,
-                known: HashSet::new(),
-                session: Some("cx:new".into()),
-            });
-        }
-        hub.set_source(AgentCli::Codex, Ok(vec![thread.clone()]));
+        let mut launch = codex_launch("launch:1", "/srv/demo/kite", &[]);
+        launch.session = Some("cx:new".into());
+        hub.lock().launches.push(launch);
+        hub.set_source(AgentCli::Codex, Ok(vec![thread]));
         // No terminal: the CLI's state stands.
         assert_eq!(
             hub.lock().sessions[0].state,
             SessionState::Finished { failed: false }
         );
         let mut state = hub.lock();
-        let pair = native_pty_system()
-            .openpty(PtySize::default())
-            .expect("a pty for the test");
-        let child = pair
-            .slave
-            .spawn_command(CommandBuilder::new("sleep"))
-            .expect("spawn sleep");
-        state.terminals.insert(
-            "t1".into(),
-            Terminal {
-                session: "cx:new".into(),
-                killer: child.clone_killer(),
-                master: pair.master,
-                input: channel().0,
-                history: VecDeque::new(),
-                viewers: HashSet::new(),
-                size: (80, 24),
-            },
-        );
+        state.terminals.insert("t1".into(), fake_terminal("cx:new"));
         rebuild(&mut state);
         assert_eq!(state.sessions[0].state, SessionState::Waiting);
         let _ = state.terminals.get_mut("t1").map(|t| t.killer.kill());

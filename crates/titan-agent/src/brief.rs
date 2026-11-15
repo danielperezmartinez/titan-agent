@@ -221,6 +221,9 @@ pub struct BriefInput {
     selecting: bool,
     /// Wanted x while moving up and down.
     goal_x: Option<Pixels>,
+    /// Scroll to the cursor on the next paint (after an edit or a move,
+    /// not after the wheel).
+    reveal: bool,
 }
 
 impl EventEmitter<BriefEvent> for BriefInput {}
@@ -238,6 +241,7 @@ impl BriefInput {
             scroll: px(0.),
             selecting: false,
             goal_x: None,
+            reveal: true,
         }
     }
 
@@ -253,12 +257,14 @@ impl BriefInput {
     }
 
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reveal = true;
         window.notify_text_input_changed(&self.focus);
         cx.emit(BriefEvent::Changed);
         cx.notify();
     }
 
     fn moved(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.reveal = true;
         window.notify_text_selection_changed(&self.focus);
         cx.notify();
     }
@@ -732,7 +738,7 @@ impl Element for BriefElement {
             let probe = BriefProbe { lines: &laid };
             probe.position(cursor_offset)
         };
-        if let Some(at) = cursor_at {
+        if let Some(at) = cursor_at.filter(|_| input.reveal) {
             if at.y < scroll {
                 scroll = at.y;
             } else if at.y + line_height > scroll + bounds.size.height {
@@ -787,6 +793,7 @@ impl Element for BriefElement {
             input.origin = origin;
             input.bounds = Some(bounds);
             input.scroll = scroll;
+            input.reveal = false;
             if input.visual_lines != visual_lines {
                 input.visual_lines = visual_lines;
                 cx.notify();

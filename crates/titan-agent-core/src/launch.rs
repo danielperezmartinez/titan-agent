@@ -63,7 +63,9 @@ impl fmt::Display for LaunchError {
             Self::EmptyBrief => f.write_str("escribe el encargo antes de lanzar"),
             Self::BriefTooLong => write!(f, "el encargo pasa de {MAX_BRIEF_BYTES} bytes"),
             Self::BadBrief => f.write_str("el encargo contiene un carácter nulo"),
-            Self::BadFolder => f.write_str("la carpeta de trabajo no es una ruta absoluta"),
+            Self::BadFolder => {
+                f.write_str("la carpeta de trabajo debe ser una ruta absoluta sin . ni ..")
+            }
             Self::BadOption { field, value } => write!(f, "{field} no válido: «{value}»"),
         }
     }
@@ -182,7 +184,14 @@ impl LaunchSpec {
         if self.brief.contains('\0') {
             return Err(LaunchError::BadBrief);
         }
-        if !is_absolute(&self.cwd) {
+        // `cd` and the daemon resolve `..` after a link differently, so the
+        // folder must be absolute and plain.
+        if !is_absolute(&self.cwd)
+            || self
+                .cwd
+                .split(SEPARATORS)
+                .any(|part| part == "." || part == "..")
+        {
             return Err(LaunchError::BadFolder);
         }
         if !is_model(&self.model) {
@@ -328,10 +337,13 @@ pub fn shell_quote(word: &str) -> String {
     }
 }
 
+/// Path separators: `\\` only counts on Windows.
+const SEPARATORS: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+
 /// Last component of a folder path, ignoring trailing separators.
 pub fn folder_name(path: &str) -> &str {
-    let trimmed = path.trim_end_matches(['/', '\\']);
-    let name = trimmed.rsplit(['/', '\\']).next().unwrap_or("");
+    let trimmed = path.trim_end_matches(SEPARATORS);
+    let name = trimmed.rsplit(SEPARATORS).next().unwrap_or("");
     if name.is_empty() { path } else { name }
 }
 
@@ -451,6 +463,8 @@ mod tests {
         );
         check(&|s| s.brief = "a\0b".into(), "bad_brief");
         check(&|s| s.cwd = "relative/dir".into(), "bad_folder");
+        check(&|s| s.cwd = "/srv/demo/../kite".into(), "bad_folder");
+        check(&|s| s.cwd = "/srv/./kite".into(), "bad_folder");
         check(&|s| s.model = "--dangerously".into(), "bad_option");
         check(&|s| s.model = "opus 4".into(), "bad_option");
         check(&|s| s.effort = "turbo".into(), "bad_option");
@@ -533,5 +547,8 @@ mod tests {
             "model_reasoning_effort=low"
         );
         assert_eq!(folder_name("/"), "/");
+        if cfg!(unix) {
+            assert_eq!(folder_name("/srv/demo/foo\\bar"), "foo\\bar");
+        }
     }
 }
