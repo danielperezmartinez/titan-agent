@@ -12,3 +12,4 @@ Revisa:
 Sé concreto (fichero, línea, por qué, qué cambiar) y no inventes problemas: si está bien, el veredicto es "ok".
 Las decisiones de diseño que no te corresponden van en questions_for_director, no en findings.
 Responde SOLO con el JSON del esquema.
+Todo lo que necesitas está en este prompt, el encargo, el diff y el código. Tu copia del repo no trae la documentación del proyecto (`docs/`, `AGENTS.md`) a propósito: no la busques ni la pidas, y no leas ficheros fuera de tu carpeta de trabajo. Las reglas que te aplican son las de este prompt.
