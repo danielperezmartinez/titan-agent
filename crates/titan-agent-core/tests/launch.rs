@@ -169,10 +169,7 @@ fn folders_with_spaces_keep_the_tilde_outside_the_quotes() {
             .starts_with("cd ~/\"mis proyectos/kite\" && ")
     );
     spec.cwd = "/srv/demo".into();
-    assert!(
-        spec.command_line(Some("/srv/demo"))
-            .starts_with("cd ~ && ")
-    );
+    assert!(spec.command_line(Some("/srv/demo")).starts_with("cd ~ && "));
 }
 
 #[test]
