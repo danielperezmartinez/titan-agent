@@ -1,10 +1,24 @@
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::fmt;
 
 /// The official CLI used to run an agent session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AgentCli {
     ClaudeCode,
     Codex,
+}
+
+impl Serialize for AgentCli {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.command())
+    }
+}
+
+impl<'de> Deserialize<'de> for AgentCli {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::from_command(&value).ok_or_else(|| de::Error::custom("unknown agent CLI"))
+    }
 }
 
 impl AgentCli {
@@ -57,6 +71,82 @@ pub enum SessionState {
     Waiting,
     /// The session ended; `failed` is true when it ended with an error.
     Finished { failed: bool },
+}
+
+impl Serialize for SessionState {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Working => "working",
+            Self::NeedsYou => "needs_you",
+            Self::Waiting => "waiting",
+            Self::Finished { failed: false } => "finished",
+            Self::Finished { failed: true } => "failed",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionState {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        match String::deserialize(deserializer)?.as_str() {
+            "working" => Ok(Self::Working),
+            "needs_you" => Ok(Self::NeedsYou),
+            "waiting" => Ok(Self::Waiting),
+            "finished" => Ok(Self::Finished { failed: false }),
+            "failed" => Ok(Self::Finished { failed: true }),
+            _ => Err(de::Error::custom("unknown session state")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SessionKey {
+    pub cli: AgentCli,
+    pub id: String,
+}
+
+impl SessionKey {
+    pub fn new(cli: AgentCli, id: impl Into<String>) -> SessionKey {
+        Self { cli, id: id.into() }
+    }
+}
+
+impl fmt::Display for SessionKey {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}:{}", self.cli.command(), self.id)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionKind {
+    Interactive,
+    Background,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Project {
+    pub name: String,
+    pub root: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Session {
+    pub key: SessionKey,
+    pub name: String,
+    pub kind: SessionKind,
+    pub state: SessionState,
+    pub cwd: String,
+    pub project: Project,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub parent: Option<SessionKey>,
+    #[serde(default)]
+    pub started_at_ms: Option<i64>,
+    #[serde(default)]
+    pub state_since_ms: Option<i64>,
+    #[serde(default)]
+    pub attach: Option<Vec<String>>,
 }
 
 impl SessionState {
