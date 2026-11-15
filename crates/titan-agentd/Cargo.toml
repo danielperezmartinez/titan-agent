@@ -8,6 +8,13 @@ publish.workspace = true
 
 [dependencies]
 titan-agent-core.workspace = true
+portable-pty.workspace = true
+serde_json.workspace = true
+tungstenite.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+titan-agent-core.workspace = true
 
 [lints]
 workspace = true

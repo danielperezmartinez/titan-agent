@@ -17,6 +17,19 @@ branch_prefix = "encargo/"
 test_cmd = "cargo test --workspace"
 test_timeout_s = 1800               # el primer build de GPUI en un worktree nuevo tarda
 autocommit = true                  # bin/team hace commit tras cada turno que escribe
+# Lo que no se copia al worktree de cada encargo (sparse checkout; sigue en la
+# rama). Los roles trabajan solo con su prompt y el encargo: sin los punteros de
+# arranque ni la bóveda, que son del director.
+hidden_paths = ["/AGENTS.md", "/CLAUDE.md", "/GEMINI.md", "/docs/", "/.claude/"]
+
+# Opciones de `codex exec` para todas las llamadas (cada una va como -c). Un rol
+# puede añadir las suyas con su propia lista `config`.
+[codex]
+config = [
+  "project_doc_max_bytes=0",           # no carga AGENTS.md (ni otros ficheros de proyecto)
+  "project_doc_fallback_filenames=[]",
+  "skills.include_instructions=false", # sin el catálogo de skills del usuario (~5k tokens)
+]
 
 [flow]
 # Orden del bucle que sigue la skill. Opus (director) diseña antes y decide después.
