@@ -8,7 +8,7 @@ Estado: "Vigente"
 Fuente: "crates/titan-agent/src/terminal.rs"
 Entrada pública: "TerminalView (attach, attached, feed, closed) y keys::keystroke_bytes"
 Resumen: "Vista GPUI del terminal de una sesión: emula con alacritty_terminal los bytes que manda titan-agentd, los pinta con la paleta ANSI de titan-ssh y JetBrains Mono, y manda al daemon lo que se teclea (secuencias xterm), lo que se pega (ctrl+shift+v, bracketed paste) y los cambios de tamaño. Rueda: historial o eventos al programa."
-Última modificación: "2026-11-15T11:45:00+01:00"
+Última modificación: "2026-11-15T11:37:00+01:00"
 ---
 
 # Terminal integrado

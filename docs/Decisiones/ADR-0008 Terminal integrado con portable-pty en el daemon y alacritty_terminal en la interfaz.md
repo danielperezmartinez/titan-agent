@@ -7,8 +7,8 @@ Decisión: portable-pty 0.9 para los PTY del daemon y alacritty_terminal 0.26 (c
 Consecuencias: El terminal no tiene aún selección con ratón ni copiar; pegar es ctrl+shift+v. La fuente JetBrains Mono va dentro del binario con su licencia OFL. alacritty_terminal se fija a 0.26 y subirlo es un cambio propio.
 Reemplaza: []
 Reemplazada por: []
-Fecha de creación: 2026-11-15T11:40:00+01:00
-Última modificación: 2026-11-15T11:40:00+01:00
+Fecha de creación: 2026-11-15T11:36:00+01:00
+Última modificación: 2026-11-15T11:36:00+01:00
 ---
 
 # ADR-0008 · Terminal integrado con portable-pty en el daemon y alacritty_terminal en la interfaz

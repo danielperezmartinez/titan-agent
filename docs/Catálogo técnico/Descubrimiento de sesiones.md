@@ -8,7 +8,7 @@ Estado: "Vigente"
 Fuente: "crates/titan-agent-core/src/discovery.rs"
 Entrada pública: "titan_agent_core::discovery::{parse_claude_agents, codex_session, link_sessions, last_model_in_transcript}; titan_agent_core::project::{project_root, project_name, team_worktree, tilde}"
 Resumen: "Traduce lo que dicen los CLI oficiales a Session: la salida de claude agents --json, los Thread de codex app-server y la cola de un transcript de Claude (modelo). link_sessions quita duplicados, anida por parentThreadId y por worktree del equipo (.agents/worktrees/<encargo> bajo la carpeta del director) y rellena el rol. project agrupa por proyecto plegando los worktrees. Funciones puras, sin E/S."
-Última modificación: "2026-11-15T11:45:00+01:00"
+Última modificación: "2026-11-15T11:37:00+01:00"
 ---
 
 # Descubrimiento de sesiones

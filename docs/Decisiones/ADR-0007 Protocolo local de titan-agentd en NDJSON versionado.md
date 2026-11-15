@@ -7,8 +7,8 @@ Decisión: Protocolo propio NDJSON v1 sobre socket Unix, con hello obligatorio, 
 Consecuencias: Cualquier cambio incompatible sube PROTOCOL_VERSION y el daemon rechaza clientes de otra versión. Windows (named pipe) queda pendiente. El mismo protocolo servirá por stdio a titan-ssh (fase 4).
 Reemplaza: []
 Reemplazada por: []
-Fecha de creación: 2026-11-15T11:40:00+01:00
-Última modificación: 2026-11-15T11:40:00+01:00
+Fecha de creación: 2026-11-15T11:36:00+01:00
+Última modificación: 2026-11-15T11:36:00+01:00
 ---
 
 # ADR-0007 · Protocolo local de titan-agentd en NDJSON versionado

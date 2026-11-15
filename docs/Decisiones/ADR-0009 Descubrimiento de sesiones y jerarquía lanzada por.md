@@ -7,8 +7,8 @@ Decisión: Sondeo de las vías oficiales (claude agents --json, codex app-server
 Consecuencias: La lista refleja cambios en unos 2 s. Si los CLI cambian sus campos, solo cambia core::discovery (con sus tests). Cuando la herramienta del equipo escriba eventos (fase 3) habrá un dato directo de quién encarga a quién.
 Reemplaza: []
 Reemplazada por: []
-Fecha de creación: 2026-11-15T11:40:00+01:00
-Última modificación: 2026-11-15T11:40:00+01:00
+Fecha de creación: 2026-11-15T11:36:00+01:00
+Última modificación: 2026-11-15T11:36:00+01:00
 ---
 
 # ADR-0009 · Descubrimiento de sesiones y jerarquía lanzada por
