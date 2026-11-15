@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use futures::channel::mpsc::UnboundedReceiver;
+use futures::channel::mpsc::{TryRecvError, UnboundedReceiver};
 use std::fs;
 use std::io::{self, BufReader, Read, Write};
 use std::net::Shutdown;
@@ -101,10 +101,10 @@ fn greet(stream: &mut UnixStream) {
 fn next(receiver: &mut UnboundedReceiver<Incoming>) -> Incoming {
     let deadline = Instant::now() + WAIT;
     loop {
-        match receiver.try_next() {
-            Ok(Some(message)) => return message,
-            Ok(None) => panic!("incoming channel ended before expected message"),
-            Err(_) => {
+        match receiver.try_recv() {
+            Ok(message) => return message,
+            Err(TryRecvError::Closed) => panic!("incoming channel ended before expected message"),
+            Err(TryRecvError::Empty) => {
                 assert!(Instant::now() < deadline, "incoming message timed out");
                 thread::sleep(POLL);
             }
@@ -116,10 +116,10 @@ fn disconnected_once(receiver: &mut UnboundedReceiver<Incoming>) {
     assert!(matches!(next(receiver), Incoming::Disconnected(_)));
     let deadline = Instant::now() + Duration::from_millis(100);
     while Instant::now() < deadline {
-        match receiver.try_next() {
-            Ok(Some(message)) => panic!("message after Disconnected: {message:?}"),
-            Ok(None) => return,
-            Err(_) => thread::sleep(POLL),
+        match receiver.try_recv() {
+            Ok(message) => panic!("message after Disconnected: {message:?}"),
+            Err(TryRecvError::Closed) => return,
+            Err(TryRecvError::Empty) => thread::sleep(POLL),
         }
     }
 }
@@ -157,7 +157,7 @@ fn hello_uses_reserved_id_version_and_client_name_and_returns_daemon() {
     assert_eq!(name, "fixture-daemon-v7");
     assert!(client.is_connected());
     assert!(
-        incoming.try_next().is_err(),
+        matches!(incoming.try_recv(), Err(TryRecvError::Empty)),
         "Hello answer must be consumed"
     );
     release.send(()).unwrap();
