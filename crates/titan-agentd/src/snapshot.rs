@@ -19,11 +19,6 @@ pub struct ReplyListener {
 impl EventListener for ReplyListener {
     fn send_event(&self, event: Event) {
         if let Event::PtyWrite(reply) = event {
-            // Character-size reports are delegated to the UI by the full
-            // terminal; this headless emulator has no pixel/cell geometry.
-            if reply.starts_with("\x1b[8;") && reply.ends_with('t') {
-                return;
-            }
             self.replies
                 .lock()
                 .unwrap()
