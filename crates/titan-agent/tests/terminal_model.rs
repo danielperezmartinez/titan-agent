@@ -1,4 +1,4 @@
-use titan_agent::terminal_model::{palette, Cursor, Frame, Modes, Run, TerminalModel};
+use titan_agent::terminal_model::{Cursor, Frame, Modes, Run, TerminalModel, palette};
 
 const ANSI: [u32; 16] = [
     0x201D1D, 0xFF453A, 0x30D158, 0xFF9F0A, 0x0A84FF, 0xBF5AF2, 0x5AC8FA, 0xD8D5D5, 0x6E6E73,
