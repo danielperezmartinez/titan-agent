@@ -1,0 +1,107 @@
+use crate::ws::{WsClient, WsError};
+use serde_json::{Value, json};
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+pub fn control_socket(codex_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
+    let root = codex_home
+        .map(PathBuf::from)
+        .or_else(|| home.map(|h| PathBuf::from(h).join(".codex")))?;
+    Some(root.join("app-server-control/app-server-control.sock"))
+}
+pub struct CodexRpc {
+    ws: WsClient,
+    next_id: u64,
+}
+impl CodexRpc {
+    pub fn connect(path: &Path, timeout: Duration) -> Result<Self, WsError> {
+        let mut rpc = Self {
+            ws: WsClient::connect(path, timeout)?,
+            next_id: 1,
+        };
+        let init =
+            json!({"clientInfo":{"name":"titan-agentd","version":env!("CARGO_PKG_VERSION")}});
+        rpc.send(1, "initialize", init)?;
+        rpc.response(1, timeout)?;
+        rpc.ws
+            .send_text(&json!({"method":"initialized"}).to_string())?;
+        rpc.next_id = 2;
+        Ok(rpc)
+    }
+    fn send(&mut self, id: u64, method: &str, params: Value) -> Result<(), WsError> {
+        self.ws
+            .send_text(&json!({"id":id,"method":method,"params":params}).to_string())
+    }
+    fn response(&mut self, id: u64, timeout: Duration) -> Result<Value, WsError> {
+        loop {
+            let msg: Value = serde_json::from_str(&self.ws.recv_text(timeout)?)
+                .map_err(|e| WsError::Protocol(e.to_string()))?;
+            if msg.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+            if let Some(error) = msg.get("error") {
+                return Err(WsError::Protocol(
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("RPC error")
+                        .to_owned(),
+                ));
+            }
+            return msg
+                .get("result")
+                .cloned()
+                .ok_or_else(|| WsError::Protocol("missing result".into()));
+        }
+    }
+    pub fn call(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, WsError> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.send(id, method, params)?;
+        self.response(id, timeout)
+    }
+    pub fn loaded_threads(&mut self, timeout: Duration) -> Result<Vec<Value>, WsError> {
+        let mut cursor: Option<String> = None;
+        let mut ids = Vec::new();
+        loop {
+            let params = cursor
+                .as_ref()
+                .map(|c| json!({"cursor":c}))
+                .unwrap_or_else(|| json!({}));
+            let page = self.call("thread/loaded/list", params, timeout)?;
+            ids.extend(
+                page.get("data")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+            cursor = page
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if cursor.is_none() {
+                break;
+            }
+        }
+        let mut threads = Vec::new();
+        for id in ids {
+            if let Ok(result) = self.call(
+                "thread/read",
+                json!({"threadId":id,"includeTurns":false}),
+                timeout,
+            ) && let Some(thread) = result.get("thread")
+            {
+                threads.push(thread.clone())
+            }
+        }
+        Ok(threads)
+    }
+}
