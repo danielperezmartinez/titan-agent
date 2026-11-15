@@ -89,7 +89,12 @@ impl WsClient {
             seed,
         })
     }
-    fn mask(&mut self, payload: &[u8], opcode: u8) -> Result<(), WsError> {
+    fn mask(
+        &mut self,
+        payload: &[u8],
+        opcode: u8,
+        deadline: Option<Instant>,
+    ) -> Result<(), WsError> {
         let len = payload.len();
         let mut head = vec![0x80 | opcode];
         if len < 126 {
@@ -109,12 +114,29 @@ impl WsClient {
         head.extend_from_slice(mask);
         let mut bytes = Vec::with_capacity(len);
         bytes.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
-        self.stream.write_all(&head)?;
-        self.stream.write_all(&bytes)?;
+        self.write_all(&head, deadline)?;
+        self.write_all(&bytes, deadline)?;
+        Ok(())
+    }
+    fn write_all(&mut self, bytes: &[u8], deadline: Option<Instant>) -> Result<(), WsError> {
+        if let Some(deadline) = deadline {
+            let remain = deadline.saturating_duration_since(Instant::now());
+            if remain.is_zero() {
+                return Err(WsError::Io(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "websocket send timeout",
+                )));
+            }
+            self.stream.set_write_timeout(Some(remain))?;
+        }
+        self.stream.write_all(bytes)?;
         Ok(())
     }
     pub fn send_text(&mut self, text: &str) -> Result<(), WsError> {
-        self.mask(text.as_bytes(), 1)
+        self.mask(text.as_bytes(), 1, None)
+    }
+    pub(crate) fn send_text_until(&mut self, text: &str, deadline: Instant) -> Result<(), WsError> {
+        self.mask(text.as_bytes(), 1, Some(deadline))
     }
     fn exact(&mut self, size: usize, deadline: Instant) -> Result<Vec<u8>, WsError> {
         while self.buffer.len() < size {
@@ -168,7 +190,16 @@ impl WsClient {
             }
             match op {
                 8 => return Err(WsError::Closed),
-                9 => self.mask(&p, 10)?,
+                9 => {
+                    let remain = deadline.saturating_duration_since(Instant::now());
+                    if remain.is_zero() {
+                        return Err(WsError::Io(io::Error::new(
+                            io::ErrorKind::TimedOut,
+                            "websocket receive timeout",
+                        )));
+                    }
+                    self.mask(&p, 10, Some(deadline))?
+                }
                 10 => {}
                 2 => {
                     if active {

@@ -1,7 +1,7 @@
 use crate::codex::{CodexRpc, control_socket};
 use crate::source::{SessionSource, StopError};
 use std::io;
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
@@ -117,7 +117,7 @@ pub struct LiveSource {
     runner: Box<dyn CommandRunner>,
     rpc: Option<CodexRpc>,
     retry_at: Instant,
-    transcripts: std::collections::HashMap<String, PathBuf>,
+    transcripts: std::collections::HashMap<String, std::ffi::OsString>,
 }
 impl LiveSource {
     pub fn new(config: SourceConfig, runner: Box<dyn CommandRunner>) -> Self {
@@ -157,30 +157,9 @@ impl LiveSource {
             return None;
         }
         let home = self.config.claude_home.as_ref()?;
-        let cached = self
-            .transcripts
-            .get(id)
-            .filter(|p| safe_transcript(p))
-            .cloned();
-        let path = cached.or_else(|| find_transcript(&home.join("projects"), id));
-        let path = path?;
-        self.transcripts.insert(id.to_owned(), path.clone());
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-            .open(path)
-            .ok()?;
-        use std::io::{Read, Seek, SeekFrom};
-        if !file.metadata().ok()?.is_file() {
-            return None;
-        }
-        let len = file.metadata().ok()?.len();
-        let mut file = file;
-        if len > 65536 {
-            file.seek(SeekFrom::End(-65536)).ok()?;
-        }
-        let mut bytes = Vec::new();
-        file.take(65536).read_to_end(&mut bytes).ok()?;
+        let cached = self.transcripts.get(id).cloned();
+        let (child, bytes) = read_transcript(&home.join("projects"), id, cached.as_deref())?;
+        self.transcripts.insert(id.to_owned(), child);
         claude_model_from_transcript(&String::from_utf8_lossy(&bytes))
     }
     fn codex(&mut self) -> Vec<Session> {
@@ -222,20 +201,68 @@ impl LiveSource {
         }
     }
 }
-fn find_transcript(root: &Path, id: &str) -> Option<PathBuf> {
+fn read_transcript(
+    root: &Path,
+    id: &str,
+    cached: Option<&std::ffi::OsStr>,
+) -> Option<(std::ffi::OsString, Vec<u8>)> {
     if !valid_session_id(id) {
         return None;
     }
-    let entries = std::fs::read_dir(root).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
-        {
-            let candidate = path.join(format!("{id}.jsonl"));
-            if safe_transcript(&candidate) {
-                return Some(candidate);
+    use rustix::fs::{Dir, Mode, OFlags, fstat, open, openat};
+    let projects = open(
+        root,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .ok()?;
+    let mut names = Vec::new();
+    if let Some(name) = cached {
+        names.push(name.to_os_string());
+    }
+    let mut dir = Dir::read_from(projects.try_clone().ok()?).ok()?;
+    while let Some(Ok(entry)) = dir.read() {
+        let name = entry.file_name().to_bytes();
+        if name != b"." && name != b".." {
+            let name = std::ffi::OsStr::from_bytes(name).to_os_string();
+            if !names.contains(&name) {
+                names.push(name);
             }
         }
+    }
+    for name in names {
+        let child = match openat(
+            &projects,
+            &name,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(_) => continue,
+        };
+        let filename = format!("{id}.jsonl");
+        let file = match openat(
+            &child,
+            filename.as_str(),
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(_) => continue,
+        };
+        let stat = fstat(&file).ok()?;
+        if stat.st_mode & 0o170000 != 0o100000 {
+            continue;
+        }
+        let mut file = std::fs::File::from(file);
+        use std::io::{Read, Seek, SeekFrom};
+        let len = file.metadata().ok()?.len();
+        if len > 65536 {
+            file.seek(SeekFrom::End(-65536)).ok()?;
+        }
+        let mut bytes = Vec::new();
+        file.take(65536).read_to_end(&mut bytes).ok()?;
+        return Some((name, bytes));
     }
     None
 }
@@ -244,13 +271,6 @@ fn valid_session_id(id: &str) -> bool {
         && id != "."
         && id != ".."
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
-}
-fn safe_transcript(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
-        && path
-            .parent()
-            .and_then(|p| std::fs::symlink_metadata(p).ok())
-            .is_some_and(|m| m.is_dir() && !m.file_type().is_symlink())
 }
 impl SessionSource for LiveSource {
     fn poll(&mut self) -> Vec<Session> {
@@ -300,13 +320,20 @@ mod tests {
         std::fs::create_dir_all(&project).unwrap();
         let file = project.join("session-123.jsonl");
         std::fs::write(&file, "{}\n").unwrap();
-        assert_eq!(
-            find_transcript(&root.join("projects"), "session-123"),
-            Some(file.clone())
-        );
+        assert!(read_transcript(&root.join("projects"), "session-123", None).is_some());
         let link = project.join("linked.jsonl");
         std::os::unix::fs::symlink(&file, &link).unwrap();
-        assert!(!safe_transcript(&link));
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("session-123.jsonl"), "secret").unwrap();
+        let projects_link = root.join("projects-link");
+        std::os::unix::fs::symlink(&outside, &projects_link).unwrap();
+        assert!(read_transcript(&projects_link, "session-123", None).is_none());
+        let only_links = root.join("only-links");
+        std::fs::create_dir_all(&only_links).unwrap();
+        let linked_project = only_links.join("linked-project");
+        std::os::unix::fs::symlink(&outside, &linked_project).unwrap();
+        assert!(read_transcript(&only_links, "session-123", None).is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 

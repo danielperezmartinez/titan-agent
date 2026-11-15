@@ -15,6 +15,15 @@ pub struct CodexRpc {
     ws: WsClient,
     next_id: u64,
 }
+enum ResponseError {
+    Rpc(String),
+    Ws(WsError),
+}
+impl From<WsError> for ResponseError {
+    fn from(error: WsError) -> Self {
+        Self::Ws(error)
+    }
+}
 impl CodexRpc {
     pub fn connect(path: &Path, timeout: Duration) -> Result<Self, WsError> {
         let mut rpc = Self {
@@ -24,28 +33,36 @@ impl CodexRpc {
         let init =
             json!({"clientInfo":{"name":"titan-agentd","version":env!("CARGO_PKG_VERSION")}});
         let deadline = Instant::now() + timeout;
-        rpc.send(1, "initialize", init)?;
-        rpc.response(1, deadline)?;
+        rpc.send(1, "initialize", init, deadline)?;
+        rpc.response(1, deadline).map_err(ResponseError::into_ws)?;
         rpc.ws
-            .send_text(&json!({"method":"initialized"}).to_string())?;
+            .send_text_until(&json!({"method":"initialized"}).to_string(), deadline)?;
         rpc.next_id = 2;
         Ok(rpc)
     }
-    fn send(&mut self, id: u64, method: &str, params: Value) -> Result<(), WsError> {
-        self.ws
-            .send_text(&json!({"id":id,"method":method,"params":params}).to_string())
+    fn send(
+        &mut self,
+        id: u64,
+        method: &str,
+        params: Value,
+        deadline: Instant,
+    ) -> Result<(), WsError> {
+        self.ws.send_text_until(
+            &json!({"id":id,"method":method,"params":params}).to_string(),
+            deadline,
+        )
     }
-    fn response(&mut self, id: u64, deadline: Instant) -> Result<Value, WsError> {
+    fn response(&mut self, id: u64, deadline: Instant) -> Result<Value, ResponseError> {
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
-                return Err(WsError::Io(std::io::Error::new(
+                return Err(ResponseError::Ws(WsError::Io(std::io::Error::new(
                     std::io::ErrorKind::TimedOut,
                     "RPC timeout",
-                )));
+                ))));
             }
             let msg: Value = serde_json::from_str(&self.ws.recv_text(remaining)?)
-                .map_err(|e| WsError::Protocol(e.to_string()))?;
+                .map_err(|e| ResponseError::Ws(WsError::Protocol(e.to_string())))?;
             if msg.get("method").is_some() {
                 continue;
             }
@@ -53,7 +70,7 @@ impl CodexRpc {
                 continue;
             }
             if let Some(error) = msg.get("error") {
-                return Err(WsError::Protocol(
+                return Err(ResponseError::Rpc(
                     error
                         .get("message")
                         .and_then(Value::as_str)
@@ -64,7 +81,7 @@ impl CodexRpc {
             return msg
                 .get("result")
                 .cloned()
-                .ok_or_else(|| WsError::Protocol("missing result".into()));
+                .ok_or_else(|| ResponseError::Ws(WsError::Protocol("missing result".into())));
         }
     }
     pub fn call(
@@ -76,8 +93,8 @@ impl CodexRpc {
         let id = self.next_id;
         self.next_id += 1;
         let deadline = Instant::now() + timeout;
-        self.send(id, method, params)?;
-        self.response(id, deadline)
+        self.send(id, method, params, deadline)?;
+        self.response(id, deadline).map_err(ResponseError::into_ws)
     }
     pub fn loaded_threads(&mut self, timeout: Duration) -> Result<Vec<Value>, WsError> {
         let mut cursor: Option<String> = None;
@@ -106,20 +123,33 @@ impl CodexRpc {
         }
         let mut threads = Vec::new();
         for id in ids {
-            match self.call(
+            let request_id = self.next_id;
+            self.next_id += 1;
+            let deadline = Instant::now() + timeout;
+            self.send(
+                request_id,
                 "thread/read",
                 json!({"threadId":id,"includeTurns":false}),
-                timeout,
-            ) {
+                deadline,
+            )?;
+            match self.response(request_id, deadline) {
                 Ok(result) => {
                     if let Some(thread) = result.get("thread") {
                         threads.push(thread.clone());
                     }
                 }
-                Err(WsError::Protocol(_)) => {}
-                Err(error) => return Err(error),
+                Err(ResponseError::Rpc(_)) => {}
+                Err(ResponseError::Ws(error)) => return Err(error),
             }
         }
         Ok(threads)
+    }
+}
+impl ResponseError {
+    fn into_ws(self) -> WsError {
+        match self {
+            Self::Rpc(message) => WsError::Protocol(message),
+            Self::Ws(error) => error,
+        }
     }
 }
