@@ -8,8 +8,9 @@ use crate::{
 use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
-    KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    AppContext, Context, Entity, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
+    IntoElement, KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled,
+    StyledText, Window, div, px, rgb, rgba,
 };
 use std::path::Path;
 use std::{collections::HashMap, time::Duration};
@@ -298,6 +299,14 @@ impl MainWindow {
             .child(value.into())
     }
 
+    fn color(value: u32) -> gpui::Rgba {
+        if value > 0x00ff_ffff {
+            rgba(value)
+        } else {
+            rgb(value)
+        }
+    }
+
     fn selected_session(&self) -> Option<&Session> {
         let Selection::Session(key) = self.selection.as_ref()? else {
             return None;
@@ -383,7 +392,7 @@ impl MainWindow {
                     .items_center()
                     .gap(px(12.0))
                     .border_b_1()
-                    .border_color(rgb(theme::HAIRLINE_RGBA))
+                    .border_color(Self::color(theme::HAIRLINE_RGBA))
                     .child(Self::text(
                         format!("[#] {}", project.name),
                         13.0,
@@ -515,7 +524,7 @@ impl MainWindow {
                     .child(
                         div()
                             .border_t_1()
-                            .border_color(rgb(theme::HAIRLINE_RGBA))
+                            .border_color(Self::color(theme::HAIRLINE_RGBA))
                             .p(px(8.0))
                             .flex()
                             .items_center()
@@ -1050,15 +1059,18 @@ impl Render for MainWindow {
                                 .gap(px(2.0))
                                 .bg(rgb(theme::SURFACE))
                                 .rounded(px(4.0))
-                                .child(
+                                .child({
+                                    let heading = format!("{} {}", talk.direction, talk.who);
+                                    let who_start = talk.direction.len() + 1;
+                                    let who_end = heading.len();
                                     div()
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap(px(4.0))
-                                        .min_w(px(0.0))
-                                        .child(Self::text(talk.direction, 12.0, theme::MUTE))
-                                        .child(Self::text(talk.who, 12.0, talk.color)),
-                                )
+                                        .text_size(px(12.0))
+                                        .text_color(rgb(theme::MUTE))
+                                        .child(StyledText::new(heading).with_highlights([(
+                                            who_start..who_end,
+                                            HighlightStyle::color(rgb(talk.color).into()),
+                                        )]))
+                                })
                                 .child(
                                     Self::text(talk.what, 12.0, theme::MUTE).whitespace_normal(),
                                 ),
