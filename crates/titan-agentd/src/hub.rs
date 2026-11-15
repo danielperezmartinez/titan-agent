@@ -780,6 +780,24 @@ fn resolve_launches(state: &mut State, sessions: &mut Vec<Session>) {
             }
         }
     }
+    // A Codex TUI launched here runs its own app-server, so the shared one
+    // reports its thread as not loaded ("finished") while it is open in our
+    // terminal: show it as live instead.
+    for launch in launches.iter() {
+        if launch.spec.agent != AgentCli::Codex {
+            continue;
+        }
+        let Some(real) = &launch.session else {
+            continue;
+        };
+        let open = terminals.values().any(|t| &t.session == real);
+        if let Some(session) = sessions.iter_mut().find(|s| &s.key == real)
+            && open
+            && session.state == (SessionState::Finished { failed: false })
+        {
+            session.state = SessionState::Waiting;
+        }
+    }
     sessions.extend(provisional);
 }
 
@@ -1054,5 +1072,61 @@ mod tests {
         let state = hub.lock();
         assert_eq!(state.launches[0].session.as_deref(), Some("cx:new"));
         assert!(!state.sessions.iter().any(|s| s.key == "launch:1"));
+    }
+
+    #[test]
+    fn launched_tui_thread_is_live_while_its_terminal_is_open() {
+        let hub = hub();
+        let mut thread = codex_thread("cx:new", "/srv/demo/kite", now_ms());
+        thread.state = SessionState::Finished { failed: false };
+        {
+            let mut state = hub.lock();
+            state.launches.push(Launched {
+                key: "launch:1".into(),
+                spec: LaunchSpec {
+                    agent: AgentCli::Codex,
+                    cwd: "/srv/demo/kite".into(),
+                    model: "gpt-6-luna".into(),
+                    effort: "low".into(),
+                    permission: "read-only".into(),
+                    brief: "x".into(),
+                },
+                at_ms: now_ms(),
+                at: Instant::now(),
+                running: false,
+                cli_id: None,
+                known: HashSet::new(),
+                session: Some("cx:new".into()),
+            });
+        }
+        hub.set_source(AgentCli::Codex, Ok(vec![thread.clone()]));
+        // No terminal: the CLI's state stands.
+        assert_eq!(
+            hub.lock().sessions[0].state,
+            SessionState::Finished { failed: false }
+        );
+        let mut state = hub.lock();
+        let pair = native_pty_system()
+            .openpty(PtySize::default())
+            .expect("a pty for the test");
+        let child = pair
+            .slave
+            .spawn_command(CommandBuilder::new("sleep"))
+            .expect("spawn sleep");
+        state.terminals.insert(
+            "t1".into(),
+            Terminal {
+                session: "cx:new".into(),
+                killer: child.clone_killer(),
+                master: pair.master,
+                input: channel().0,
+                history: VecDeque::new(),
+                viewers: HashSet::new(),
+                size: (80, 24),
+            },
+        );
+        rebuild(&mut state);
+        assert_eq!(state.sessions[0].state, SessionState::Waiting);
+        let _ = state.terminals.get_mut("t1").map(|t| t.killer.kill());
     }
 }
