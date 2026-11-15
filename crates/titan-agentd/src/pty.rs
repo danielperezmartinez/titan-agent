@@ -4,7 +4,8 @@ use alacritty_terminal::event::{OnResize, WindowSize};
 use alacritty_terminal::tty::{self, Options, Shell};
 use rustix::event::{PollFd, PollFlags, poll};
 use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
-use rustix::pipe;
+use rustix::io::Errno;
+use rustix::pipe::{self, PipeFlags};
 use rustix::process::{Pid, Signal, WaitOptions, kill_process, kill_process_group, waitpid};
 use std::collections::HashMap;
 use std::fs::File;
@@ -126,7 +127,7 @@ impl PtyProcess {
                 }
             };
         }
-        let (wake_read, wake_write) = setup!(pipe::pipe());
+        let (wake_read, wake_write) = setup!(pipe::pipe_with(PipeFlags::CLOEXEC));
         let master = setup!(pty.file().try_clone());
         setup!(set_nonblocking(&master));
         let writer_file = setup!(pty.file().try_clone());
@@ -224,10 +225,9 @@ impl PtyProcess {
         }
         if let Some(pid) = process_pid(self.pid) {
             signal_group(pid, Signal::HUP);
-            if !wait_for_exit(pid, grace) {
-                signal_group(pid, Signal::KILL);
-                reap(pid);
-            }
+            let _ = wait_for_exit(pid, grace);
+            signal_group(pid, Signal::KILL);
+            reap(pid);
         }
         wake(&self.wake);
         self.pty.lock().unwrap_or_else(|e| e.into_inner()).take();
@@ -258,8 +258,10 @@ fn reader_loop(mut file: File, wake_fd: OwnedFd, handler: &mut dyn PtyHandler, s
             PollFd::new(&file, PollFlags::IN),
             PollFd::new(&wake_fd, PollFlags::IN),
         ];
-        if poll(&mut fds, None).is_err() {
-            break;
+        match poll(&mut fds, None) {
+            Ok(_) => {}
+            Err(Errno::INTR) => continue,
+            Err(_) => break,
         }
         if fds[1]
             .revents()
@@ -305,10 +307,14 @@ fn writer_loop(mut file: File, wake_fd: OwnedFd, receiver: mpsc::Receiver<Vec<u8
                         PollFd::new(&file, PollFlags::OUT),
                         PollFd::new(&wake_fd, PollFlags::IN),
                     ];
-                    if poll(&mut fds, None).is_err()
-                        || fds[1]
-                            .revents()
-                            .intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
+                    match poll(&mut fds, None) {
+                        Err(Errno::INTR) => continue,
+                        Err(_) => return,
+                        Ok(_) => {}
+                    }
+                    if fds[1]
+                        .revents()
+                        .intersects(PollFlags::IN | PollFlags::HUP | PollFlags::ERR)
                     {
                         return;
                     }
@@ -357,10 +363,9 @@ fn reap(pid: Pid) {
 }
 fn shutdown_child(pid: Pid, grace: Duration) {
     signal_group(pid, Signal::HUP);
-    if !wait_for_exit(pid, grace) {
-        signal_group(pid, Signal::KILL);
-        reap(pid);
-    }
+    let _ = wait_for_exit(pid, grace);
+    signal_group(pid, Signal::KILL);
+    reap(pid);
 }
 fn wake(fd: &OwnedFd) {
     if let Ok(clone) = fd.try_clone() {
@@ -370,4 +375,85 @@ fn wake(fd: &OwnedFd) {
 }
 fn process_pid(pid: u32) -> Option<Pid> {
     i32::try_from(pid).ok().and_then(Pid::from_raw)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustix::io::{FdFlags, fcntl_getfd};
+    use std::sync::{Condvar, Mutex};
+
+    #[derive(Default)]
+    struct Capture {
+        output: Mutex<Vec<u8>>,
+        exited: (Mutex<bool>, Condvar),
+    }
+
+    impl PtyHandler for Arc<Capture> {
+        fn output(&mut self, bytes: &[u8]) {
+            self.output.lock().unwrap().extend_from_slice(bytes);
+        }
+
+        fn exited(&mut self) {
+            let (lock, ready) = &self.exited;
+            *lock.lock().unwrap() = true;
+            ready.notify_all();
+        }
+    }
+
+    fn spec(command: &str) -> PtySpawn {
+        PtySpawn {
+            argv: vec!["/bin/sh".to_owned(), "-c".to_owned(), command.to_owned()],
+            cwd: None,
+            env: Vec::new(),
+            cols: 80,
+            rows: 24,
+        }
+    }
+
+    #[test]
+    fn wake_pipe_descriptors_are_close_on_exec() {
+        let process = PtyProcess::spawn(spec("sleep 100"), Arc::new(Capture::default())).unwrap();
+        assert!(
+            fcntl_getfd(&process.wake)
+                .unwrap()
+                .contains(FdFlags::CLOEXEC)
+        );
+        process.kill(Duration::ZERO);
+    }
+
+    #[test]
+    fn kill_stops_descendant_after_leader_exits_on_hup() {
+        let path = std::env::temp_dir().join(format!(
+            "titan-pty-child-{}-{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let command = format!(
+            "trap 'exit 0' HUP; (trap '' HUP; exec sleep 100) & echo $! > '{}'; wait",
+            path.display()
+        );
+        let process = PtyProcess::spawn(spec(&command), Arc::new(Capture::default())).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let child_pid = loop {
+            if let Ok(contents) = std::fs::read_to_string(&path)
+                && let Ok(pid) = contents.trim().parse::<u32>()
+            {
+                break pid;
+            }
+            assert!(Instant::now() < deadline, "child pid was not written");
+            thread::sleep(Duration::from_millis(10));
+        };
+
+        process.kill(Duration::from_millis(200));
+        let stat = std::fs::read_to_string(format!("/proc/{child_pid}/stat"));
+        let is_gone_or_zombie = match stat {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Ok(stat) => stat.split_whitespace().nth(2) == Some("Z"),
+            _ => false,
+        };
+        let _ = std::fs::remove_file(path);
+        assert!(is_gone_or_zombie, "descendant {child_pid} is still alive");
+        assert!(process.has_exited());
+    }
 }
