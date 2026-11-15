@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use std::time::Instant;
 
 pub fn control_socket(codex_home: Option<&OsStr>, home: Option<&OsStr>) -> Option<PathBuf> {
     let root = codex_home
@@ -22,8 +23,9 @@ impl CodexRpc {
         };
         let init =
             json!({"clientInfo":{"name":"titan-agentd","version":env!("CARGO_PKG_VERSION")}});
+        let deadline = Instant::now() + timeout;
         rpc.send(1, "initialize", init)?;
-        rpc.response(1, timeout)?;
+        rpc.response(1, deadline)?;
         rpc.ws
             .send_text(&json!({"method":"initialized"}).to_string())?;
         rpc.next_id = 2;
@@ -33,10 +35,20 @@ impl CodexRpc {
         self.ws
             .send_text(&json!({"id":id,"method":method,"params":params}).to_string())
     }
-    fn response(&mut self, id: u64, timeout: Duration) -> Result<Value, WsError> {
+    fn response(&mut self, id: u64, deadline: Instant) -> Result<Value, WsError> {
         loop {
-            let msg: Value = serde_json::from_str(&self.ws.recv_text(timeout)?)
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(WsError::Io(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "RPC timeout",
+                )));
+            }
+            let msg: Value = serde_json::from_str(&self.ws.recv_text(remaining)?)
                 .map_err(|e| WsError::Protocol(e.to_string()))?;
+            if msg.get("method").is_some() {
+                continue;
+            }
             if msg.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
@@ -63,8 +75,9 @@ impl CodexRpc {
     ) -> Result<Value, WsError> {
         let id = self.next_id;
         self.next_id += 1;
+        let deadline = Instant::now() + timeout;
         self.send(id, method, params)?;
-        self.response(id, timeout)
+        self.response(id, deadline)
     }
     pub fn loaded_threads(&mut self, timeout: Duration) -> Result<Vec<Value>, WsError> {
         let mut cursor: Option<String> = None;
@@ -93,13 +106,18 @@ impl CodexRpc {
         }
         let mut threads = Vec::new();
         for id in ids {
-            if let Ok(result) = self.call(
+            match self.call(
                 "thread/read",
                 json!({"threadId":id,"includeTurns":false}),
                 timeout,
-            ) && let Some(thread) = result.get("thread")
-            {
-                threads.push(thread.clone())
+            ) {
+                Ok(result) => {
+                    if let Some(thread) = result.get("thread") {
+                        threads.push(thread.clone());
+                    }
+                }
+                Err(WsError::Protocol(_)) => {}
+                Err(error) => return Err(error),
             }
         }
         Ok(threads)

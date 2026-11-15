@@ -1,6 +1,8 @@
 use crate::codex::{CodexRpc, control_socket};
 use crate::source::{SessionSource, StopError};
 use std::io;
+use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -17,23 +19,73 @@ pub trait CommandRunner: Send + 'static {
 pub struct SystemRunner;
 impl CommandRunner for SystemRunner {
     fn run(&self, argv: &[String], timeout: Duration) -> io::Result<Output> {
-        let mut child = Command::new(
+        let mut command = Command::new(
             argv.first()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty argv"))?,
-        )
-        .args(&argv[1..])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+        );
+        command
+            .args(&argv[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command.process_group(0);
+        let mut child = command.spawn()?;
+        let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let out_tx = tx.clone();
+        let out_reader = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result =
+                std::io::Read::read_to_end(&mut std::io::BufReader::new(stdout), &mut bytes);
+            let _ = out_tx.send((0, result.map(|_| bytes)));
+        });
+        let err_reader = thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let result =
+                std::io::Read::read_to_end(&mut std::io::BufReader::new(stderr), &mut bytes);
+            let _ = tx.send((1, result.map(|_| bytes)));
+        });
         let deadline = Instant::now() + timeout;
         loop {
-            if child.try_wait()?.is_some() {
-                return child.wait_with_output();
+            if let Some(status) = child.try_wait()? {
+                let mut streams: [Option<Vec<u8>>; 2] = [None, None];
+                for _ in 0..2 {
+                    let remain = deadline.saturating_duration_since(Instant::now());
+                    match rx.recv_timeout(remain) {
+                        Ok((i, Ok(bytes))) => streams[i] = Some(bytes),
+                        Ok((_, Err(e))) => return Err(e),
+                        Err(_) => {
+                            let _ = rustix::process::kill_process_group(
+                                rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
+                                rustix::process::Signal::KILL,
+                            );
+                            drop(out_reader);
+                            drop(err_reader);
+                            return Err(io::Error::new(
+                                io::ErrorKind::TimedOut,
+                                "command capture timed out",
+                            ));
+                        }
+                    }
+                }
+                let _ = out_reader.join();
+                let _ = err_reader.join();
+                return Ok(Output {
+                    status,
+                    stdout: streams[0].take().unwrap_or_default(),
+                    stderr: streams[1].take().unwrap_or_default(),
+                });
             }
             if Instant::now() >= deadline {
                 let _ = child.kill();
                 let _ = child.wait();
+                let _ = rustix::process::kill_process_group(
+                    rustix::process::Pid::from_raw(child.id() as i32).unwrap(),
+                    rustix::process::Signal::KILL,
+                );
+                drop(out_reader);
+                drop(err_reader);
                 return Err(io::Error::new(io::ErrorKind::TimedOut, "command timed out"));
             }
             thread::sleep(Duration::from_millis(10));
@@ -101,13 +153,27 @@ impl LiveSource {
             .collect()
     }
     fn model(&mut self, id: &str) -> Option<String> {
+        if !valid_session_id(id) {
+            return None;
+        }
         let home = self.config.claude_home.as_ref()?;
-        let cached = self.transcripts.get(id).filter(|p| p.exists()).cloned();
+        let cached = self
+            .transcripts
+            .get(id)
+            .filter(|p| safe_transcript(p))
+            .cloned();
         let path = cached.or_else(|| find_transcript(&home.join("projects"), id));
         let path = path?;
         self.transcripts.insert(id.to_owned(), path.clone());
-        let file = std::fs::File::open(path).ok()?;
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(path)
+            .ok()?;
         use std::io::{Read, Seek, SeekFrom};
+        if !file.metadata().ok()?.is_file() {
+            return None;
+        }
         let len = file.metadata().ok()?.len();
         let mut file = file;
         if len > 65536 {
@@ -157,17 +223,34 @@ impl LiveSource {
     }
 }
 fn find_transcript(root: &Path, id: &str) -> Option<PathBuf> {
+    if !valid_session_id(id) {
+        return None;
+    }
     let entries = std::fs::read_dir(root).ok()?;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
+        if std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir() && !m.file_type().is_symlink())
+        {
             let candidate = path.join(format!("{id}.jsonl"));
-            if candidate.is_file() {
+            if safe_transcript(&candidate) {
                 return Some(candidate);
             }
         }
     }
     None
+}
+fn valid_session_id(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+}
+fn safe_transcript(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file() && !m.file_type().is_symlink())
+        && path
+            .parent()
+            .and_then(|p| std::fs::symlink_metadata(p).ok())
+            .is_some_and(|m| m.is_dir() && !m.file_type().is_symlink())
 }
 impl SessionSource for LiveSource {
     fn poll(&mut self) -> Vec<Session> {
@@ -198,5 +281,50 @@ impl SessionSource for LiveSource {
             )),
             Err(e) => Err(StopError::Failed(e.to_string())),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transcript_ids_are_plain_file_names_and_symlinks_are_rejected() {
+        assert!(valid_session_id("session-123"));
+        for id in ["", ".", "..", "a/b", "a\0b", "with space"] {
+            assert!(!valid_session_id(id), "accepted {id:?}");
+        }
+        let root = std::env::temp_dir().join(format!("titan-transcript-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let project = root.join("projects").join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let file = project.join("session-123.jsonl");
+        std::fs::write(&file, "{}\n").unwrap();
+        assert_eq!(
+            find_transcript(&root.join("projects"), "session-123"),
+            Some(file.clone())
+        );
+        let link = project.join("linked.jsonl");
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+        assert!(!safe_transcript(&link));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn system_runner_drains_large_output_and_bounds_capture_wait() {
+        let output = SystemRunner
+            .run(
+                &["sh".into(), "-c".into(), "head -c 300000 /dev/zero".into()],
+                Duration::from_secs(3),
+            )
+            .unwrap();
+        assert_eq!(output.stdout.len(), 300000);
+        let started = Instant::now();
+        let result = SystemRunner.run(
+            &["sh".into(), "-c".into(), "(sleep 3) & exit 0".into()],
+            Duration::from_millis(100),
+        );
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 }

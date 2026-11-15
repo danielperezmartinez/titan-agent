@@ -139,6 +139,8 @@ impl WsClient {
         let deadline = Instant::now() + timeout;
         let mut message = Vec::new();
         let mut active = false;
+        let mut binary = false;
+        let mut binary_size = 0usize;
         loop {
             let h = self.exact(2, deadline)?;
             let fin = h[0] & 0x80 != 0;
@@ -167,7 +169,17 @@ impl WsClient {
             match op {
                 8 => return Err(WsError::Closed),
                 9 => self.mask(&p, 10)?,
-                10 | 2 => {}
+                10 => {}
+                2 => {
+                    if active {
+                        return Err(WsError::Protocol("invalid frame sequence".into()));
+                    }
+                    binary = !fin;
+                    binary_size = p.len();
+                    if binary_size > 16 * 1024 * 1024 {
+                        return Err(WsError::Protocol("message exceeds 16 MiB".into()));
+                    }
+                }
                 1 => {
                     message = p;
                     active = true;
@@ -184,6 +196,15 @@ impl WsClient {
                     if fin {
                         return String::from_utf8(message)
                             .map_err(|e| WsError::Protocol(e.to_string()));
+                    }
+                }
+                0 if binary => {
+                    binary_size += p.len();
+                    if binary_size > 16 * 1024 * 1024 {
+                        return Err(WsError::Protocol("message exceeds 16 MiB".into()));
+                    }
+                    if fin {
+                        binary = false;
                     }
                 }
                 _ => return Err(WsError::Protocol("invalid frame sequence".into())),
