@@ -4915,6 +4915,7 @@ name = "titan-agent"
 version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
+ "futures",
  "gpui",
  "gpui_platform",
  "serde_json",
@@ -4935,6 +4936,7 @@ name = "titan-agentd"
 version = "0.1.1"
 dependencies = [
  "alacritty_terminal",
+ "base64",
  "rustix",
  "serde",
  "serde_json",
