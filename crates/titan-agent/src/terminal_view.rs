@@ -161,117 +161,191 @@ impl Render for TerminalView {
                     cx.notify();
                 }
             }))
-            .child(gpui::canvas(
-                move |bounds, _window, app| {
-                    let next = grid_size(
-                        bounds.size.width.as_f32(),
-                        bounds.size.height.as_f32(),
-                        Self::PADDING,
-                        cw,
-                        lh,
-                    );
-                    if resize_owner.read(app).grid != Some(next) {
-                        let owner = resize_owner.clone();
-                        app.defer(move |app| {
-                            owner.update(app, |view, cx| {
-                                if view.grid != Some(next) {
-                                    view.grid = Some(next);
-                                    view.model.resize(next.0, next.1);
-                                    cx.emit(TerminalViewEvent::Resized {
-                                        cols: next.0,
-                                        rows: next.1,
-                                    });
-                                    cx.notify();
-                                }
+            .child(
+                gpui::canvas(
+                    move |bounds, _window, app| {
+                        if bounds.size.width.as_f32() <= 0.0 || bounds.size.height.as_f32() <= 0.0 {
+                            return;
+                        }
+                        let next = grid_size(
+                            bounds.size.width.as_f32(),
+                            bounds.size.height.as_f32(),
+                            Self::PADDING,
+                            cw,
+                            lh,
+                        );
+                        if resize_owner.read(app).grid != Some(next) {
+                            let owner = resize_owner.clone();
+                            app.defer(move |app| {
+                                owner.update(app, |view, cx| {
+                                    if view.grid != Some(next) {
+                                        view.grid = Some(next);
+                                        view.model.resize(next.0, next.1);
+                                        cx.emit(TerminalViewEvent::Resized {
+                                            cols: next.0,
+                                            rows: next.1,
+                                        });
+                                        cx.notify();
+                                    }
+                                });
                             });
-                        });
-                    }
-                },
-                move |bounds, _, window, cx| {
-                    let origin = point(px(Self::PADDING), px(Self::PADDING));
-                    window.paint_quad(fill(bounds, rgb(palette::DEFAULT_BG)));
-                    for (line_index, line) in frame.lines.iter().enumerate() {
-                        for run in &line.runs {
-                            let x = Self::PADDING + f32::from(run.col) * cw;
-                            let y = Self::PADDING + line_index as f32 * lh;
-                            if let Some(bg) = run.bg {
+                        }
+                    },
+                    move |bounds, _, window, cx| {
+                        window.paint_quad(fill(bounds, rgb(palette::DEFAULT_BG)));
+                        for (line_index, line) in frame.lines.iter().enumerate() {
+                            for run in &line.runs {
+                                let x = bounds.origin.x.as_f32()
+                                    + Self::PADDING
+                                    + f32::from(run.col) * cw;
+                                let y = bounds.origin.y.as_f32()
+                                    + Self::PADDING
+                                    + line_index as f32 * lh;
+                                if let Some(bg) = run.bg {
+                                    window.paint_quad(fill(
+                                        Bounds::new(
+                                            point(px(x), px(y)),
+                                            size(px(f32::from(run.cells) * cw), px(lh)),
+                                        ),
+                                        rgb(bg),
+                                    ));
+                                }
+                                let run_font = Font {
+                                    weight: if run.bold {
+                                        FontWeight::BOLD
+                                    } else {
+                                        FontWeight::NORMAL
+                                    },
+                                    style: if run.italic {
+                                        FontStyle::Italic
+                                    } else {
+                                        FontStyle::Normal
+                                    },
+                                    ..Font {
+                                        family: SharedString::from(theme::FONT_FAMILY),
+                                        ..Font::default()
+                                    }
+                                };
+                                let text_run = TextRun {
+                                    len: run.text.len(),
+                                    font: run_font,
+                                    color: color(run.fg),
+                                    background_color: None,
+                                    underline: run.underline.then_some(UnderlineStyle {
+                                        thickness: px(1.),
+                                        ..Default::default()
+                                    }),
+                                    strikethrough: run.strikeout.then_some(StrikethroughStyle {
+                                        thickness: px(1.),
+                                        ..Default::default()
+                                    }),
+                                };
+                                let wide = run.cells as usize != run.text.chars().count();
+                                let _ = window
+                                    .text_system()
+                                    .shape_line(
+                                        run.text.clone().into(),
+                                        px(Self::FONT_SIZE),
+                                        &[text_run],
+                                        (!wide).then_some(px(cw)),
+                                    )
+                                    .paint(
+                                        point(px(x), px(y)),
+                                        px(lh),
+                                        TextAlign::Left,
+                                        None,
+                                        window,
+                                        cx,
+                                    );
+                            }
+                        }
+                        if let Some(cursor) = frame.cursor {
+                            let x = bounds.origin.x.as_f32()
+                                + Self::PADDING
+                                + f32::from(cursor.col) * cw;
+                            let y = bounds.origin.y.as_f32()
+                                + Self::PADDING
+                                + f32::from(cursor.line) * lh;
+                            let cursor_bounds =
+                                Bounds::new(point(px(x), px(y)), size(px(cw), px(lh)));
+                            if owner.read(cx).focus.is_focused(window) {
+                                window.paint_quad(fill(cursor_bounds, rgb(palette::CURSOR)));
+                                if let Some(ch) =
+                                    frame.lines.get(cursor.line as usize).and_then(|line| {
+                                        line.runs.iter().find_map(|run| {
+                                            let offset = cursor.col.checked_sub(run.col)? as usize;
+                                            char_at_cell(&run.text, offset)
+                                        })
+                                    })
+                                {
+                                    let text_run = TextRun {
+                                        len: ch.len_utf8(),
+                                        font: Font {
+                                            family: SharedString::from(theme::FONT_FAMILY),
+                                            ..Font::default()
+                                        },
+                                        color: color(palette::DEFAULT_FG),
+                                        background_color: None,
+                                        underline: None,
+                                        strikethrough: None,
+                                    };
+                                    let _ = window
+                                        .text_system()
+                                        .shape_line(
+                                            ch.to_string().into(),
+                                            px(Self::FONT_SIZE),
+                                            &[text_run],
+                                            None,
+                                        )
+                                        .paint(
+                                            point(px(x), px(y)),
+                                            px(lh),
+                                            TextAlign::Left,
+                                            None,
+                                            window,
+                                            cx,
+                                        );
+                                }
+                            } else {
+                                let edge = rgb(palette::CURSOR);
+                                window.paint_quad(fill(
+                                    Bounds::new(point(px(x), px(y)), size(px(cw), px(1.))),
+                                    edge,
+                                ));
                                 window.paint_quad(fill(
                                     Bounds::new(
-                                        point(px(x), px(y)),
-                                        size(px(f32::from(run.cells) * cw), px(lh)),
+                                        point(px(x), px(y + lh - 1.)),
+                                        size(px(cw), px(1.)),
                                     ),
-                                    rgb(bg),
+                                    edge,
+                                ));
+                                window.paint_quad(fill(
+                                    Bounds::new(point(px(x), px(y)), size(px(1.), px(lh))),
+                                    edge,
+                                ));
+                                window.paint_quad(fill(
+                                    Bounds::new(
+                                        point(px(x + cw - 1.), px(y)),
+                                        size(px(1.), px(lh)),
+                                    ),
+                                    edge,
                                 ));
                             }
-                            let run_font = Font {
-                                weight: if run.bold {
-                                    FontWeight::BOLD
-                                } else {
-                                    FontWeight::NORMAL
-                                },
-                                style: if run.italic {
-                                    FontStyle::Italic
-                                } else {
-                                    FontStyle::Normal
-                                },
-                                ..Font {
-                                    family: SharedString::from(theme::FONT_FAMILY),
-                                    ..Font::default()
-                                }
-                            };
-                            let text_run = TextRun {
-                                len: run.text.len(),
-                                font: run_font,
-                                color: color(run.fg),
-                                background_color: None,
-                                underline: run.underline.then_some(UnderlineStyle {
-                                    thickness: px(1.),
-                                    ..Default::default()
-                                }),
-                                strikethrough: run.strikeout.then_some(StrikethroughStyle {
-                                    thickness: px(1.),
-                                    ..Default::default()
-                                }),
-                            };
-                            let wide = run.cells as usize != run.text.chars().count();
-                            let _ = window
-                                .text_system()
-                                .shape_line(
-                                    run.text.clone().into(),
-                                    px(Self::FONT_SIZE),
-                                    &[text_run],
-                                    (!wide).then_some(px(cw)),
-                                )
-                                .paint(
-                                    point(
-                                        origin.x + px(f32::from(run.col) * cw),
-                                        origin.y + px(line_index as f32 * lh),
-                                    ),
-                                    px(lh),
-                                    TextAlign::Left,
-                                    None,
-                                    window,
-                                    cx,
-                                );
                         }
-                    }
-                    if let Some(cursor) = frame.cursor {
-                        let x = Self::PADDING + f32::from(cursor.col) * cw;
-                        let y = Self::PADDING + f32::from(cursor.line) * lh;
-                        let rect = if owner.read(cx).focus.is_focused(window) {
-                            fill(
-                                Bounds::new(point(px(x), px(y)), size(px(cw), px(lh))),
-                                rgb(palette::CURSOR),
-                            )
-                        } else {
-                            fill(
-                                Bounds::new(point(px(x), px(y)), size(px(1.), px(lh))),
-                                rgb(palette::CURSOR),
-                            )
-                        };
-                        window.paint_quad(rect);
-                    }
-                },
-            ))
+                    },
+                )
+                .size_full(),
+            )
     }
+}
+
+fn char_at_cell(text: &str, target: usize) -> Option<char> {
+    let mut cell = 0;
+    for ch in text.chars() {
+        if cell == target {
+            return Some(ch);
+        }
+        cell += if ch as u32 >= 0x1100 { 2 } else { 1 };
+    }
+    None
 }
