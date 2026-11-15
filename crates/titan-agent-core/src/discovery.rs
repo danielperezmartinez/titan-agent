@@ -15,7 +15,10 @@ use crate::session::{AgentCli, Session, SessionKind, SessionState, short_model};
 /// Parses the output of `claude agents --json` (an array of sessions).
 ///
 /// State mapping (checked with Claude Code 2.1.325):
-/// `state = blocked` → te necesita; `state = done | stopped` → terminada;
+/// `state = blocked` → te necesita; `state = done` with a live `status`
+/// (`idle`, `busy`, `waiting`) → that status, since a background session
+/// reports `done` after each turn while it waits for the next one;
+/// `state = done | stopped` otherwise → terminada;
 /// `state = failed | error` → terminada con error; otherwise `status = busy`
 /// → trabajando and `status = idle` → en espera; a lone `state = working`
 /// counts as trabajando.
@@ -68,13 +71,16 @@ fn claude_session(entry: &Value) -> Option<Session> {
         pid,
         attach: background.then(|| vec!["claude".into(), "attach".into(), cli_id.clone()]),
         stoppable: background && state.is_live(),
+        launched_here: false,
     })
 }
 
 /// Maps Claude Code's `status` and `state` to a [`SessionState`].
 pub fn claude_state(status: Option<&str>, state: Option<&str>) -> SessionState {
+    let live = matches!(status, Some("idle") | Some("busy") | Some("waiting"));
     match state {
         Some("blocked") => return SessionState::NeedsYou,
+        Some("done") if live => {}
         Some("done") | Some("stopped") | Some("completed") => {
             return SessionState::Finished { failed: false };
         }
@@ -193,6 +199,7 @@ pub fn codex_session(thread: &Value, loaded: bool) -> Option<Session> {
             id,
         ]),
         stoppable: state == SessionState::Working || state == SessionState::NeedsYou,
+        launched_here: false,
     })
 }
 

@@ -104,3 +104,51 @@ fn socket_path_prefers_the_override_then_the_runtime_folder() {
         "/tmp/titan-agent-ana/agentd.sock"
     );
 }
+
+#[test]
+fn launch_carries_the_spec_the_shown_command_and_the_click() {
+    use titan_agent_core::launch::LaunchSpec;
+    use titan_agent_core::protocol::{LaunchResult, provisional_key};
+
+    let line = r#"{"id":9,"method":"launch","params":{"spec":{"agent":"codex","model":"gpt-6-luna","effort":"low","access":"read-only","cwd":"/srv/demo","brief":"hola"},"shown":"cd /srv/demo && codex","click":"c1","cols":120,"rows":40}}"#;
+    let message: ClientMessage = decode_line(line).unwrap();
+    assert_eq!(message.id, Some(9));
+    let Request::Launch {
+        spec,
+        shown,
+        click,
+        cols,
+        rows,
+    } = message.request
+    else {
+        panic!("not a launch");
+    };
+    assert_eq!(
+        spec,
+        LaunchSpec {
+            agent: AgentCli::Codex,
+            model: "gpt-6-luna".into(),
+            effort: "low".into(),
+            access: "read-only".into(),
+            cwd: "/srv/demo".into(),
+            brief: "hola".into(),
+        }
+    );
+    assert_eq!(
+        (shown.as_str(), click.as_str(), cols, rows),
+        ("cd /srv/demo && codex", "c1", 120, 40)
+    );
+
+    let result = LaunchResult {
+        agent: AgentCli::ClaudeCode,
+        cli_id: Some("f3c0ab80".into()),
+        terminal: None,
+        command: "cd /srv/demo && claude --bg".into(),
+    };
+    let value = serde_json::to_value(&result).unwrap();
+    assert_eq!(
+        value,
+        json!({"agent": "claude_code", "cli_id": "f3c0ab80", "command": "cd /srv/demo && claude --bg"})
+    );
+    assert_eq!(provisional_key("t4"), "launch:t4");
+}

@@ -6,14 +6,17 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{Child, ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use titan_agent_core::discovery::link_sessions;
+use titan_agent_core::launch::{
+    LaunchSpec, LaunchedTui, parse_claude_bg_output, pick_launched_thread,
+};
 use titan_agent_core::protocol::{
-    AttachResult, ClientMessage, Event, HelloResult, PROTOCOL_VERSION, Request, ServerMessage,
-    SourceStatus, TerminalRef, encode_bytes, encode_line,
+    AttachResult, ClientMessage, Event, HelloResult, LaunchResult, PROTOCOL_VERSION, Request,
+    ServerMessage, SourceStatus, TerminalRef, encode_bytes, encode_line, provisional_key,
 };
 use titan_agent_core::session::{AgentCli, Session, SessionState};
 
@@ -25,6 +28,12 @@ use crate::codex::{CodexClient, socket_path as codex_socket_path};
 const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 /// Largest chunk sent in one `output` event.
 const CHUNK_BYTES: usize = 64 * 1024;
+/// Two launches of the same brief, agent and folder closer than this are
+/// taken as a double click and the second one is refused.
+const DUPLICATE_WINDOW_MS: i64 = 10_000;
+/// A launched Codex TUI whose thread has not shown up after this long stays
+/// under its provisional key.
+const PENDING_WINDOW_MS: i64 = 10 * 60 * 1000;
 
 #[derive(Clone)]
 pub struct Config {
@@ -37,6 +46,10 @@ pub struct Config {
 pub struct Hub {
     pub config: Config,
     state: Mutex<State>,
+    /// Requests to poll a source now instead of waiting for the next tick
+    /// (after a launch), one flag per CLI.
+    pokes: Mutex<[bool; 2]>,
+    poked: Condvar,
 }
 
 struct Client {
@@ -54,6 +67,16 @@ struct Terminal {
     size: (u16, u16),
 }
 
+/// A Codex TUI launched by the daemon whose thread is not known yet.
+struct PendingCodex {
+    terminal: String,
+    cwd: String,
+    brief: String,
+    launched_ms: i64,
+    /// Codex sessions that already existed at launch time.
+    known: HashSet<String>,
+}
+
 struct State {
     claude: Vec<Session>,
     codex: Vec<Session>,
@@ -65,6 +88,13 @@ struct State {
     terminals: HashMap<String, Terminal>,
     next_terminal: u64,
     last_snapshot: String,
+    /// Clicks already used to launch (each click launches once).
+    clicks: HashSet<String>,
+    /// Recent launches, as `(fingerprint, time)`, to refuse double clicks.
+    launches: Vec<(String, i64)>,
+    pending_codex: Vec<PendingCodex>,
+    /// Sessions launched by this daemon, as `<agent tag>:<cli id>`.
+    launched: HashSet<String>,
 }
 
 pub fn now_ms() -> i64 {
@@ -99,8 +129,35 @@ impl Hub {
                 terminals: HashMap::new(),
                 next_terminal: 1,
                 last_snapshot: String::new(),
+                clicks: HashSet::new(),
+                launches: Vec::new(),
+                pending_codex: Vec::new(),
+                launched: HashSet::new(),
             }),
+            pokes: Mutex::new([false; 2]),
+            poked: Condvar::new(),
         })
+    }
+
+    /// Waits for the next poll of a source: the poll interval, or less if a
+    /// launch asked for a poll now.
+    pub fn wait_poll(&self, agent: AgentCli, interval: Duration) {
+        let index = source_index(agent);
+        let mut pokes = self.pokes.lock().unwrap_or_else(|p| p.into_inner());
+        if !pokes[index] {
+            pokes = self
+                .poked
+                .wait_timeout_while(pokes, interval, |pokes| !pokes[index])
+                .unwrap_or_else(|p| p.into_inner())
+                .0;
+        }
+        pokes[index] = false;
+    }
+
+    /// Asks a source to poll now.
+    fn poke(&self, agent: AgentCli) {
+        self.pokes.lock().unwrap_or_else(|p| p.into_inner())[source_index(agent)] = true;
+        self.poked.notify_all();
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -113,10 +170,7 @@ impl Hub {
     /// snapshot changed.
     pub fn set_source(&self, agent: AgentCli, found: Result<Vec<Session>, String>) {
         let mut state = self.lock();
-        let index = match agent {
-            AgentCli::ClaudeCode => 0,
-            AgentCli::Codex => 1,
-        };
+        let index = source_index(agent);
         match found {
             Ok(sessions) => {
                 state.sources[index] = SourceStatus {
@@ -290,6 +344,37 @@ impl Hub {
                     }
                 });
             }
+            Request::Launch {
+                spec,
+                shown,
+                click,
+                cols,
+                rows,
+            } => {
+                let hub = Arc::clone(self);
+                std::thread::spawn(move || {
+                    let answer = hub.launch(client, spec, &shown, click, cols, rows);
+                    let (message, pump) = match answer {
+                        Ok((result, pump)) => {
+                            (id.map(|id| ServerMessage::result(id, &result)), pump)
+                        }
+                        Err((code, text)) => {
+                            (id.map(|id| ServerMessage::error(id, code, text)), None)
+                        }
+                    };
+                    if let Some(message) = message {
+                        let state = hub.lock();
+                        if let Some(c) = state.clients.get(&client) {
+                            let _ = c.tx.send(encode_line(&message));
+                        }
+                    }
+                    // Read the new terminal only once the client knows it,
+                    // so none of its first output is lost.
+                    if let Some((terminal, pump)) = pump {
+                        hub.pump(terminal, pump);
+                    }
+                });
+            }
             Request::OpenFolder { session } => {
                 let cwd = self
                     .lock()
@@ -389,20 +474,7 @@ impl Hub {
             "not_attachable",
             "el CLI no permite adjuntar esta sesión".to_string(),
         ))?;
-        let program = match session.agent {
-            AgentCli::ClaudeCode => self.config.claude.clone(),
-            AgentCli::Codex => self.config.codex.clone(),
-        };
-        let pair = native_pty_system()
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| ("pty_failed", error.to_string()))?;
-        let mut command = CommandBuilder::new(program);
-        command.args(&argv[1..]);
+        let program = self.program(session.agent);
         let cwd = if Path::new(&session.cwd).is_dir() {
             PathBuf::from(&session.cwd)
         } else {
@@ -411,49 +483,16 @@ impl Hub {
                 .clone()
                 .unwrap_or_else(|| PathBuf::from("/"))
         };
-        command.cwd(cwd);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        let mut child = pair
-            .slave
-            .spawn_command(command)
-            .map_err(|error| ("spawn_failed", error.to_string()))?;
-        drop(pair.slave);
-        let mut reader = pair
-            .master
-            .try_clone_reader()
-            .map_err(|error| ("pty_failed", error.to_string()))?;
-        let mut writer = pair
-            .master
-            .take_writer()
-            .map_err(|error| ("pty_failed", error.to_string()))?;
-        let (input, input_rx) = channel::<Vec<u8>>();
-        std::thread::spawn(move || {
-            for bytes in input_rx {
-                if writer
-                    .write_all(&bytes)
-                    .and_then(|_| writer.flush())
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-
-        let terminal = format!("t{}", state.next_terminal);
-        state.next_terminal += 1;
-        state.terminals.insert(
-            terminal.clone(),
-            Terminal {
-                session: key.to_string(),
-                killer: child.clone_killer(),
-                master: pair.master,
-                input,
-                history: VecDeque::new(),
-                viewers: HashSet::from([client]),
-                size: (cols, rows),
-            },
-        );
+        let (terminal, pump) = spawn_pty(
+            &mut state,
+            client,
+            key,
+            &program,
+            &argv[1..],
+            cwd,
+            cols,
+            rows,
+        )?;
         if let Some(id) = id
             && let Some(c) = state.clients.get(&client)
         {
@@ -467,8 +506,24 @@ impl Hub {
         }
         broadcast_snapshot(&mut state, true);
         drop(state);
+        self.pump(terminal, pump);
+        Ok(())
+    }
 
+    fn program(&self, agent: AgentCli) -> String {
+        match agent {
+            AgentCli::ClaudeCode => self.config.claude.clone(),
+            AgentCli::Codex => self.config.codex.clone(),
+        }
+    }
+
+    /// Forwards a terminal's output to its viewers until its process ends.
+    fn pump(self: &Arc<Self>, terminal: String, pump: Pump) {
         let hub = Arc::clone(self);
+        let Pump {
+            mut reader,
+            mut child,
+        } = pump;
         std::thread::spawn(move || {
             let mut buffer = vec![0u8; 16 * 1024];
             loop {
@@ -480,7 +535,142 @@ impl Hub {
             let exit_code = child.wait().ok().map(|status| status.exit_code());
             hub.closed(&terminal, exit_code);
         });
-        Ok(())
+    }
+
+    /// Launches a new session with the official CLI, once, with the
+    /// safeguards of ADR-0002:
+    ///
+    /// 1. the brief is the user's text, sent untouched, and never empty;
+    /// 2. one click, one launch: a click id is accepted once and the same
+    ///    brief is not launched twice in a row; nothing is retried;
+    /// 3. the official binary runs as it is, and no CLI file is read;
+    /// 4. the command the user saw must be exactly the one that runs;
+    /// 5. Codex runs through its own TUI, in a terminal of the daemon.
+    fn launch(
+        self: &Arc<Self>,
+        client: u64,
+        spec: LaunchSpec,
+        shown: &str,
+        click: String,
+        cols: u16,
+        rows: u16,
+    ) -> LaunchAnswer {
+        spec.validate()
+            .map_err(|error| (error.code(), error.message()))?;
+        let home = self
+            .config
+            .home
+            .as_ref()
+            .map(|home| home.to_string_lossy().into_owned());
+        let command = spec.command_line(home.as_deref());
+        if shown != command {
+            return Err((
+                "command_mismatch",
+                "el comando mostrado no coincide con el que se ejecutaría".into(),
+            ));
+        }
+        if click.trim().is_empty() {
+            return Err(("missing_click", "falta el clic del usuario".into()));
+        }
+        if !Path::new(&spec.cwd).is_dir() {
+            return Err(("no_folder", format!("la carpeta no existe: {}", spec.cwd)));
+        }
+        let now = now_ms();
+        {
+            let mut state = self.lock();
+            if !state.clicks.insert(click) {
+                return Err(("duplicate_launch", "ese clic ya lanzó una sesión".into()));
+            }
+            state
+                .launches
+                .retain(|(_, at)| now - at < DUPLICATE_WINDOW_MS);
+            let fingerprint = spec.fingerprint();
+            if state.launches.iter().any(|(seen, _)| *seen == fingerprint) {
+                return Err((
+                    "duplicate_launch",
+                    "ese mismo encargo se acaba de lanzar".into(),
+                ));
+            }
+            state.launches.push((fingerprint, now));
+        }
+        let answer = self.run_launch(client, &spec, command, now, cols, rows);
+        if answer.is_err() {
+            // A launch that did not start does not block the user's next
+            // click with the same brief.
+            let fingerprint = spec.fingerprint();
+            self.lock()
+                .launches
+                .retain(|(seen, _)| *seen != fingerprint);
+        }
+        answer
+    }
+
+    fn run_launch(
+        self: &Arc<Self>,
+        client: u64,
+        spec: &LaunchSpec,
+        command: String,
+        now: i64,
+        cols: u16,
+        rows: u16,
+    ) -> LaunchAnswer {
+        let argv = spec.argv();
+        let program = self.program(spec.agent);
+        match spec.agent {
+            AgentCli::ClaudeCode => {
+                let output = run_with_timeout(
+                    Command::new(&program)
+                        .args(&argv[1..])
+                        .current_dir(&spec.cwd),
+                    Duration::from_secs(60),
+                )
+                .map_err(|text| ("launch_failed", text))?;
+                let cli_id = parse_claude_bg_output(&output);
+                if let Some(id) = &cli_id {
+                    self.lock().launched.insert(format!("cl:{id}"));
+                }
+                self.poke(AgentCli::ClaudeCode);
+                let result = LaunchResult {
+                    agent: spec.agent,
+                    cli_id,
+                    terminal: None,
+                    command,
+                };
+                Ok((result, None))
+            }
+            AgentCli::Codex => {
+                let mut state = self.lock();
+                let known = state.codex.iter().map(|s| s.key.clone()).collect();
+                let key = provisional_key(&format!("t{}", state.next_terminal));
+                let (terminal, pump) = spawn_pty(
+                    &mut state,
+                    client,
+                    &key,
+                    &program,
+                    &argv[1..],
+                    PathBuf::from(&spec.cwd),
+                    cols.clamp(20, 1000),
+                    rows.clamp(5, 500),
+                )?;
+                state.pending_codex.push(PendingCodex {
+                    terminal: terminal.clone(),
+                    cwd: spec.cwd.clone(),
+                    brief: spec.brief.clone(),
+                    launched_ms: now,
+                    known,
+                });
+                broadcast_snapshot(&mut state, true);
+                drop(state);
+                self.poke(AgentCli::Codex);
+                let result = LaunchResult {
+                    agent: spec.agent,
+                    cli_id: None,
+                    terminal: Some(terminal.clone()),
+                    command,
+                };
+                Ok((result, Some((terminal, pump))))
+            }
+        }
     }
 
     fn output(&self, terminal: &str, bytes: &[u8]) {
@@ -557,6 +747,91 @@ impl Hub {
     }
 }
 
+/// A launch's answer and, for a TUI, the terminal to start reading once the
+/// client got the answer.
+type LaunchAnswer = Result<(LaunchResult, Option<(String, Pump)>), (&'static str, String)>;
+
+/// Reader and process of a terminal, handed to [`Hub::pump`].
+struct Pump {
+    reader: Box<dyn Read + Send>,
+    child: Box<dyn Child + Send + Sync>,
+}
+
+/// Opens a PTY running `program args` in `cwd` and registers it as a
+/// terminal of session `key`, viewed by `client`.
+#[allow(clippy::too_many_arguments)]
+fn spawn_pty(
+    state: &mut State,
+    client: u64,
+    key: &str,
+    program: &str,
+    args: &[String],
+    cwd: PathBuf,
+    cols: u16,
+    rows: u16,
+) -> Result<(String, Pump), (&'static str, String)> {
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|error| ("pty_failed", error.to_string()))?;
+    let mut command = CommandBuilder::new(program);
+    command.args(args);
+    command.cwd(cwd);
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    let child = pair
+        .slave
+        .spawn_command(command)
+        .map_err(|error| ("spawn_failed", error.to_string()))?;
+    drop(pair.slave);
+    let reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|error| ("pty_failed", error.to_string()))?;
+    let mut writer = pair
+        .master
+        .take_writer()
+        .map_err(|error| ("pty_failed", error.to_string()))?;
+    let (input, input_rx) = channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        for bytes in input_rx {
+            if writer
+                .write_all(&bytes)
+                .and_then(|_| writer.flush())
+                .is_err()
+            {
+                break;
+            }
+        }
+    });
+    let terminal = format!("t{}", state.next_terminal);
+    state.next_terminal += 1;
+    state.terminals.insert(
+        terminal.clone(),
+        Terminal {
+            session: key.to_string(),
+            killer: child.clone_killer(),
+            master: pair.master,
+            input,
+            history: VecDeque::new(),
+            viewers: HashSet::from([client]),
+            size: (cols, rows),
+        },
+    );
+    Ok((terminal, Pump { reader, child }))
+}
+
+fn source_index(agent: AgentCli) -> usize {
+    match agent {
+        AgentCli::ClaudeCode => 0,
+        AgentCli::Codex => 1,
+    }
+}
+
 fn resize(t: &mut Terminal, cols: u16, rows: u16) {
     t.size = (cols, rows);
     let _ = t.master.resize(PtySize {
@@ -590,6 +865,51 @@ fn rebuild(state: &mut State) {
     }
     state.since = since;
     state.sessions = sessions;
+    bind_launched(state, now);
+    let State {
+        sessions, launched, ..
+    } = state;
+    for session in sessions.iter_mut() {
+        session.launched_here =
+            launched.contains(&format!("{}:{}", session.agent.tag(), session.cli_id));
+    }
+}
+
+/// Moves each launched Codex TUI from its provisional key to the thread it
+/// started: a thread that did not exist at launch, in the same folder, and
+/// whose first words match the brief when several qualify.
+fn bind_launched(state: &mut State, now: i64) {
+    let State {
+        pending_codex,
+        codex,
+        terminals,
+        launched,
+        ..
+    } = state;
+    pending_codex.retain(|pending| {
+        if !terminals.contains_key(&pending.terminal)
+            || now - pending.launched_ms > PENDING_WINDOW_MS
+        {
+            return false;
+        }
+        let bound: HashSet<String> = terminals.values().map(|t| t.session.clone()).collect();
+        let tui = LaunchedTui {
+            cwd: pending.cwd.clone(),
+            brief: pending.brief.clone(),
+            launched_ms: pending.launched_ms,
+        };
+        let taken = |key: &str| pending.known.contains(key) || bound.contains(key);
+        match pick_launched_thread(&tui, codex, &taken) {
+            Some(session) => {
+                launched.insert(format!("cx:{}", session.cli_id));
+                if let Some(t) = terminals.get_mut(&pending.terminal) {
+                    t.session = session.key.clone();
+                }
+                false
+            }
+            None => true,
+        }
+    });
 }
 
 fn snapshot(state: &State) -> ServerMessage {

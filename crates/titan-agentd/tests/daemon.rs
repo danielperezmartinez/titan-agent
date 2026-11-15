@@ -26,11 +26,24 @@ case "$1" in
     printf 'attached to %s\r\n' "$2"
     while IFS= read -r line; do printf 'got:%s\r\n' "$line"; done ;;
   stop) echo "$2" >> "$FAKE_DIR/stopped" ;;
+  --bg)
+    pwd > "$FAKE_DIR/launch-cwd"
+    { for arg in "$@"; do printf '%s\0' "$arg"; done; printf '\001\0'; } >> "$FAKE_DIR/launched"
+    cp "$FAKE_DIR/agents-after.json" "$FAKE_DIR/agents.json" 2>/dev/null
+    printf 'backgrounded \302\267 beef0001 \302\267 %s\n' "$3" ;;
 esac
 "#;
 
 const FAKE_CODEX: &str = r#"#!/bin/sh
-echo '{"status":"stopped"}'
+case "$1" in
+  --remote)
+    pwd > "$FAKE_DIR/codex-cwd"
+    { for arg in "$@"; do printf '%s\0' "$arg"; done; printf '\001\0'; } >> "$FAKE_DIR/codex-launched"
+    stty -echo 2>/dev/null
+    printf 'codex tui ready\r\n'
+    while IFS= read -r line; do printf 'tui got:%s\r\n' "$line"; done ;;
+  *) echo '{"status":"stopped"}' ;;
+esac
 "#;
 
 struct Fixture {
@@ -44,7 +57,7 @@ impl Fixture {
         let dir =
             std::env::temp_dir().join(format!("titan-agentd-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(dir.join("proyecto")).unwrap();
         std::fs::write(dir.join("agents.json"), AGENTS).unwrap();
         for (file, body) in [("claude", FAKE_CLAUDE), ("codex", FAKE_CODEX)] {
             let path = dir.join(file);
@@ -306,4 +319,178 @@ fn only_one_daemon_per_socket() {
     // The first one still answers.
     let mut c = fixture.connect();
     c.hello();
+}
+
+// ----- launching (ADR-0002) --------------------------------------------------
+
+use titan_agent_core::launch::LaunchSpec;
+use titan_agent_core::session::AgentCli;
+
+fn spec(fixture: &Fixture, agent: AgentCli, brief: &str) -> LaunchSpec {
+    let (model, access) = match agent {
+        AgentCli::ClaudeCode => ("haiku", "plan"),
+        AgentCli::Codex => ("gpt-6-luna", "read-only"),
+    };
+    LaunchSpec {
+        agent,
+        model: model.into(),
+        effort: "low".into(),
+        access: access.into(),
+        cwd: fixture.dir.join("proyecto").to_string_lossy().into_owned(),
+        brief: brief.into(),
+    }
+}
+
+fn launch(c: &mut Connection, id: u64, spec: &LaunchSpec, shown: &str, click: &str) -> Value {
+    c.send(json!({"id": id, "method": "launch", "params": {
+        "spec": spec, "shown": shown, "click": click, "cols": 100, "rows": 30
+    }}));
+    c.until(|m| m["id"] == id)
+}
+
+/// The command line the daemon expects (its HOME is the fixture folder).
+fn shown(fixture: &Fixture, spec: &LaunchSpec) -> String {
+    spec.command_line(Some(&fixture.dir.to_string_lossy()))
+}
+
+/// The runs recorded by a fake CLI: NUL-separated arguments, each run
+/// closed by a `\x01` record.
+fn args(path: &Path) -> Vec<Vec<String>> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Vec::new();
+    };
+    let mut runs = vec![Vec::new()];
+    for part in bytes.split(|b| *b == 0).filter(|part| !part.is_empty()) {
+        if part == b"\x01" {
+            runs.push(Vec::new());
+        } else if let Some(run) = runs.last_mut() {
+            run.push(String::from_utf8_lossy(part).into_owned());
+        }
+    }
+    runs.pop();
+    runs
+}
+
+#[test]
+fn launching_claude_runs_the_official_cli_once_with_the_users_brief() {
+    let fixture = Fixture::start("launch-claude");
+    let after = AGENTS.replace(
+        "\n]",
+        r#",
+  {"id":"beef0001","pid":3,"cwd":"/tmp","kind":"background","startedAt":1700000002000,
+   "sessionId":"beef0001-0000-4000-8000-000000000003","name":"Revisa","status":"busy"}
+]"#,
+    );
+    std::fs::write(fixture.dir.join("agents-after.json"), after).unwrap();
+    let mut c = fixture.connect();
+    c.hello();
+    c.send(json!({"id": 2, "method": "subscribe"}));
+
+    let brief = "Revisa el README.\n\n- sin tocar \"nada\" más, $HOME";
+    let spec = spec(&fixture, AgentCli::ClaudeCode, brief);
+    let answer = launch(&mut c, 3, &spec, &shown(&fixture, &spec), "click-1");
+    assert_eq!(answer["result"]["cli_id"], "beef0001", "{answer}");
+    assert_eq!(answer["result"]["command"], shown(&fixture, &spec));
+
+    // The official CLI got exactly the argv of the spec, in the folder.
+    let runs = args(&fixture.dir.join("launched"));
+    assert_eq!(runs, vec![spec.argv()[1..].to_vec()]);
+    assert_eq!(runs[0].last().unwrap(), brief);
+    let cwd = std::fs::read_to_string(fixture.dir.join("launch-cwd")).unwrap();
+    assert_eq!(cwd.trim(), spec.cwd);
+
+    // The new session shows up at once (the launch asks for a poll).
+    c.until(|m| {
+        m["event"] == "sessions"
+            && m["params"]["sessions"].as_array().is_some_and(|s| {
+                s.iter()
+                    .any(|s| s["cli_id"] == "beef0001" && s["launched_here"] == true)
+            })
+    });
+
+    // Same click again, or the same brief right after: refused, not re-run.
+    let again = launch(&mut c, 4, &spec, &shown(&fixture, &spec), "click-1");
+    assert_eq!(again["error"]["code"], "duplicate_launch");
+    let twice = launch(&mut c, 5, &spec, &shown(&fixture, &spec), "click-2");
+    assert_eq!(twice["error"]["code"], "duplicate_launch");
+    assert_eq!(args(&fixture.dir.join("launched")).len(), 1);
+}
+
+#[test]
+fn launches_without_the_users_brief_or_the_shown_command_are_refused() {
+    let fixture = Fixture::start("launch-refused");
+    let mut c = fixture.connect();
+    c.hello();
+
+    let blank = spec(&fixture, AgentCli::ClaudeCode, "   \n ");
+    let answer = launch(&mut c, 2, &blank, &shown(&fixture, &blank), "c1");
+    assert_eq!(answer["error"]["code"], "empty_brief");
+
+    let good = spec(&fixture, AgentCli::ClaudeCode, "Haz una cosa");
+    let mut other = good.clone();
+    other.brief = "Haz otra cosa".into();
+    let answer = launch(&mut c, 3, &good, &shown(&fixture, &other), "c2");
+    assert_eq!(answer["error"]["code"], "command_mismatch");
+
+    let mut bad = good.clone();
+    bad.access = "bypassPermissions".into();
+    let answer = launch(&mut c, 4, &bad, &shown(&fixture, &bad), "c3");
+    assert_eq!(answer["error"]["code"], "invalid_option");
+
+    let answer = launch(&mut c, 5, &good, &shown(&fixture, &good), " ");
+    assert_eq!(answer["error"]["code"], "missing_click");
+
+    let mut gone = good.clone();
+    gone.cwd = fixture.dir.join("no-existe").to_string_lossy().into_owned();
+    let answer = launch(&mut c, 6, &gone, &shown(&fixture, &gone), "c4");
+    assert_eq!(answer["error"]["code"], "no_folder");
+
+    assert!(
+        args(&fixture.dir.join("launched")).is_empty(),
+        "nothing was launched"
+    );
+
+    // A refused launch does not block the next click with the same brief.
+    let answer = launch(&mut c, 7, &good, &shown(&fixture, &good), "c5");
+    assert_eq!(answer["result"]["cli_id"], "beef0001", "{answer}");
+}
+
+#[test]
+fn launching_codex_opens_its_tui_in_a_daemon_terminal() {
+    let fixture = Fixture::start("launch-codex");
+    let mut c = fixture.connect();
+    c.hello();
+    c.send(json!({"id": 2, "method": "subscribe"}));
+
+    let spec = spec(&fixture, AgentCli::Codex, "-x Añade un test");
+    let answer = launch(&mut c, 3, &spec, &shown(&fixture, &spec), "click-1");
+    let terminal = answer["result"]["terminal"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{answer}"))
+        .to_string();
+    c.output_until(&terminal, "codex tui ready");
+
+    // The terminal is listed under its provisional key and takes input.
+    c.until(|m| {
+        m["event"] == "sessions"
+            && m["params"]["terminals"].as_array().is_some_and(|t| {
+                t.iter().any(|t| {
+                    t["terminal"] == terminal.as_str()
+                        && t["session"] == format!("launch:{terminal}").as_str()
+                })
+            })
+    });
+    let data = titan_agent_core::protocol::encode_bytes(b"sigue\r");
+    c.send(json!({"method": "input", "params": {"terminal": terminal, "data": data}}));
+    c.output_until(&terminal, "tui got:sigue");
+
+    let runs = args(&fixture.dir.join("codex-launched"));
+    assert_eq!(runs, vec![spec.argv()[1..].to_vec()]);
+    assert_eq!(&runs[0][runs[0].len() - 2..], ["--", "-x Añade un test"]);
+    let cwd = std::fs::read_to_string(fixture.dir.join("codex-cwd")).unwrap();
+    assert_eq!(cwd.trim(), spec.cwd);
+
+    let again = launch(&mut c, 4, &spec, &shown(&fixture, &spec), "click-1");
+    assert_eq!(again["error"]["code"], "duplicate_launch");
+    assert_eq!(args(&fixture.dir.join("codex-launched")).len(), 1);
 }

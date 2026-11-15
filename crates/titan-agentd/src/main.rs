@@ -88,7 +88,7 @@ fn spawn_claude_poller(hub: Arc<Hub>) {
             claude::ClaudeSource::new(hub.config.claude.clone(), hub.config.home.clone());
         loop {
             hub.set_source(AgentCli::ClaudeCode, source.sessions());
-            std::thread::sleep(hub.config.poll);
+            hub.wait_poll(AgentCli::ClaudeCode, hub.config.poll);
         }
     });
 }
@@ -107,11 +107,11 @@ fn spawn_codex_poller(hub: Arc<Hub>) {
                             break;
                         }
                     }
-                    std::thread::sleep(hub.config.poll);
+                    hub.wait_poll(AgentCli::Codex, hub.config.poll);
                 },
                 Err(error) => hub.set_source(AgentCli::Codex, Err(error)),
             }
-            std::thread::sleep(hub.config.poll.max(Duration::from_secs(5)));
+            hub.wait_poll(AgentCli::Codex, hub.config.poll.max(Duration::from_secs(5)));
         }
     });
 }

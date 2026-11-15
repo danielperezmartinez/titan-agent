@@ -3,7 +3,10 @@
 mod app;
 mod client;
 mod keys;
+mod new_session;
+mod settings;
 mod terminal;
+mod text_area;
 mod theme;
 
 use std::borrow::Cow;

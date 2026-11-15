@@ -12,15 +12,19 @@ use gpui::{
     FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, SharedString, Stateful, Window, div,
     prelude::*, px,
 };
+use titan_agent_core::launch::{LaunchDefaults, LaunchSpec};
 use titan_agent_core::project::tilde;
 use titan_agent_core::protocol::{
-    AttachResult, Event, Request, ServerMessage, SourceStatus, decode_bytes,
+    AttachResult, Event, LaunchResult, Request, ServerMessage, SourceStatus, TerminalRef,
+    decode_bytes,
 };
 use titan_agent_core::session::{AgentCli, Session, SessionKind, SessionState, StateCounts};
 use titan_agent_core::time::ago;
 use titan_agent_core::tree::{TreeRow, build_rows};
 
 use crate::client::{DaemonClient, Incoming};
+use crate::new_session::{NewSessionEvent, NewSessionView, ProjectChoice};
+use crate::settings::{SettingsEvent, SettingsView};
 use crate::terminal::TerminalView;
 use crate::theme::{self, color, hairline};
 
@@ -30,12 +34,19 @@ enum Selection {
     Session(String),
     Project(String),
     New,
+    Settings,
+    /// A Claude Code session just launched, until it shows up in the tree.
+    Launched {
+        cli_id: Option<String>,
+        command: String,
+    },
 }
 
 enum Pending {
     Attach(String),
     Stop,
     Open,
+    Launch(LaunchSpec),
 }
 
 pub struct MainView {
@@ -58,10 +69,17 @@ pub struct MainView {
     /// Focus the selected terminal on the next frame (selection made
     /// without a window at hand).
     focus_terminal: bool,
+    /// Focus the brief of «Nueva sesión» on the next frame.
+    focus_brief: bool,
     focus: FocusHandle,
+    new_session: Entity<NewSessionView>,
+    settings: Entity<SettingsView>,
+    /// Codex TUIs launched from here, shown until their thread is found.
+    launched_tuis: HashMap<String, Session>,
+    _subscriptions: Vec<gpui::Subscription>,
 }
 
-fn now_ms() -> i64 {
+pub fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -102,14 +120,29 @@ impl MainView {
         })
         .detach();
         let preselect = std::env::var("TITAN_AGENT_SELECT").ok();
+        let home = std::env::var("HOME").ok();
+        let defaults = crate::settings::load_defaults();
+        let new_session = cx.new(|cx| NewSessionView::new(&defaults, home.clone(), cx));
+        let settings = cx.new(|_| SettingsView::new(defaults.clone(), home.clone()));
+        let subscriptions = vec![
+            cx.subscribe(&new_session, |this, _, event, cx| match event {
+                NewSessionEvent::Launch(request) => this.launch(request, cx),
+            }),
+            cx.subscribe(&settings, |this, _, event, cx| match event {
+                SettingsEvent::Changed(defaults) => this.defaults_changed(defaults.clone(), cx),
+            }),
+        ];
+        let start_new = std::env::var("TITAN_AGENT_NEW").is_ok();
         MainView {
             client,
             connected: false,
             status: Some("conectando con titan-agentd…".into()),
             sessions: Vec::new(),
             sources: Vec::new(),
-            selection: if std::env::var("TITAN_AGENT_NEW").is_ok() {
+            selection: if start_new {
                 Selection::New
+            } else if std::env::var("TITAN_AGENT_SETTINGS").is_ok() {
+                Selection::Settings
             } else {
                 Selection::None
             },
@@ -119,10 +152,150 @@ impl MainView {
             pending: HashMap::new(),
             notice: None,
             now_ms: now_ms(),
-            home: std::env::var("HOME").ok(),
+            home,
             preselect,
             focus_terminal: false,
+            focus_brief: start_new,
             focus: cx.focus_handle(),
+            new_session,
+            settings,
+            launched_tuis: HashMap::new(),
+            _subscriptions: subscriptions,
+        }
+    }
+
+    /// Projects offered in «Nueva sesión», in tree order.
+    fn projects(&self) -> Vec<ProjectChoice> {
+        build_rows(&self.sessions, "")
+            .into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Project { name, root, .. } => Some(ProjectChoice { root, name }),
+                TreeRow::Session { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Opens «Nueva sesión» in the project of the current selection.
+    fn open_new(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        let preferred = match &self.selection {
+            Selection::Session(key) => self.session(key).map(|s| s.project_root.clone()),
+            Selection::Project(root) => Some(root.clone()),
+            _ => None,
+        };
+        let projects = self.projects();
+        self.new_session.update(cx, |form, cx| {
+            form.set_projects(projects, preferred, cx);
+        });
+        self.selection = Selection::New;
+        self.notice = None;
+        match window {
+            Some(window) => {
+                let handle = self.new_session.read(cx).focus_handle(cx);
+                handle.focus(window, cx);
+            }
+            None => self.focus_brief = true,
+        }
+        cx.notify();
+    }
+
+    fn defaults_changed(&mut self, defaults: LaunchDefaults, cx: &mut Context<Self>) {
+        self.new_session.update(cx, |form, cx| {
+            form.apply_defaults(&defaults);
+            cx.notify();
+        });
+    }
+
+    /// Sends one launch to the daemon for one click (ADR-0002).
+    fn launch(&mut self, request: &crate::new_session::LaunchRequest, cx: &mut Context<Self>) {
+        if !self.connected {
+            self.new_session.update(cx, |form, cx| {
+                form.failed("sin conexión con titan-agentd".into(), cx)
+            });
+            return;
+        }
+        let id = self.client.request(Request::Launch {
+            spec: request.spec.clone(),
+            shown: request.shown.clone(),
+            click: request.click.clone(),
+            cols: 120,
+            rows: 36,
+        });
+        self.pending
+            .insert(id, Pending::Launch(request.spec.clone()));
+    }
+
+    fn launched(&mut self, result: LaunchResult, spec: LaunchSpec, cx: &mut Context<Self>) {
+        self.new_session.update(cx, |form, cx| form.launched(cx));
+        match result.terminal {
+            Some(terminal) => {
+                // Codex: its TUI already runs in a daemon terminal, listed
+                // under a provisional key until the thread shows up.
+                let key = titan_agent_core::protocol::provisional_key(&terminal);
+                let client = self.client.clone();
+                let view = cx.new(|cx| TerminalView::new(key.clone(), client, cx));
+                view.update(cx, |view, cx| view.attached(terminal, true, cx));
+                self.terminals.insert(key.clone(), view);
+                self.launched_tuis
+                    .insert(key.clone(), provisional_session(&key, &spec));
+                self.selection = Selection::Session(key);
+                self.focus_terminal = true;
+            }
+            None => {
+                let existing = result.cli_id.as_ref().and_then(|id| {
+                    self.sessions
+                        .iter()
+                        .find(|s| s.agent == result.agent && &s.cli_id == id)
+                        .map(|s| s.key.clone())
+                });
+                match existing {
+                    Some(key) => self.select_session(key, None, cx),
+                    None => {
+                        self.selection = Selection::Launched {
+                            cli_id: result.cli_id,
+                            command: result.command,
+                        }
+                    }
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Follows the terminals the daemon moved to another session (a launched
+    /// Codex TUI whose thread was found) and selects a launched Claude Code
+    /// session once it shows up.
+    fn follow_launches(&mut self, terminals: &[TerminalRef], cx: &mut Context<Self>) {
+        for reference in terminals {
+            let moved = self
+                .terminals
+                .iter()
+                .find(|(key, view)| {
+                    view.read(cx).terminal.as_deref() == Some(reference.terminal.as_str())
+                        && **key != reference.session
+                })
+                .map(|(key, _)| key.clone());
+            if let Some(old) = moved
+                && let Some(view) = self.terminals.remove(&old)
+            {
+                let new = reference.session.clone();
+                view.update(cx, |view, _| view.session = new.clone());
+                self.terminals.insert(new.clone(), view);
+                self.launched_tuis.remove(&old);
+                if self.selection == Selection::Session(old) {
+                    self.selection = Selection::Session(new);
+                }
+            }
+        }
+        if let Selection::Launched {
+            cli_id: Some(id), ..
+        } = &self.selection
+            && let Some(key) = self
+                .sessions
+                .iter()
+                .find(|s| s.agent == AgentCli::ClaudeCode && &s.cli_id == id)
+                .map(|s| s.key.clone())
+        {
+            self.select_session(key, None, cx);
         }
     }
 
@@ -145,6 +318,20 @@ impl MainView {
             }
             Incoming::Disconnected(reason) => {
                 self.connected = false;
+                // A launch without an answer is not retried: tell the user.
+                let before = self.pending.len();
+                self.pending
+                    .retain(|_, pending| !matches!(pending, Pending::Launch(_)));
+                if self.pending.len() != before {
+                    self.new_session.update(cx, |form, cx| {
+                        form.failed(
+                            "se perdió la conexión con titan-agentd antes de saber si se lanzó; \
+                             revisa el árbol antes de volver a lanzar"
+                                .into(),
+                            cx,
+                        )
+                    });
+                }
                 self.status = Some(reason);
             }
             Incoming::Message(message) => self.message(message, cx),
@@ -168,25 +355,43 @@ impl MainView {
                 Some(Pending::Stop) => {
                     self.notice = Some(("orden de detener enviada al CLI".into(), false));
                 }
+                Some(Pending::Launch(spec)) => match serde_json::from_value::<LaunchResult>(result)
+                {
+                    Ok(result) => self.launched(result, spec, cx),
+                    Err(error) => self.new_session.update(cx, |form, cx| {
+                        form.failed(format!("respuesta inesperada del daemon: {error}"), cx)
+                    }),
+                },
                 Some(Pending::Open) | None => {}
             },
-            ServerMessage::Error { id, error } => {
-                if let Some(Pending::Attach(session)) = self.pending.remove(&id)
-                    && let Some(view) = self.terminals.get(&session)
-                {
-                    let text = error.message.clone();
-                    view.update(cx, |view, cx| {
-                        view.ended = Some(text);
-                        cx.notify();
-                    });
+            ServerMessage::Error { id, error } => match self.pending.remove(&id) {
+                Some(Pending::Launch(_)) => {
+                    self.new_session
+                        .update(cx, |form, cx| form.failed(error.message, cx));
                 }
-                self.notice = Some((error.message, true));
-            }
+                Some(Pending::Attach(session)) => {
+                    if let Some(view) = self.terminals.get(&session) {
+                        let text = error.message.clone();
+                        view.update(cx, |view, cx| {
+                            view.ended = Some(text);
+                            cx.notify();
+                        });
+                    }
+                    self.notice = Some((error.message, true));
+                }
+                _ => self.notice = Some((error.message, true)),
+            },
             ServerMessage::Event(Event::Sessions {
-                sessions, sources, ..
+                sessions,
+                sources,
+                terminals,
             }) => {
                 self.sessions = sessions;
                 self.sources = sources;
+                self.follow_launches(&terminals, cx);
+                let projects = self.projects();
+                self.new_session
+                    .update(cx, |form, _| form.refresh_projects(projects));
                 if let Some(fragment) = self.preselect.clone()
                     && let Some(key) = self
                         .sessions
@@ -296,11 +501,17 @@ impl MainView {
         cx.notify();
     }
 
-    fn root_key(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn root_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
         if keystroke.modifiers.control && keystroke.key == "n" {
-            self.selection = Selection::New;
-            cx.notify();
+            self.open_new(Some(window), cx);
+            cx.stop_propagation();
+        } else if keystroke.key == "escape" {
+            let closed = self.new_session.update(cx, |form, cx| form.close_menu(cx))
+                || self.settings.update(cx, |view, cx| view.close_menu(cx));
+            if closed {
+                cx.stop_propagation();
+            }
         }
     }
 
@@ -310,7 +521,7 @@ impl MainView {
 
     // ----- rendering -------------------------------------------------------
 
-    fn header(&self) -> impl IntoElement + use<> {
+    fn header(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let counts = StateCounts::tally(self.sessions.iter().map(|s| s.state));
         let link = |id: &'static str, label: &'static str| {
             div()
@@ -384,7 +595,17 @@ impl MainView {
                     .child(format!("[+] {} en espera", counts.waiting)),
             )
             .child(link("about", "[i]"))
-            .child(link("settings", "[*]"))
+            .child(
+                link("settings", "[*]")
+                    .when(self.selection == Selection::Settings, |d| {
+                        d.text_color(color(theme::ACCENT))
+                    })
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.selection = Selection::Settings;
+                        this.notice = None;
+                        cx.notify();
+                    })),
+            )
     }
 
     fn nav(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement + use<> {
@@ -413,9 +634,8 @@ impl MainView {
             .text_size(px(13.))
             .font_weight(FontWeight::MEDIUM)
             .cursor_pointer()
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.selection = Selection::New;
-                cx.notify();
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.open_new(Some(window), cx);
             }))
             .child("[+]")
             .child(div().flex_grow_1().child("Nueva sesión"))
@@ -703,7 +923,11 @@ impl MainView {
 
     fn center(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selection.clone() {
-            Selection::Session(key) => match self.session(&key).cloned() {
+            Selection::Session(key) => match self
+                .session(&key)
+                .or_else(|| self.launched_tuis.get(&key))
+                .cloned()
+            {
                 Some(session) => self.session_view(&session, window, cx).into_any_element(),
                 None => placeholder(
                     "La sesión ya no aparece",
@@ -712,7 +936,21 @@ impl MainView {
                 .into_any_element(),
             },
             Selection::Project(root) => self.project_view(&root).into_any_element(),
-            Selection::New => self.new_session_view().into_any_element(),
+            Selection::New => self.new_session.clone().into_any_element(),
+            Selection::Settings => self.settings.clone().into_any_element(),
+            Selection::Launched { cli_id, command } => placeholder(
+                "Sesión lanzada",
+                vec![
+                    match cli_id {
+                        Some(id) => format!(
+                            "claude --bg respondió con el id {id}; aparecerá en el árbol en unos segundos."
+                        ),
+                        None => "claude --bg no devolvió un id: búscala en el árbol.".into(),
+                    },
+                    format!("$ {command}"),
+                ],
+            )
+            .into_any_element(),
             Selection::None => placeholder(
                 "Elige una sesión",
                 vec![
@@ -862,6 +1100,7 @@ impl MainView {
                     .clone()
                     .unwrap_or_else(|| parent.agent.tag().into())
             ),
+            None if session.launched_here => "tú (titan-agent)".into(),
             None if session.kind == SessionKind::Interactive => "tú".into(),
             None => "sin dato del CLI".into(),
         };
@@ -1150,127 +1389,15 @@ impl MainView {
             .child(bar)
             .child(placeholder(&title, lines))
     }
-
-    fn new_session_view(&self) -> impl IntoElement + use<> {
-        let chip = |tag: &'static str, tag_color: u32, label: &'static str| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(6.))
-                .min_h(px(32.))
-                .px(px(8.))
-                .border_1()
-                .border_color(hairline())
-                .rounded(px(4.))
-                .text_size(px(12.))
-                .text_color(color(theme::BODY))
-                .when(!tag.is_empty(), |d| {
-                    d.child(div().text_color(color(tag_color)).child(tag))
-                })
-                .child(label)
-                .child(div().text_color(color(theme::MUTE)).child("[v]"))
-        };
-        div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .size_full()
-            .p(px(16.))
-            .bg(color(theme::TERMINAL_BG))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_grow_1()
-                    .items_center()
-                    .justify_center()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .text_color(color(theme::INK))
-                            .text_size(px(28.))
-                            .font_weight(FontWeight::BOLD)
-                            .child("Nueva sesión"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(13.))
-                            .text_color(color(theme::MUTE))
-                            .child("se activa en la fase 2, con las salvaguardas de ADR-0002"),
-                    ),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(820.))
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .border_1()
-                            .border_color(color(theme::HAIRLINE_STRONG))
-                            .rounded(px(4.))
-                            .bg(color(theme::CANVAS))
-                            .child(
-                                div()
-                                    .p(px(12.))
-                                    .h(px(96.))
-                                    .text_size(px(13.))
-                                    .text_color(color(theme::MUTE))
-                                    .child("Escribe el encargo. titan-agent no lo completa ni lo reescribe."),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .p(px(8.))
-                                    .border_t_1()
-                                    .border_color(hairline())
-                                    .child(chip("cl", theme::CLAUDE, "Claude Code"))
-                                    .child(chip("", theme::MUTE, "opus"))
-                                    .child(chip("", theme::MUTE, "high"))
-                                    .child(chip("", theme::MUTE, "default"))
-                                    .child(chip("[#]", theme::MUTE, "proyecto"))
-                                    .child(div().flex_grow_1())
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .min_h(px(32.))
-                                            .px(px(16.))
-                                            .border_1()
-                                            .border_color(color(theme::HAIRLINE_STRONG))
-                                            .rounded(px(4.))
-                                            .text_size(px(13.))
-                                            .text_color(color(theme::STONE))
-                                            .child("[ok] lanzar"),
-                                    ),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .px(px(4.))
-                            .text_size(px(11.))
-                            .child(div().text_color(color(theme::STONE)).child("se ejecutará"))
-                            .child(
-                                div()
-                                    .text_color(color(theme::MUTE))
-                                    .child("claude --bg --model opus --effort high --permission-mode default \"<tu encargo>\""),
-                            ),
-                    ),
-            )
-    }
 }
 
 impl Render for MainView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus_brief {
+            self.focus_brief = false;
+            let handle = self.new_session.read(cx).focus_handle(cx);
+            handle.focus(window, cx);
+        }
         if self.focus_terminal {
             self.focus_terminal = false;
             if let Selection::Session(key) = &self.selection
@@ -1299,7 +1426,7 @@ impl Render for MainView {
             .font_family(theme::FONT)
             .font_features(gpui::FontFeatures::disable_ligatures())
             .text_size(px(14.))
-            .child(self.header())
+            .child(self.header(cx))
             .child(
                 div().flex().flex_grow_1().min_h(px(0.)).child(nav).child(
                     div()
@@ -1314,6 +1441,34 @@ impl Render for MainView {
 }
 
 // ----- small pieces ---------------------------------------------------------
+
+/// What is shown of a Codex TUI launched from here until its thread appears.
+fn provisional_session(key: &str, spec: &LaunchSpec) -> Session {
+    use titan_agent_core::project::{project_name, project_root};
+    let root = project_root(&spec.cwd);
+    let now = now_ms();
+    Session {
+        key: key.to_string(),
+        agent: spec.agent,
+        cli_id: String::new(),
+        name: titan_agent_core::launch::session_name(&spec.brief),
+        cwd: spec.cwd.clone(),
+        project: project_name(&root),
+        project_root: root,
+        kind: SessionKind::Interactive,
+        state: SessionState::Working,
+        model: Some(titan_agent_core::session::short_model(&spec.model)),
+        effort: Some(spec.effort.clone()),
+        role: None,
+        parent: None,
+        started_at_ms: Some(now),
+        state_since_ms: Some(now),
+        pid: None,
+        attach: None,
+        stoppable: false,
+        launched_here: true,
+    }
+}
 
 /// ASCII marker of a state. The spinner `| / - \` belongs to the monitor
 /// (phase 3); the tree and the bar show the plain marker.

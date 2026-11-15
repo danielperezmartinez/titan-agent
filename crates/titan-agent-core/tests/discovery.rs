@@ -73,6 +73,10 @@ fn claude_states_follow_status_and_state() {
     assert_eq!(claude_state(Some("idle"), Some("working")), Waiting);
     assert_eq!(claude_state(Some("busy"), Some("working")), Working);
     assert_eq!(claude_state(None, Some("working")), Working);
+    // A background session reports `done` after each turn while it lives.
+    assert_eq!(claude_state(Some("idle"), Some("done")), Waiting);
+    assert_eq!(claude_state(Some("busy"), Some("done")), Working);
+    assert_eq!(claude_state(None, Some("done")), Finished { failed: false });
     assert_eq!(
         claude_state(None, Some("stopped")),
         Finished { failed: false }

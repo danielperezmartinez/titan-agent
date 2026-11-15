@@ -11,6 +11,7 @@ use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
+use crate::launch::LaunchSpec;
 use crate::session::{AgentCli, Session};
 
 /// Version of this protocol. A daemon refuses a `hello` with another version.
@@ -56,6 +57,18 @@ pub enum Request {
     Stop { session: String },
     /// Open the session's working folder in the file manager.
     OpenFolder { session: String },
+    /// Launch a new session with the official CLI (ADR-0002). `shown` is the
+    /// command line the user saw, which must match the daemon's own
+    /// rendering of `spec`; `click` identifies the user's click and is
+    /// accepted once. `cols` and `rows` size the terminal of a Codex TUI.
+    /// Answered with [`LaunchResult`].
+    Launch {
+        spec: LaunchSpec,
+        shown: String,
+        click: String,
+        cols: u16,
+        rows: u16,
+    },
 }
 
 /// Answer to [`Request::Hello`].
@@ -72,6 +85,29 @@ pub struct AttachResult {
     /// False when the terminal already existed (for example after the window
     /// was closed and opened again).
     pub created: bool,
+}
+
+/// Answer to [`Request::Launch`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchResult {
+    pub agent: AgentCli,
+    /// Id printed by the CLI (`claude --bg`), when it prints one. The session
+    /// shows up in the next `sessions` snapshot with this `cli_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_id: Option<String>,
+    /// Terminal opened by the daemon for an interactive TUI (Codex). It is
+    /// listed under the provisional session `launch:<terminal>` until the
+    /// thread appears, and then under the thread's key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<String>,
+    /// The command that ran, as the user saw it.
+    pub command: String,
+}
+
+/// Session key under which a launched terminal is listed until its session
+/// is discovered.
+pub fn provisional_key(terminal: &str) -> String {
+    format!("launch:{terminal}")
 }
 
 /// An error answer.
