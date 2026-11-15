@@ -26,6 +26,7 @@ base64 = "0.22"
 alacritty_terminal = "0.26"
 rustix = { version = "1", features = ["fs", "process"] }
 signal-hook = "0.4"
+futures = { version = "0.3", default-features = false, features = ["std"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
