@@ -8,8 +8,8 @@ use crate::{
 use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AppContext, Context, Entity, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
 use std::{collections::HashMap, time::Duration};
 use titan_agent_core::{
@@ -30,6 +30,7 @@ pub struct MainWindow {
     sessions: Vec<Session>,
     selection: Option<Selection>,
     filter: String,
+    filter_focus: FocusHandle,
     client: Option<DaemonClient>,
     disconnected: bool,
     errors: HashMap<u64, String>,
@@ -45,6 +46,7 @@ impl MainWindow {
             sessions: Vec::new(),
             selection: None,
             filter: String::new(),
+            filter_focus: cx.focus_handle(),
             client: None,
             disconnected: true,
             errors: HashMap::new(),
@@ -218,7 +220,7 @@ impl MainWindow {
         self.sessions.iter().find(|s| &s.key == key)
     }
 
-    fn sidebar(&self) -> impl IntoElement {
+    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut list = div()
             .id("session-list")
             .flex()
@@ -233,13 +235,25 @@ impl MainWindow {
                     team_live,
                 } => {
                     let active = self.selection == Some(Selection::Project(project.clone()));
+                    let project_for_click = project.clone();
                     list = list.child(
                         div()
+                            .id(format!("project-{}", project.name))
                             .h(px(32.0))
                             .px(px(12.0))
                             .flex()
                             .items_center()
                             .gap(px(8.0))
+                            .border_l_2()
+                            .border_color(rgb(if active { theme::ACCENT } else { theme::CANVAS }))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.selection =
+                                        Some(Selection::Project(project_for_click.clone()));
+                                    cx.notify();
+                                }),
+                            )
                             .bg(if active {
                                 rgb(theme::SURFACE)
                             } else {
@@ -251,7 +265,7 @@ impl MainWindow {
                                 12.0,
                                 if active { theme::INK } else { theme::BODY },
                             ))
-                            .child(Self::text("────────", 12.0, theme::STONE))
+                            .child(div().flex_1().h(px(1.0)).bg(rgb(theme::HAIRLINE_STRONG)))
                             .child(Self::text(
                                 if team_live { "[*]" } else { "" },
                                 12.0,
@@ -267,8 +281,10 @@ impl MainWindow {
                         let active =
                             self.selection.as_ref() == Some(&Selection::Session(key.clone()));
                         let (tag, model) = view_model::pill(session);
+                        let key_for_click = key.clone();
                         list = list.child(
                             div()
+                                .id(format!("session-{}", key.id))
                                 .h(px(36.0))
                                 .pl(px(if depth == 0 {
                                     12.0
@@ -279,12 +295,31 @@ impl MainWindow {
                                 .flex()
                                 .items_center()
                                 .gap(px(8.0))
+                                .border_l_2()
+                                .border_color(rgb(if active {
+                                    theme::ACCENT
+                                } else {
+                                    theme::CANVAS
+                                }))
+                                .hover(|style| style.bg(rgb(theme::SURFACE)))
+                                .on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.selection =
+                                            Some(Selection::Session(key_for_click.clone()));
+                                        cx.notify();
+                                    }),
+                                )
                                 .bg(if active {
                                     rgb(theme::SURFACE)
                                 } else {
                                     rgb(theme::CANVAS)
                                 })
-                                .child(Self::text(branch.marker(), 13.0, theme::STONE))
+                                .child(Self::text(
+                                    if depth == 0 { "" } else { branch.marker() },
+                                    13.0,
+                                    theme::STONE,
+                                ))
                                 .child(Self::text(marker, 13.0, color))
                                 .child(Self::text(
                                     session.name.clone(),
@@ -295,17 +330,145 @@ impl MainWindow {
                                         theme::MUTE
                                     },
                                 ))
-                                .child(Self::text(
-                                    format!("{tag} {model}"),
-                                    11.0,
-                                    view_model::agent_color(key.cli),
-                                )),
+                                .child(
+                                    div()
+                                        .px(px(4.0))
+                                        .h(px(18.0))
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(4.0))
+                                        .border_1()
+                                        .border_color(rgb(view_model::agent_color(key.cli)))
+                                        .rounded(px(4.0))
+                                        .child(Self::text(
+                                            tag,
+                                            11.0,
+                                            view_model::agent_color(key.cli),
+                                        ))
+                                        .child(Self::text(model, 11.0, theme::MUTE)),
+                                ),
                         );
                     }
                 }
             }
         }
-        div().w(px(300.0)).h_full().flex().flex_col().border_r_1().border_color(rgb(theme::HAIRLINE_STRONG)).child(div().p(px(12.0)).flex().flex_col().gap(px(8.0)).child(Self::text("[+]  Nueva sesión                 ctrl+n", 13.0, theme::INK)).child(Self::text("[/]  filtrar por nombre, agente o proyecto", 12.0, theme::MUTE)).child(Self::text("SESIONES                         por proyecto [v]", 12.0, theme::INK))).child(list.flex_1()).child(Self::text("cl Claude Code   cx Codex\n[>] trabajando  [?] te necesita\n[+] en espera  [x] terminada", 11.0, theme::MUTE).p(px(12.0)))
+        let mut filter = div()
+            .id("session-filter")
+            .h(px(32.0))
+            .px(px(8.0))
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .bg(rgb(theme::SURFACE))
+            .rounded(px(4.0))
+            .child(Self::text("[/]", 12.0, theme::MUTE));
+        filter = filter.child(Self::text(
+            if self.filter.is_empty() {
+                "filtrar por nombre, agente o proyecto"
+            } else {
+                &self.filter
+            },
+            12.0,
+            if self.filter.is_empty() {
+                theme::MUTE
+            } else {
+                theme::BODY
+            },
+        ));
+        filter = filter.track_focus(&self.filter_focus).on_mouse_down(
+            gpui::MouseButton::Left,
+            cx.listener(|this, _, window, cx| {
+                window.focus(&this.filter_focus, cx);
+                cx.notify();
+            }),
+        );
+        let new_active = self.selection == Some(Selection::NewSession);
+        div()
+            .w(px(300.0))
+            .h_full()
+            .flex()
+            .flex_col()
+            .border_r_1()
+            .border_color(rgb(theme::HAIRLINE_STRONG))
+            .child(
+                div()
+                    .p(px(12.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .id("new-session")
+                            .h(px(36.0))
+                            .px(px(12.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .bg(rgb(if new_active {
+                                theme::SURFACE
+                            } else {
+                                theme::SURFACE_ELEVATED
+                            }))
+                            .border_1()
+                            .border_color(rgb(if new_active {
+                                theme::ACCENT
+                            } else {
+                                theme::HAIRLINE_STRONG
+                            }))
+                            .rounded(px(4.0))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(|this, _, _, cx| {
+                                    this.selection = Some(Selection::NewSession);
+                                    cx.notify();
+                                }),
+                            )
+                            .child(Self::text("[+]", 13.0, theme::INK))
+                            .child(Self::text("Nueva sesión", 13.0, theme::INK))
+                            .child(div().flex_1())
+                            .child(Self::text("ctrl+n", 11.0, theme::MUTE)),
+                    )
+                    .child(
+                        filter.on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                            let key = &event.keystroke.key;
+                            if key == "backspace" {
+                                this.filter.pop();
+                            } else if key == "escape" {
+                                this.filter.clear();
+                            } else if !event.keystroke.modifiers.control
+                                && !event.keystroke.modifiers.platform
+                                && let Some(ch) = event.keystroke.key_char.as_ref()
+                            {
+                                this.filter.push_str(ch);
+                            }
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        div()
+                            .pt(px(4.0))
+                            .flex()
+                            .justify_between()
+                            .child(Self::text("SESIONES", 12.0, theme::INK))
+                            .child(Self::text("por proyecto [v]", 12.0, theme::MUTE)),
+                    ),
+            )
+            .child(list.flex_1().pb(px(12.0)))
+            .child(
+                div()
+                    .border_t_1()
+                    .border_color(rgb(theme::HAIRLINE_STRONG))
+                    .p(px(12.0))
+                    .flex()
+                    .flex_wrap()
+                    .gap(px(12.0))
+                    .child(Self::text("cl Claude Code", 11.0, theme::MUTE))
+                    .child(Self::text("cx Codex", 11.0, theme::MUTE))
+                    .child(Self::text("[>] trabajando", 11.0, theme::MUTE))
+                    .child(Self::text("[?] te necesita", 11.0, theme::MUTE))
+                    .child(Self::text("[+] en espera", 11.0, theme::MUTE))
+                    .child(Self::text("[x] terminada", 11.0, theme::MUTE)),
+            )
     }
 }
 
@@ -329,10 +492,16 @@ impl Render for MainWindow {
                     theme::DANGER,
                 ))
             })
-            .child(Self::text(
-                "[>] 0 trabajando   [?] 0 te necesita   [+] 0 en espera",
-                12.0,
-                theme::MUTE,
+            .child(div().flex().gap(px(12.0)).children(
+                view_model::header_counts(&self.sessions).into_iter().map(
+                    |(marker, label, color)| {
+                        div()
+                            .flex()
+                            .gap(px(4.0))
+                            .child(Self::text(marker, 12.0, color))
+                            .child(Self::text(label, 12.0, theme::MUTE))
+                    },
+                ),
             ))
             .child(Self::text("[i]", 14.0, theme::BODY))
             .child(Self::text("[*]", 14.0, theme::BODY));
@@ -372,6 +541,17 @@ impl Render for MainWindow {
             .bg(rgb(theme::CANVAS))
             .text_color(rgb(theme::BODY))
             .child(header)
-            .child(div().flex_1().flex().child(self.sidebar()).child(center))
+            .child(div().flex_1().flex().child(self.sidebar(_cx)).child(center))
+            .font_family(theme::FONT_FAMILY)
+            .text_color(rgb(theme::BODY))
+            .text_size(px(14.0))
+            .on_key_down(_cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                if event.keystroke.key.eq_ignore_ascii_case("n")
+                    && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
+                {
+                    this.selection = Some(Selection::NewSession);
+                    cx.notify();
+                }
+            }))
     }
 }
