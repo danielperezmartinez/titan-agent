@@ -94,7 +94,7 @@ fn transcript_tail_gives_the_last_claude_model() {
     assert_eq!(last_model_in_transcript("{}"), None);
     assert_eq!(
         claude_project_dir("/home/<usuario>/dev/kite/.claude/worktrees/a"),
-        "-home-ana-dev-kite--claude-worktrees-a"
+        "-home-<usuario>-dev-kite--claude-worktrees-a"
     );
 }
 
