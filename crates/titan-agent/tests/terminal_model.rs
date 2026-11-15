@@ -178,6 +178,18 @@ fn hidden_text_with_default_colors_becomes_internal_spaces() {
 }
 
 #[test]
+fn hidden_wide_character_emits_two_spaces_before_visible_text() {
+    let frame = rendered("\x1b[8m界\x1b[28mX".as_bytes());
+    assert_eq!(frame.lines[0].runs, vec![plain(0, 3, "  X")]);
+
+    // A colored background separates the runs so the next column is explicit.
+    let frame = rendered("\x1b[41;8m界\x1b[28;49mX".as_bytes());
+    let mut hidden = plain(0, 2, "  ");
+    hidden.bg = Some(ANSI[1]);
+    assert_eq!(frame.lines[0].runs, vec![hidden, plain(2, 1, "X")]);
+}
+
+#[test]
 fn runs_merge_equal_styles_and_split_on_each_style_attribute() {
     let frame = rendered(b"A\x1b[39mB\x1b[1mC\x1b[0;3mD\x1b[0;4mE\x1b[0;9mF\x1b[0mG");
     let mut bold = plain(2, 1, "C");
@@ -203,7 +215,7 @@ fn runs_merge_equal_styles_and_split_on_each_style_attribute() {
 
 #[test]
 fn single_double_and_curly_underlines_set_the_underline_flag() {
-    for sgr in ["4", "21", "4:3"] {
+    for sgr in ["4", "4:2", "4:3"] {
         let frame = rendered(format!("\x1b[{sgr}mX").as_bytes());
         let mut expected = plain(0, 1, "X");
         expected.underline = true;
