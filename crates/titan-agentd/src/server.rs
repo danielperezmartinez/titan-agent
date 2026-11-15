@@ -81,6 +81,8 @@ struct TermState {
     clients: HashSet<u64>,
     exited: bool,
     pending_replies: Vec<Vec<u8>>,
+    replies_direct: bool,
+    reply_draining: bool,
 }
 struct Terminal {
     id: u64,
@@ -189,6 +191,7 @@ impl Daemon {
         while !self.shared.shutdown.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
+                    join_finished(&mut workers);
                     let id = NEXT_CLIENT.fetch_add(1, Ordering::Relaxed);
                     let (tx, rx) = mpsc::sync_channel(self.shared.config.client_queue.max(1));
                     let writer_done = Arc::new(AtomicBool::new(false));
@@ -829,6 +832,8 @@ fn spawn_terminal(
             clients: HashSet::new(),
             exited: false,
             pending_replies: Vec::new(),
+            replies_direct: false,
+            reply_draining: false,
         }),
         process: Mutex::new(None),
         grace: s.config.kill_grace,
@@ -854,13 +859,18 @@ fn spawn_terminal(
     ) {
         Ok(p) => {
             let p = Arc::new(p);
-            let replies = {
+            let drain = {
                 let mut state = terminal.state.lock().unwrap();
                 *terminal.process.lock().unwrap() = Some(p.clone());
-                std::mem::take(&mut state.pending_replies)
+                if !state.pending_replies.is_empty() && !state.reply_draining {
+                    state.reply_draining = true;
+                    true
+                } else {
+                    false
+                }
             };
-            for reply in replies {
-                let _ = p.write(&reply);
+            if drain {
+                drain_replies(&terminal, &p);
             }
             reg.sessions.insert(key, id);
             reg.terminals.insert(id, terminal.clone());
@@ -879,14 +889,18 @@ impl PtyHandler for TerminalHandler {
             return;
         }
         let replies = state.emulator.feed(bytes);
-        let process = if replies.is_empty() {
-            None
+        let process = self.terminal.process.lock().unwrap().clone();
+        let direct = !replies.is_empty() && state.replies_direct && process.is_some();
+        let drain = if replies.is_empty() || direct {
+            false
         } else {
-            let process = self.terminal.process.lock().unwrap().clone();
-            if process.is_none() {
-                state.pending_replies.push(replies.clone());
+            state.pending_replies.push(replies.clone());
+            if process.is_some() && !state.reply_draining {
+                state.reply_draining = true;
+                true
+            } else {
+                false
             }
-            process
         };
         let ids = state.clients.clone();
         for id in ids {
@@ -903,12 +917,44 @@ impl PtyHandler for TerminalHandler {
             }
         }
         drop(state);
-        if let Some(process) = process {
-            let _ = process.write(&replies);
+        if direct {
+            if let Some(process) = process {
+                let _ = process.write(&replies);
+            }
+        } else if drain && let Some(process) = process {
+            drain_replies(&self.terminal, &process);
         }
     }
     fn exited(&mut self) {
         exit_terminal(&self.terminal, None)
+    }
+}
+fn drain_replies(terminal: &Terminal, process: &PtyProcess) {
+    loop {
+        let next = {
+            let mut state = terminal.state.lock().unwrap();
+            if state.pending_replies.is_empty() {
+                state.reply_draining = false;
+                state.replies_direct = true;
+                return;
+            }
+            state.pending_replies.remove(0)
+        };
+        let _ = process.write(&next);
+    }
+}
+fn join_finished(handles: &mut Vec<thread::JoinHandle<()>>) {
+    let mut finished = Vec::new();
+    let mut index = 0;
+    while index < handles.len() {
+        if handles[index].is_finished() {
+            finished.push(handles.swap_remove(index));
+        } else {
+            index += 1;
+        }
+    }
+    for handle in finished {
+        let _ = handle.join();
     }
 }
 fn exit_terminal(t: &Arc<Terminal>, code: Option<i32>) {
@@ -936,6 +982,22 @@ fn exit_terminal(t: &Arc<Terminal>, code: Option<i32>) {
     let terminal = t.clone();
     let workers = t.cleanup_workers.clone();
     let id = t.id;
+    let finished = {
+        let mut handles = workers.lock().unwrap();
+        let mut finished = Vec::new();
+        let mut index = 0;
+        while index < handles.len() {
+            if handles[index].is_finished() {
+                finished.push(handles.swap_remove(index));
+            } else {
+                index += 1;
+            }
+        }
+        finished
+    };
+    for handle in finished {
+        let _ = handle.join();
+    }
     let worker = thread::spawn(move || {
         // Wait for spawn_terminal to finish publishing this terminal.
         drop(registry.lock().unwrap());
