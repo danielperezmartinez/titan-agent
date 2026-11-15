@@ -154,6 +154,7 @@ impl Daemon {
     }
     pub fn run(mut self) -> Result<(), DaemonError> {
         let mut workers = Vec::new();
+        let mut last_poll = std::time::Instant::now();
         while !self.shared.shutdown.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
@@ -182,10 +183,12 @@ impl Daemon {
                 .unwrap()
                 .values()
                 .any(|c| c.subscribed.load(Ordering::Acquire))
+                && last_poll.elapsed() >= self.shared.config.poll_interval
             {
                 poll_sessions(&self.shared);
-                thread::sleep(self.shared.config.poll_interval);
+                last_poll = std::time::Instant::now();
             }
+            thread::sleep(Duration::from_millis(10));
         }
         let clients: Vec<_> = self
             .shared
@@ -198,6 +201,8 @@ impl Daemon {
         for c in &clients {
             let _ = c.stream.shutdown(std::net::Shutdown::Both);
         }
+        self.shared.clients.lock().unwrap().clear();
+        drop(clients);
         let terms: Vec<_> = self
             .shared
             .registry
@@ -239,7 +244,7 @@ fn normalize(mut rows: Vec<Session>, previous: Option<&[Session]>) -> Vec<Sessio
         row.state_since_ms = match old {
             Some(x) if x.state == row.state => x.state_since_ms,
             Some(_) => Some(unix_ms()),
-            None => row.state_since_ms.or_else(|| Some(unix_ms())),
+            None => Some(unix_ms()),
         };
     }
     rows.sort_by(|a, b| a.key.cmp(&b.key));
@@ -451,37 +456,57 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
             cols,
             rows,
         } => open_terminal(m.id, id, session, cols, rows, s, &c),
-        Request::Input { terminal, data } => with_terminal(terminal, s, |t| {
-            let p = t.process.lock().unwrap().clone();
-            match p.and_then(|p| p.write(&data.0).ok().map(|_| p)) {
-                Some(_) => {
-                    send(&c, reply(m.id, Response::Done));
+        Request::Input { terminal, data } => {
+            if !with_terminal(terminal, s, |t| {
+                let p = t.process.lock().unwrap().clone();
+                match p.and_then(|p| p.write(&data.0).ok().map(|_| p)) {
+                    Some(_) => {
+                        send(&c, reply(m.id, Response::Done));
+                    }
+                    None => {
+                        send(
+                            &c,
+                            error(m.id, ErrorCode::Internal, "terminal input queue is full"),
+                        );
+                    }
                 }
-                None => {
-                    send(
-                        &c,
-                        error(m.id, ErrorCode::Internal, "terminal input queue is full"),
-                    );
-                }
+            }) {
+                send(
+                    &c,
+                    error(m.id, ErrorCode::UnknownTerminal, "unknown terminal"),
+                );
             }
-        }),
+        }
         Request::Resize {
             terminal,
             cols,
             rows,
-        } => with_terminal(terminal, s, |t| {
-            let p = t.process.lock().unwrap().clone();
-            if let Some(p) = p {
-                let _ = p.resize(cols, rows);
+        } => {
+            if !with_terminal(terminal, s, |t| {
+                let p = t.process.lock().unwrap().clone();
+                if let Some(p) = p {
+                    let _ = p.resize(cols, rows);
+                }
+                t.state.lock().unwrap().emulator.resize(cols, rows);
+                send(&c, reply(m.id, Response::Done));
+            }) {
+                send(
+                    &c,
+                    error(m.id, ErrorCode::UnknownTerminal, "unknown terminal"),
+                );
             }
-            let mut state = t.state.lock().unwrap();
-            state.emulator.resize(cols, rows);
-            send(&c, reply(m.id, Response::Done));
-        }),
-        Request::Detach { terminal } => with_terminal(terminal, s, |t| {
-            t.state.lock().unwrap().clients.remove(&id);
-            send(&c, reply(m.id, Response::Done));
-        }),
+        }
+        Request::Detach { terminal } => {
+            if !with_terminal(terminal, s, |t| {
+                t.state.lock().unwrap().clients.remove(&id);
+                send(&c, reply(m.id, Response::Done));
+            }) {
+                send(
+                    &c,
+                    error(m.id, ErrorCode::UnknownTerminal, "unknown terminal"),
+                );
+            }
+        }
         Request::CloseTerminal { terminal } => {
             let term = s.registry.lock().unwrap().terminals.get(&terminal).cloned();
             if let Some(t) = term {
@@ -503,13 +528,15 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
     }
     false
 }
-fn with_terminal(id: u64, s: &Shared, f: impl FnOnce(&Arc<Terminal>)) {
+fn with_terminal(id: u64, s: &Shared, f: impl FnOnce(&Arc<Terminal>)) -> bool {
     let t = s.registry.lock().unwrap().terminals.get(&id).cloned();
     if let Some(t) = t
         && !t.state.lock().unwrap().exited
     {
-        f(&t)
+        f(&t);
+        return true;
     }
+    false
 }
 fn open_terminal(
     req: u64,
@@ -546,6 +573,9 @@ fn open_terminal(
             .and_then(|id| registry.terminals.get(id))
             .cloned()
     };
+    let reused = existing
+        .as_ref()
+        .is_some_and(|t| !t.state.lock().unwrap().exited);
     let t = if let Some(t) = existing.filter(|t| !t.state.lock().unwrap().exited) {
         t
     } else {
@@ -598,7 +628,6 @@ fn open_terminal(
         }
         terminal
     };
-    let reused = existing_id_for(s, &key) == Some(t.id);
     let mut state = t.state.lock().unwrap();
     let (actual_cols, actual_rows) = state.emulator.size();
     if !send(
@@ -687,8 +716,4 @@ fn exit_terminal(t: &Terminal, code: Option<i32>) {
             );
         }
     }
-}
-fn existing_id_for(s: &Shared, key: &SessionKey) -> Option<u64> {
-    let r = s.registry.lock().unwrap();
-    r.sessions.get(key).copied()
 }
