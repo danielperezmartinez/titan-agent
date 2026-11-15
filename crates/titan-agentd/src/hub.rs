@@ -7,13 +7,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use titan_agent_core::discovery::link_sessions;
+use titan_agent_core::launch::{LaunchSpec, parse_backgrounded_id};
 use titan_agent_core::protocol::{
-    AttachResult, ClientMessage, Event, HelloResult, PROTOCOL_VERSION, Request, ServerMessage,
-    SourceStatus, TerminalRef, encode_bytes, encode_line,
+    AttachResult, ClientMessage, Event, HelloResult, LaunchRef, LaunchResult, PROTOCOL_VERSION,
+    Request, ServerMessage, SourceStatus, TerminalRef, encode_bytes, encode_line,
 };
 use titan_agent_core::session::{AgentCli, Session, SessionState};
 
@@ -25,6 +26,16 @@ use crate::codex::{CodexClient, socket_path as codex_socket_path};
 const HISTORY_BYTES: usize = 2 * 1024 * 1024;
 /// Largest chunk sent in one `output` event.
 const CHUNK_BYTES: usize = 64 * 1024;
+/// The same agent, folder and brief cannot be launched again within this
+/// time (a double click), whatever the token says.
+const REPEAT_WINDOW: Duration = Duration::from_secs(30);
+/// Longest wait for `claude --bg` to return.
+const CLAUDE_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
+/// How long the provisional session of a Claude Code launch stays in the
+/// tree if the CLI never reports the real one.
+const PROVISIONAL_TTL: Duration = Duration::from_secs(120);
+/// Terminal size of a launched TUI until the interface resizes it.
+const LAUNCH_SIZE: (u16, u16) = (120, 40);
 
 #[derive(Clone)]
 pub struct Config {
@@ -65,6 +76,29 @@ struct State {
     terminals: HashMap<String, Terminal>,
     next_terminal: u64,
     last_snapshot: String,
+    launches: Vec<Launched>,
+    next_launch: u64,
+    /// Every launch token seen, valid or not: a token is good for one click.
+    used_tokens: HashSet<String>,
+    /// Launches that succeeded recently, to refuse a repeat.
+    recent: Vec<(Instant, LaunchSpec)>,
+}
+
+/// A session launched by this daemon (ADR-0002).
+struct Launched {
+    /// Provisional key, `launch:<n>`.
+    key: String,
+    spec: LaunchSpec,
+    at_ms: i64,
+    at: Instant,
+    /// The CLI is still being run (`claude --bg` has not returned).
+    running: bool,
+    /// Id printed by `claude --bg`.
+    cli_id: Option<String>,
+    /// Keys of the sessions known when it was launched.
+    known: HashSet<String>,
+    /// The real session, once discovered.
+    session: Option<String>,
 }
 
 pub fn now_ms() -> i64 {
@@ -99,6 +133,10 @@ impl Hub {
                 terminals: HashMap::new(),
                 next_terminal: 1,
                 last_snapshot: String::new(),
+                launches: Vec::new(),
+                next_launch: 1,
+                used_tokens: HashSet::new(),
+                recent: Vec::new(),
             }),
         })
     }
@@ -313,6 +351,11 @@ impl Hub {
                     );
                 }
             }
+            Request::Launch {
+                token,
+                spec,
+                command,
+            } => self.launch(client, id, token, spec, command),
         }
     }
 
@@ -393,6 +436,51 @@ impl Hub {
             AgentCli::ClaudeCode => self.config.claude.clone(),
             AgentCli::Codex => self.config.codex.clone(),
         };
+        let cwd = if Path::new(&session.cwd).is_dir() {
+            PathBuf::from(&session.cwd)
+        } else {
+            self.config
+                .home
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("/"))
+        };
+        let terminal = self.spawn_terminal(
+            &mut state,
+            key,
+            &program,
+            &argv[1..],
+            &cwd,
+            (cols, rows),
+            client,
+        )?;
+        if let Some(id) = id
+            && let Some(c) = state.clients.get(&client)
+        {
+            let _ = c.tx.send(encode_line(&ServerMessage::result(
+                id,
+                &AttachResult {
+                    terminal,
+                    created: true,
+                },
+            )));
+        }
+        broadcast_snapshot(&mut state, true);
+        Ok(())
+    }
+
+    /// Opens a PTY running `program args` in `cwd` as terminal of `session`,
+    /// with `client` as its first viewer, and starts pumping its output.
+    #[allow(clippy::too_many_arguments)]
+    fn spawn_terminal(
+        self: &Arc<Self>,
+        state: &mut State,
+        session: &str,
+        program: &str,
+        args: &[String],
+        cwd: &Path,
+        (cols, rows): (u16, u16),
+        client: u64,
+    ) -> Result<String, (&'static str, String)> {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -402,15 +490,7 @@ impl Hub {
             })
             .map_err(|error| ("pty_failed", error.to_string()))?;
         let mut command = CommandBuilder::new(program);
-        command.args(&argv[1..]);
-        let cwd = if Path::new(&session.cwd).is_dir() {
-            PathBuf::from(&session.cwd)
-        } else {
-            self.config
-                .home
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("/"))
-        };
+        command.args(args);
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
@@ -445,7 +525,7 @@ impl Hub {
         state.terminals.insert(
             terminal.clone(),
             Terminal {
-                session: key.to_string(),
+                session: session.to_string(),
                 killer: child.clone_killer(),
                 master: pair.master,
                 input,
@@ -454,33 +534,89 @@ impl Hub {
                 size: (cols, rows),
             },
         );
-        if let Some(id) = id
-            && let Some(c) = state.clients.get(&client)
-        {
-            let _ = c.tx.send(encode_line(&ServerMessage::result(
-                id,
-                &AttachResult {
-                    terminal: terminal.clone(),
-                    created: true,
-                },
-            )));
-        }
-        broadcast_snapshot(&mut state, true);
-        drop(state);
-
         let hub = Arc::clone(self);
+        let id = terminal.clone();
         std::thread::spawn(move || {
             let mut buffer = vec![0u8; 16 * 1024];
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) | Err(_) => break,
-                    Ok(n) => hub.output(&terminal, &buffer[..n]),
+                    Ok(n) => hub.output(&id, &buffer[..n]),
                 }
             }
             let exit_code = child.wait().ok().map(|status| status.exit_code());
-            hub.closed(&terminal, exit_code);
+            hub.closed(&id, exit_code);
         });
-        Ok(())
+        Ok(terminal)
+    }
+
+    /// Handles a `launch` request: checks every safeguard of ADR-0002, then
+    /// runs the official CLI once. Answers the client itself.
+    fn launch(
+        self: &Arc<Self>,
+        client: u64,
+        id: Option<u64>,
+        token: String,
+        spec: LaunchSpec,
+        command: String,
+    ) {
+        let mut state = self.lock();
+        let key = match begin_launch(&mut state, token, &spec, &command) {
+            Ok(key) => key,
+            Err((code, text)) => {
+                if let Some(id) = id {
+                    send_to(&state, client, ServerMessage::error(id, code, text));
+                }
+                return;
+            }
+        };
+        rebuild(&mut state);
+        broadcast_snapshot(&mut state, true);
+        let argv = spec.argv();
+        match spec.agent {
+            AgentCli::Codex => {
+                let program = self.config.codex.clone();
+                let spawned = self.spawn_terminal(
+                    &mut state,
+                    &key,
+                    &program,
+                    &argv[1..],
+                    Path::new(&spec.cwd),
+                    LAUNCH_SIZE,
+                    client,
+                );
+                let answer = spawned.map(|terminal| LaunchResult {
+                    launch: key.clone(),
+                    agent: spec.agent,
+                    terminal: Some(terminal),
+                    cli_id: None,
+                });
+                finish_launch(&mut state, &key, answer.as_ref().ok().map(|_| None));
+                if let Some(id) = id {
+                    send_to(&state, client, launch_answer(id, answer));
+                }
+            }
+            AgentCli::ClaudeCode => {
+                drop(state);
+                let hub = Arc::clone(self);
+                std::thread::spawn(move || {
+                    let program = hub.config.claude.clone();
+                    let ran = run_once(&program, &argv[1..], &spec.cwd, CLAUDE_LAUNCH_TIMEOUT);
+                    let answer = ran.map(|output| LaunchResult {
+                        launch: key.clone(),
+                        agent: spec.agent,
+                        terminal: None,
+                        cli_id: parse_backgrounded_id(&output),
+                    });
+                    let mut state = hub.lock();
+                    let cli_id = answer.as_ref().ok().map(|r| r.cli_id.clone());
+                    finish_launch(&mut state, &key, cli_id);
+                    if let Some(id) = id {
+                        send_to(&state, client, launch_answer(id, answer));
+                    }
+                });
+            }
+        }
     }
 
     fn output(&self, terminal: &str, bytes: &[u8]) {
@@ -526,6 +662,7 @@ impl Hub {
                 let _ = c.tx.send(line.clone());
             }
         }
+        rebuild(&mut state);
         broadcast_snapshot(&mut state, true);
     }
 
@@ -589,7 +726,214 @@ fn rebuild(state: &mut State) {
         since.insert(session.key.clone(), (session.state, stamp));
     }
     state.since = since;
+    resolve_launches(state, &mut sessions);
     state.sessions = sessions;
+}
+
+/// Links each launch to the real session once the CLI reports it, moves its
+/// terminal there, and shows a provisional session until then.
+fn resolve_launches(state: &mut State, sessions: &mut Vec<Session>) {
+    let State {
+        launches,
+        terminals,
+        ..
+    } = state;
+    let mut claimed: HashSet<String> = launches.iter().filter_map(|l| l.session.clone()).collect();
+    let mut provisional = Vec::new();
+    for launch in launches.iter_mut() {
+        if launch.session.is_none() {
+            let found = match launch.spec.agent {
+                AgentCli::ClaudeCode => launch.cli_id.as_ref().and_then(|cli_id| {
+                    sessions
+                        .iter()
+                        .find(|s| s.agent == AgentCli::ClaudeCode && &s.cli_id == cli_id)
+                }),
+                AgentCli::Codex => sessions
+                    .iter()
+                    .filter(|s| {
+                        !launch.known.contains(&s.key)
+                            && !claimed.contains(&s.key)
+                            && launch.spec.matches_new_session(s, launch.at_ms)
+                    })
+                    .min_by_key(|s| s.started_at_ms.unwrap_or(i64::MAX)),
+            };
+            if let Some(session) = found {
+                launch.session = Some(session.key.clone());
+                claimed.insert(session.key.clone());
+            }
+        }
+        let has_terminal = |key: &str| terminals.values().any(|t| t.session == key);
+        match &launch.session {
+            Some(real) => {
+                for t in terminals.values_mut().filter(|t| t.session == launch.key) {
+                    t.session = real.clone();
+                }
+            }
+            None => {
+                let alive = match launch.spec.agent {
+                    AgentCli::ClaudeCode => launch.running || launch.at.elapsed() < PROVISIONAL_TTL,
+                    AgentCli::Codex => launch.running || has_terminal(&launch.key),
+                };
+                if alive {
+                    provisional.push(launch.spec.provisional_session(&launch.key, launch.at_ms));
+                }
+            }
+        }
+    }
+    sessions.extend(provisional);
+}
+
+/// Checks a launch request against the safeguards, in the documented order,
+/// and registers it. Returns its provisional key.
+fn begin_launch(
+    state: &mut State,
+    token: String,
+    spec: &LaunchSpec,
+    command: &str,
+) -> Result<String, (&'static str, String)> {
+    // A token is good for one click, even if that click fails.
+    let token_reused = !state.used_tokens.insert(token);
+    spec.validate()
+        .map_err(|error| (error.code(), error.to_string()))?;
+    if !Path::new(&spec.cwd).is_dir() {
+        return Err(("bad_folder", "la carpeta de trabajo no existe".into()));
+    }
+    if command != spec.command_line() {
+        return Err((
+            "command_mismatch",
+            "el comando no es el que muestra el formulario".into(),
+        ));
+    }
+    if token_reused {
+        return Err(("duplicate_launch", "este clic ya lanzó una sesión".into()));
+    }
+    state.recent.retain(|(at, _)| at.elapsed() < REPEAT_WINDOW);
+    let same = |other: &LaunchSpec| {
+        other.agent == spec.agent && other.cwd == spec.cwd && other.brief == spec.brief
+    };
+    let repeated = state.recent.iter().any(|(_, other)| same(other))
+        || state.launches.iter().any(|l| l.running && same(&l.spec));
+    if repeated {
+        return Err((
+            "duplicate_launch",
+            "ya se lanzó este mismo encargo hace un momento".into(),
+        ));
+    }
+    let key = format!("launch:{}", state.next_launch);
+    state.next_launch += 1;
+    let known = state.sessions.iter().map(|s| s.key.clone()).collect();
+    state.launches.push(Launched {
+        key: key.clone(),
+        spec: spec.clone(),
+        at_ms: now_ms(),
+        at: Instant::now(),
+        running: true,
+        cli_id: None,
+        known,
+        session: None,
+    });
+    Ok(key)
+}
+
+/// Records how a launch ended: `Some(cli_id)` on success, `None` on failure
+/// (the launch is forgotten, its token stays used).
+fn finish_launch(state: &mut State, key: &str, outcome: Option<Option<String>>) {
+    match outcome {
+        Some(cli_id) => {
+            if let Some(launch) = state.launches.iter_mut().find(|l| l.key == key) {
+                launch.running = false;
+                launch.cli_id = cli_id;
+                let spec = launch.spec.clone();
+                state.recent.push((Instant::now(), spec));
+            }
+        }
+        None => state.launches.retain(|l| l.key != key),
+    }
+    rebuild(state);
+    broadcast_snapshot(state, true);
+}
+
+fn launch_answer(id: u64, answer: Result<LaunchResult, (&'static str, String)>) -> ServerMessage {
+    match answer {
+        Ok(result) => ServerMessage::result(id, &result),
+        Err((code, text)) => {
+            let code = if code == "launch_failed" {
+                code
+            } else {
+                "launch_failed"
+            };
+            ServerMessage::error(id, code, text)
+        }
+    }
+}
+
+fn send_to(state: &State, client: u64, message: ServerMessage) {
+    if let Some(c) = state.clients.get(&client) {
+        let _ = c.tx.send(encode_line(&message));
+    }
+}
+
+/// Runs a launch command once, without a shell, and returns its output. Its
+/// output goes to temporary files, not pipes: `claude --bg` leaves a
+/// background process behind that could keep a pipe open.
+fn run_once(
+    program: &str,
+    args: &[String],
+    cwd: &str,
+    timeout: Duration,
+) -> Result<String, (&'static str, String)> {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let base = std::env::temp_dir().join(format!("titan-agentd-launch-{}-{n}", std::process::id()));
+    let failed = |text: String| ("launch_failed", text);
+    let out_path = base.with_extension("out");
+    let out = std::fs::File::create(&out_path).map_err(|e| failed(e.to_string()))?;
+    let err = out.try_clone().map_err(|e| failed(e.to_string()))?;
+    let spawned = Command::new(program)
+        .args(args)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::null())
+        .stdout(out)
+        .stderr(err)
+        .spawn();
+    let result = (|| {
+        let mut child =
+            spawned.map_err(|e| failed(format!("no se pudo ejecutar {program}: {e}")))?;
+        let start = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if start.elapsed() > timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(failed(format!(
+                        "{program} no terminó en {} s",
+                        timeout.as_secs()
+                    )));
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+                Err(e) => return Err(failed(e.to_string())),
+            }
+        };
+        let output = std::fs::read_to_string(&out_path).unwrap_or_default();
+        if status.success() {
+            Ok(output)
+        } else {
+            let said: Vec<&str> = output
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .take(3)
+                .collect();
+            Err(failed(if said.is_empty() {
+                format!("{program} terminó con {status}")
+            } else {
+                said.join(" · ")
+            }))
+        }
+    })();
+    let _ = std::fs::remove_file(&out_path);
+    result
 }
 
 fn snapshot(state: &State) -> ServerMessage {
@@ -602,10 +946,19 @@ fn snapshot(state: &State) -> ServerMessage {
         })
         .collect();
     terminals.sort_by(|a, b| a.terminal.cmp(&b.terminal));
+    let launches = state
+        .launches
+        .iter()
+        .map(|l| LaunchRef {
+            launch: l.key.clone(),
+            session: l.session.clone(),
+        })
+        .collect();
     ServerMessage::Event(Event::Sessions {
         sessions: state.sessions.clone(),
         sources: state.sources.to_vec(),
         terminals,
+        launches,
     })
 }
 
@@ -638,4 +991,68 @@ fn open_folder(cwd: &str) -> Result<(), String> {
             std::thread::spawn(move || child.wait());
         })
         .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use titan_agent_core::launch::LaunchSpec;
+
+    fn hub() -> Arc<Hub> {
+        Hub::new(Config {
+            claude: "claude".into(),
+            codex: "codex".into(),
+            poll: Duration::from_secs(1),
+            home: None,
+        })
+    }
+
+    fn codex_thread(key: &str, cwd: &str, started_at_ms: i64) -> Session {
+        LaunchSpec {
+            agent: AgentCli::Codex,
+            cwd: cwd.into(),
+            model: "gpt-6-luna".into(),
+            effort: "low".into(),
+            permission: "read-only".into(),
+            brief: "x".into(),
+        }
+        .provisional_session(key, started_at_ms)
+    }
+
+    #[test]
+    fn codex_launch_resolves_to_the_new_thread_in_its_folder() {
+        let hub = hub();
+        let old = codex_thread("cx:old", "/srv/demo/kite", now_ms() - 60_000);
+        hub.set_source(AgentCli::Codex, Ok(vec![old.clone()]));
+        let spec = LaunchSpec {
+            agent: AgentCli::Codex,
+            cwd: "/srv/demo/kite".into(),
+            model: "gpt-6-luna".into(),
+            effort: "low".into(),
+            permission: "read-only".into(),
+            brief: "nuevo".into(),
+        };
+        {
+            let mut state = hub.lock();
+            state.launches.push(Launched {
+                key: "launch:1".into(),
+                spec,
+                at_ms: now_ms(),
+                at: Instant::now(),
+                running: true,
+                cli_id: None,
+                known: HashSet::from(["cx:old".to_string()]),
+                session: None,
+            });
+            rebuild(&mut state);
+            assert!(state.sessions.iter().any(|s| s.key == "launch:1"));
+        }
+        // A thread in another folder and the old one do not match.
+        let other = codex_thread("cx:other", "/srv/demo/else", now_ms());
+        let new = codex_thread("cx:new", "/srv/demo/kite/", now_ms());
+        hub.set_source(AgentCli::Codex, Ok(vec![old, other, new]));
+        let state = hub.lock();
+        assert_eq!(state.launches[0].session.as_deref(), Some("cx:new"));
+        assert!(!state.sessions.iter().any(|s| s.key == "launch:1"));
+    }
 }
