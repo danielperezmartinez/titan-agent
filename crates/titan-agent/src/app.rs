@@ -1646,10 +1646,17 @@ impl MainView {
                                 div()
                                     .flex_1()
                                     .min_w(px(0.))
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_x(px(6.6))
                                     .text_color(color(theme::MUTE))
-                                    .child(command.unwrap_or_else(|| {
-                                        "elige la carpeta de trabajo con [#] o [d]".into()
-                                    })),
+                                    .children(
+                                        command_groups(&command.unwrap_or_else(|| {
+                                            "elige la carpeta de trabajo con [#] o [d]".into()
+                                        }))
+                                        .into_iter()
+                                        .map(|group| div().min_w(px(0.)).child(group)),
+                                    ),
                             ),
                     )
                     .when_some(self.new.error.clone(), |d, error| {
@@ -1797,7 +1804,7 @@ impl MainView {
                 .flex()
                 .items_center()
                 .gap(px(4.))
-                .child(label("agente".into(), theme::MUTE))
+                .child(label("agente por defecto".into(), theme::MUTE))
                 .child(chip(
                     "default-agent",
                     default_agent.tag(),
@@ -1836,7 +1843,24 @@ impl MainView {
                     .flex_wrap()
                     .items_center()
                     .gap(px(4.))
-                    .child(label(agent.to_string(), theme::agent_color(agent)))
+                    .child(
+                        div()
+                            .w(px(160.))
+                            .flex_none()
+                            .flex()
+                            .gap(px(8.))
+                            .text_size(px(12.))
+                            .child(
+                                div()
+                                    .text_color(color(theme::agent_color(agent)))
+                                    .child(agent.tag()),
+                            )
+                            .child(
+                                div()
+                                    .text_color(color(theme::MUTE))
+                                    .child(agent.to_string()),
+                            ),
+                    )
                     .child(chip(
                         ids[0],
                         "",
@@ -1937,8 +1961,9 @@ impl MainView {
                             .bg(color(theme::CANVAS))
                             .child(
                                 div()
-                                    .text_size(px(11.))
-                                    .text_color(color(theme::STONE))
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .text_color(color(theme::INK))
                                     .child("NUEVA SESIÓN · VALORES POR DEFECTO"),
                             )
                             .children(rows),
@@ -2084,6 +2109,37 @@ fn menu_list(title: &'static str, items: Vec<MenuItem>, cx: &mut Context<MainVie
                 .child(div().flex_grow_1().child(item.label))
                 .child(div().text_color(color(theme::MUTE)).child(item.hint))
         }))
+}
+
+/// Splits a command line for display so it wraps before an option, never
+/// between an option and its value: a group starts at every word that
+/// begins with `-` or is `&&`, outside quotes. Joined with single spaces
+/// the groups are the line again.
+fn command_groups(line: &str) -> Vec<String> {
+    let mut groups: Vec<String> = Vec::new();
+    let mut quoted = false;
+    let mut word_start = true;
+    let mut current = String::new();
+    for c in line.chars() {
+        if c == '\'' {
+            quoted = !quoted;
+        }
+        if !quoted && c == ' ' {
+            word_start = true;
+            current.push(c);
+            continue;
+        }
+        if word_start && !quoted && (c == '-' || c == '&') && !current.trim().is_empty() {
+            groups.push(current.trim_end().to_string());
+            current.clear();
+        }
+        word_start = false;
+        current.push(c);
+    }
+    if !current.trim().is_empty() {
+        groups.push(current.trim_end().to_string());
+    }
+    groups
 }
 
 /// A launch token: unique per click, so the daemon refuses a request sent
@@ -2277,4 +2333,27 @@ fn not_attachable(session: &Session) -> Div {
                 .text_size(px(13.))
                 .child(line)
         }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::command_groups;
+
+    #[test]
+    fn command_groups_keep_options_with_their_values() {
+        let line = "cd /srv/demo/kite && claude --bg -n 'kite: a -b c' --model opus -- 'x --y'";
+        let groups = command_groups(line);
+        assert_eq!(
+            groups,
+            [
+                "cd /srv/demo/kite",
+                "&& claude",
+                "--bg",
+                "-n 'kite: a -b c'",
+                "--model opus",
+                "-- 'x --y'"
+            ]
+        );
+        assert_eq!(groups.join(" "), line);
+    }
 }

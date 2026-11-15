@@ -817,9 +817,15 @@ impl Element for BriefElement {
                 window.paint_quad(quad);
             }
             self.input.update(cx, |input, cx| {
+                // The placeholder starts after the caret instead of under it.
+                let indent = if input.content.text.is_empty() {
+                    px(4.)
+                } else {
+                    px(0.)
+                };
                 for laid in &input.lines {
                     let _ = laid.line.paint(
-                        origin + point(px(0.), laid.top),
+                        origin + point(indent, laid.top),
                         px(LINE_HEIGHT),
                         gpui::TextAlign::Left,
                         Some(bounds),

@@ -871,6 +871,28 @@ fn finish_launch(state: &mut State, key: &str, outcome: Option<Option<String>>) 
     broadcast_snapshot(state, true);
 }
 
+/// Spanish explanation of a failed launch, followed by what the CLI said
+/// (its first lines, untranslated).
+fn failure_message(output: &str, status: &str) -> String {
+    let said: Vec<&str> = output
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(3)
+        .collect();
+    if said.is_empty() {
+        return format!("el CLI terminó con {status} sin decir por qué");
+    }
+    let said = said.join(" · ");
+    if said.contains("Workspace not trusted") {
+        format!(
+            "Claude Code aún no confía en esta carpeta: abre `claude` una vez en ella, acepta el aviso y vuelve a lanzar. (CLI: {said})"
+        )
+    } else {
+        format!("el CLI no lanzó la sesión: {said}")
+    }
+}
+
 fn launch_answer(id: u64, answer: Result<LaunchResult, (&'static str, String)>) -> ServerMessage {
     match answer {
         Ok(result) => ServerMessage::result(id, &result),
@@ -937,17 +959,7 @@ fn run_once(
         if status.success() {
             Ok(output)
         } else {
-            let said: Vec<&str> = output
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .take(3)
-                .collect();
-            Err(failed(if said.is_empty() {
-                format!("{program} terminó con {status}")
-            } else {
-                said.join(" · ")
-            }))
+            Err(failed(failure_message(&output, &status.to_string())))
         }
     })();
     let _ = std::fs::remove_file(&out_path);
@@ -1035,6 +1047,18 @@ mod tests {
             brief: "x".into(),
         }
         .provisional_session(key, started_at_ms)
+    }
+
+    #[test]
+    fn failures_are_explained_in_spanish_with_the_cli_text() {
+        let trust = failure_message("Workspace not trusted. Run `claude` in /x once.\n", "1");
+        assert!(trust.starts_with("Claude Code aún no confía"));
+        assert!(trust.contains("Workspace not trusted"));
+        assert_eq!(
+            failure_message("\n boom \n", "1"),
+            "el CLI no lanzó la sesión: boom"
+        );
+        assert!(failure_message("", "exit status: 3").contains("exit status: 3"));
     }
 
     #[test]
