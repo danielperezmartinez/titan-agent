@@ -458,3 +458,167 @@ fn stop_reports_command_io_failure() {
         )]
     );
 }
+
+fn app_server_thread(id: &str, cwd: &str) -> Value {
+    json!({
+        "id": id,
+        "name": "Fictional review",
+        "status": {"type": "idle"},
+        "cwd": cwd,
+        "createdAt": 1790000000_i64,
+        "model": "gpt-5",
+        "parentThreadId": null,
+        "source": "cli",
+        "preview": "Review a fictional project"
+    })
+}
+
+#[test]
+fn loaded_threads_follows_cursors_and_skips_a_thread_read_error() {
+    let first = app_server_thread("thread-first", "/srv/fictional/first");
+    let last = app_server_thread("thread-last", "/srv/fictional/last");
+    let expected = vec![first.clone(), last.clone()];
+    let (_dir, path, handle) = server(move |mut stream| {
+        initialize(&mut stream);
+        let mut pages = 0;
+        let mut reads = Vec::new();
+        let mut ids = std::collections::HashSet::new();
+        // Accept either reading each page immediately or collecting all IDs first.
+        for _ in 0..5 {
+            let call = request(&mut stream);
+            let id = call["id"].as_u64().expect("request must have a numeric id");
+            assert!(id > 1 && ids.insert(id), "request IDs must be unique");
+            match call["method"].as_str().unwrap() {
+                "thread/loaded/list" => {
+                    let result = match pages {
+                        0 => {
+                            assert_eq!(call["params"], json!({}));
+                            json!({"data":["thread-first","thread-unreadable"],"nextCursor":"fictional-page-two"})
+                        }
+                        1 => {
+                            assert_eq!(call["params"], json!({"cursor":"fictional-page-two"}));
+                            json!({"data":["thread-last"],"nextCursor":null})
+                        }
+                        _ => panic!("unexpected list page"),
+                    };
+                    pages += 1;
+                    send(&mut stream, json!({"id":id,"result":result}));
+                }
+                "thread/read" => {
+                    let thread_id = call["params"]["threadId"].as_str().unwrap();
+                    assert_eq!(
+                        call["params"],
+                        json!({"threadId":thread_id,"includeTurns":false})
+                    );
+                    assert!(pages >= 1);
+                    match thread_id {
+                        "thread-first" => {
+                            send(&mut stream, json!({"id":id,"result":{"thread":first}}));
+                        }
+                        "thread-unreadable" => send(
+                            &mut stream,
+                            json!({"id":id,"error":{"code":-32600,"message":"fictional thread unavailable"}}),
+                        ),
+                        "thread-last" => {
+                            assert_eq!(pages, 2);
+                            send(&mut stream, json!({"id":id,"result":{"thread":last}}));
+                        }
+                        _ => panic!("unexpected thread ID"),
+                    }
+                    reads.push(thread_id.to_owned());
+                }
+                _ => panic!("unexpected app-server method"),
+            }
+        }
+        assert_eq!(pages, 2);
+        reads.sort();
+        assert_eq!(reads, ["thread-first", "thread-last", "thread-unreadable"]);
+    });
+    let mut rpc = CodexRpc::connect(&path, TIMEOUT).unwrap();
+    let threads = rpc.loaded_threads(TIMEOUT).unwrap();
+    assert_eq!(threads.len(), expected.len());
+    for thread in expected {
+        assert!(threads.contains(&thread));
+    }
+    handle.join().unwrap();
+}
+
+#[test]
+fn poll_combines_sources_and_keeps_codex_when_claude_fails_or_returns_invalid_json() {
+    let dir = TempDir::new();
+    let repo = dir.path().join("fictional-repository");
+    let cwd = repo.join("nested");
+    fs::create_dir_all(repo.join(".git")).unwrap();
+    fs::create_dir_all(&cwd).unwrap();
+    let home = dir.path().join("claude");
+    let transcripts = home.join("projects/fictional-project");
+    fs::create_dir_all(&transcripts).unwrap();
+    fs::write(
+        transcripts.join("transcript-example.jsonl"),
+        transcript("claude-opus-5-5"),
+    )
+    .unwrap();
+    let input = agents(cwd.to_str().unwrap());
+    let thread = app_server_thread("thread-combined", cwd.to_str().unwrap());
+    let parsed = parse_codex_thread(&thread).unwrap();
+    let codex = codex_session(
+        &parsed,
+        project_for(&parsed.cwd, |path| {
+            std::path::Path::new(path).join(".git").exists()
+        }),
+    )
+    .unwrap();
+    let (_socket_dir, path, handle) = server(move |mut stream| {
+        initialize(&mut stream);
+        for _ in 0..3 {
+            let list = request(&mut stream);
+            assert_eq!(list["method"], "thread/loaded/list");
+            assert_eq!(list["params"], json!({}));
+            send(
+                &mut stream,
+                json!({"id":list["id"],"result":{"data":["thread-combined"],"nextCursor":null}}),
+            );
+            let read = request(&mut stream);
+            assert_eq!(read["method"], "thread/read");
+            assert_eq!(
+                read["params"],
+                json!({"threadId":"thread-combined","includeTurns":false})
+            );
+            send(
+                &mut stream,
+                json!({"id":read["id"],"result":{"thread":thread}}),
+            );
+        }
+    });
+    let (mut live, calls) = source(
+        Some(home),
+        Some(path),
+        vec![
+            output(true, &input, ""),
+            output(false, &input, "fictional Claude failure"),
+            output(true, "invalid json", ""),
+        ],
+    );
+    let mut expected = expected_claude(&input, Some("opus"));
+    assert!(!expected.is_empty());
+    expected.push(codex.clone());
+    let sessions = live.poll();
+    assert_eq!(sessions.len(), expected.len());
+    for session in expected {
+        assert!(sessions.contains(&session));
+    }
+    for _ in 0..2 {
+        assert_eq!(live.poll(), vec![codex.clone()]);
+    }
+    assert_eq!(
+        *calls.lock().unwrap(),
+        vec![
+            (
+                vec!["claude".into(), "agents".into(), "--json".into()],
+                TIMEOUT
+            );
+            3
+        ]
+    );
+    handle.join().unwrap();
+}
