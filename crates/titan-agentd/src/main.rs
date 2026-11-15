@@ -2,8 +2,9 @@ use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use std::thread;
 use titan_agent_core::paths::{SOCKET_ENV, socket_path};
+use titan_agentd::discover::{LiveSource, SourceConfig, SystemRunner};
 use titan_agentd::server::{Daemon, DaemonConfig, DaemonError};
-use titan_agentd::source::{EmptySource, FixtureSource, SessionSource};
+use titan_agentd::source::{FixtureSource, SessionSource};
 
 fn main() {
     if let Err(code) = run() {
@@ -49,7 +50,10 @@ fn run() -> Result<(), i32> {
                 return Err(1);
             }
         },
-        None => Box::new(EmptySource),
+        None => Box::new(LiveSource::new(
+            SourceConfig::from_env(),
+            Box::new(SystemRunner),
+        )),
     };
     let daemon = match Daemon::bind(DaemonConfig::new(socket), source) {
         Ok(d) => d,
