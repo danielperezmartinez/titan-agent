@@ -1145,13 +1145,12 @@ impl Render for MainWindow {
                 .gap(px(16.0))
                 .border_l_1()
                 .border_color(rgb(theme::HAIRLINE_STRONG))
-                .text_size(px(12.0))
-                .child(Self::text("DETALLE", 12.0, theme::MUTE));
+                .text_size(px(12.0));
             let detail_panel = if let Some(detail) = detail {
                 let key_project = session.project.clone();
                 let mut talk_cards = div()
                     .id("detail-talks")
-                    .flex_1()
+                    .flex_initial()
                     .min_h(px(0.0))
                     .overflow_y_scroll()
                     .flex()
@@ -1193,7 +1192,12 @@ impl Render for MainWindow {
                         );
                     }
                 }
-                detail_panel
+                let top = div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(16.0))
+                    .child(Self::text("DETALLE", 12.0, theme::MUTE))
                     .child(
                         div()
                             .grid()
@@ -1208,21 +1212,21 @@ impl Render for MainWindow {
                             .child(Self::text("estado desde", 12.0, theme::MUTE))
                             .child(Self::text(detail.since, 12.0, theme::BODY)),
                     )
-                    .child(Self::text("HABLA CON", 12.0, theme::MUTE))
-                    .child(talk_cards)
-                    .child(
-                        Self::text("[>] ver el monitor del proyecto", 12.0, theme::ACCENT)
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener(move |this, _, _, cx| {
-                                    this.focused_session = None;
-                                    this.selection = Some(Selection::Project(key_project.clone()));
-                                    cx.notify();
-                                }),
-                            ),
-                    )
+                    .child(Self::text("HABLA CON", 12.0, theme::MUTE));
+                detail_panel.child(top).child(talk_cards).child(
+                    Self::text("[>] ver el monitor del proyecto", 12.0, theme::ACCENT)
+                        .flex_none()
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.focused_session = None;
+                                this.selection = Some(Selection::Project(key_project.clone()));
+                                cx.notify();
+                            }),
+                        ),
+                )
             } else {
-                detail_panel
+                detail_panel.child(Self::text("DETALLE", 12.0, theme::MUTE).flex_none())
             };
             let open_path = Path::new(&session.cwd).to_path_buf();
             let stopped_key = session.key.clone();
