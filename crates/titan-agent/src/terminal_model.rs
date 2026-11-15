@@ -94,7 +94,14 @@ impl TerminalModel {
         let rows = rows.max(1);
         let size = alacritty_terminal::term::test::TermSize::new(cols.into(), rows.into());
         Self {
-            term: Term::new(Config::default(), &size, SilentListener),
+            term: Term::new(
+                Config {
+                    scrolling_history: 10_000,
+                    ..Config::default()
+                },
+                &size,
+                SilentListener,
+            ),
             processor: ansi::Processor::new(),
             cols,
             rows,
@@ -108,23 +115,7 @@ impl TerminalModel {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
-        // Alacritty interprets SGR 21 as “bold off”; this model follows the
-        // terminal convention where it enables double underline.
-        let rewritten = if bytes.windows(5).any(|window| window == b"\x1b[21m") {
-            let mut output = Vec::with_capacity(bytes.len());
-            let mut rest = bytes;
-            while let Some(index) = rest.windows(5).position(|window| window == b"\x1b[21m") {
-                output.extend_from_slice(&rest[..index]);
-                output.extend_from_slice(b"\x1b[4:2m");
-                rest = &rest[index + 5..];
-            }
-            output.extend_from_slice(rest);
-            Some(output)
-        } else {
-            None
-        };
-        self.processor
-            .advance(&mut self.term, rewritten.as_deref().unwrap_or(bytes));
+        self.processor.advance(&mut self.term, bytes);
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
@@ -186,7 +177,7 @@ impl TerminalModel {
                     1
                 };
                 let text = if cell.flags.contains(Flags::HIDDEN) {
-                    " ".to_owned()
+                    " ".repeat(usize::from(width))
                 } else {
                     let mut value = cell.c.to_string();
                     if let Some(zerowidth) = cell.zerowidth() {
