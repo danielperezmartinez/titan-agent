@@ -1,4 +1,4 @@
-use crate::pty::{PtyHandler, PtyProcess, PtySpawn};
+use crate::pty::{PtyError, PtyHandler, PtyProcess, PtySpawn};
 use crate::snapshot::Emulator;
 use crate::source::{SessionSource, StopError};
 use std::collections::{HashMap, HashSet};
@@ -68,16 +68,19 @@ impl ShutdownHandle {
 }
 
 struct Client {
+    id: u64,
     tx: Mutex<Option<SyncSender<Vec<u8>>>>,
     stream: UnixStream,
     subscribed: AtomicBool,
     writer_done: Arc<AtomicBool>,
 }
 type Clients = Arc<Mutex<HashMap<u64, Arc<Client>>>>;
+type Connections = Arc<Mutex<Vec<Arc<Client>>>>;
 struct TermState {
     emulator: Emulator,
     clients: HashSet<u64>,
     exited: bool,
+    pending_replies: Vec<Vec<u8>>,
 }
 struct Terminal {
     id: u64,
@@ -85,6 +88,8 @@ struct Terminal {
     process: Mutex<Option<Arc<PtyProcess>>>,
     grace: Duration,
     clients: Clients,
+    registry: Arc<Mutex<Registry>>,
+    cleanup_workers: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
 }
 struct Registry {
     terminals: HashMap<TerminalId, Arc<Terminal>>,
@@ -94,15 +99,17 @@ struct Registry {
 }
 struct Shared {
     clients: Clients,
-    registry: Mutex<Registry>,
+    connections: Connections,
+    registry: Arc<Mutex<Registry>>,
     sessions: Mutex<Vec<Session>>,
     source: Mutex<Box<dyn SessionSource>>,
     shutdown: Arc<AtomicBool>,
     discovery: (Mutex<DiscoveryState>, Condvar),
     config: DaemonConfig,
+    cleanup_workers: Arc<Mutex<Vec<thread::JoinHandle<()>>>>,
 }
 struct DiscoveryState {
-    subscribed: bool,
+    subscribers: HashSet<u64>,
     requested: bool,
 }
 pub struct Daemon {
@@ -143,18 +150,20 @@ impl Daemon {
         let socket = config.socket.clone();
         let shared = Arc::new(Shared {
             clients: Arc::new(Mutex::new(HashMap::new())),
-            registry: Mutex::new(Registry {
+            connections: Arc::new(Mutex::new(Vec::new())),
+            cleanup_workers: Arc::new(Mutex::new(Vec::new())),
+            registry: Arc::new(Mutex::new(Registry {
                 terminals: HashMap::new(),
                 sessions: HashMap::new(),
                 next: 1,
                 closed: false,
-            }),
+            })),
             sessions: Mutex::new(sessions),
             source: Mutex::new(source),
             shutdown: Arc::new(AtomicBool::new(false)),
             discovery: (
                 Mutex::new(DiscoveryState {
-                    subscribed: false,
+                    subscribers: HashSet::new(),
                     requested: false,
                 }),
                 Condvar::new(),
@@ -191,6 +200,7 @@ impl Daemon {
                         }
                     };
                     let client = Arc::new(Client {
+                        id,
                         tx: Mutex::new(Some(tx)),
                         stream: match stream.try_clone() {
                             Ok(v) => v,
@@ -202,8 +212,16 @@ impl Daemon {
                         subscribed: AtomicBool::new(false),
                         writer_done: writer_done.clone(),
                     });
-                    self.shared.clients.lock().unwrap().insert(id, client);
-                    workers.push(thread::spawn(move || writer_loop(writer, rx, writer_done)));
+                    self.shared
+                        .clients
+                        .lock()
+                        .unwrap()
+                        .insert(id, client.clone());
+                    self.shared.connections.lock().unwrap().push(client);
+                    let connections = self.shared.connections.clone();
+                    workers.push(thread::spawn(move || {
+                        writer_loop(writer, rx, writer_done, id, connections)
+                    }));
                     let s = self.shared.clone();
                     workers.push(thread::spawn(move || client_loop(stream, id, s)));
                 }
@@ -225,18 +243,14 @@ impl Daemon {
             lock.lock().unwrap().requested = true;
             cv.notify_all();
         }
-        let clients: Vec<_> = self
-            .shared
-            .clients
-            .lock()
-            .unwrap()
-            .values()
-            .cloned()
-            .collect();
+        let clients = self.shared.connections.lock().unwrap().clone();
         for c in &clients {
             c.tx.lock().unwrap().take();
         }
         self.shared.clients.lock().unwrap().clear();
+        let (dlock, dcv) = &self.shared.discovery;
+        dlock.lock().unwrap().subscribers.clear();
+        dcv.notify_all();
         let drain_deadline = std::time::Instant::now() + Duration::from_secs(1);
         while clients
             .iter()
@@ -271,6 +285,9 @@ impl Daemon {
             let _ = h.join();
         }
         for h in workers {
+            let _ = h.join();
+        }
+        for h in self.shared.cleanup_workers.lock().unwrap().drain(..) {
             let _ = h.join();
         }
         let _ = discovery_thread.join();
@@ -325,7 +342,13 @@ fn error(id: u64, c: ErrorCode, m: &str) -> ServerMessage {
         },
     }
 }
-fn writer_loop(mut stream: UnixStream, rx: mpsc::Receiver<Vec<u8>>, done: Arc<AtomicBool>) {
+fn writer_loop(
+    mut stream: UnixStream,
+    rx: mpsc::Receiver<Vec<u8>>,
+    done: Arc<AtomicBool>,
+    id: u64,
+    connections: Connections,
+) {
     for bytes in rx {
         if stream.write_all(&bytes).is_err() {
             break;
@@ -333,6 +356,7 @@ fn writer_loop(mut stream: UnixStream, rx: mpsc::Receiver<Vec<u8>>, done: Arc<At
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
     done.store(true, Ordering::Release);
+    connections.lock().unwrap().retain(|client| client.id != id);
 }
 fn client_loop(stream: UnixStream, id: u64, shared: Arc<Shared>) {
     let mut reader = BufReader::new(stream);
@@ -424,7 +448,20 @@ fn client_loop(stream: UnixStream, id: u64, shared: Arc<Shared>) {
     cleanup_client(id, &shared);
 }
 fn cleanup_client(id: u64, s: &Shared) {
-    s.clients.lock().unwrap().remove(&id);
+    let client = s.clients.lock().unwrap().remove(&id);
+    if let Some(c) = &client {
+        c.tx.lock().unwrap().take();
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while !c.writer_done.load(Ordering::Acquire) && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        if !c.writer_done.load(Ordering::Acquire) {
+            let _ = c.stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
+    let (lock, cv) = &s.discovery;
+    lock.lock().unwrap().subscribers.remove(&id);
+    cv.notify_all();
     let terms: Vec<_> = s
         .registry
         .lock()
@@ -439,6 +476,7 @@ fn cleanup_client(id: u64, s: &Shared) {
 }
 fn poll_sessions(s: &Shared) {
     let raw = { s.source.lock().unwrap().poll() };
+    let _discovery = s.discovery.0.lock().unwrap();
     let mut current = s.sessions.lock().unwrap();
     let next = normalize(raw, Some(&current));
     if *current != next {
@@ -464,14 +502,17 @@ fn discovery_loop(s: Arc<Shared>) {
     loop {
         let (lock, cv) = &s.discovery;
         let mut state = lock.lock().unwrap();
-        while !state.subscribed && !state.requested && !s.shutdown.load(Ordering::Acquire) {
+        while state.subscribers.is_empty()
+            && !state.requested
+            && !s.shutdown.load(Ordering::Acquire)
+        {
             state = cv.wait(state).unwrap();
         }
         if s.shutdown.load(Ordering::Acquire) {
             return;
         }
         let immediate = std::mem::take(&mut state.requested);
-        if !immediate && state.subscribed {
+        if !immediate && !state.subscribers.is_empty() {
             let (next, _) = cv.wait_timeout(state, s.config.poll_interval).unwrap();
             state = next;
             if s.shutdown.load(Ordering::Acquire) {
@@ -482,7 +523,7 @@ fn discovery_loop(s: Arc<Shared>) {
                 poll_sessions(&s);
                 continue;
             }
-            if !state.subscribed {
+            if state.subscribers.is_empty() {
                 continue;
             }
         }
@@ -496,12 +537,15 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
     let Some(c) = c else { return true };
     match m.request {
         Request::Subscribe => {
+            let (lock, cv) = &s.discovery;
+            let mut discovery = lock.lock().unwrap();
             let sessions = s.sessions.lock().unwrap();
             let rows = sessions.clone();
             send(&c, reply(m.id, Response::Sessions { sessions: rows }));
             c.subscribed.store(true, Ordering::Release);
-            let (lock, cv) = &s.discovery;
-            lock.lock().unwrap().subscribed = true;
+            if discovery.subscribers.insert(id) {
+                discovery.requested = true;
+            }
             cv.notify_all();
         }
         Request::Shutdown => {
@@ -548,24 +592,43 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
             rows,
         } => open_terminal(m.id, id, session, cols, rows, s, &c),
         Request::Input { terminal, data } => {
-            if !with_terminal(terminal, s, |t| {
+            let mut result = None;
+            let exists = with_terminal(terminal, s, |t| {
                 let p = t.process.lock().unwrap().clone();
-                match p.and_then(|p| p.write(&data.0).ok().map(|_| p)) {
-                    Some(_) => {
+                result = Some(match p {
+                    Some(p) => p.write(&data.0),
+                    None => Err(PtyError::Closed),
+                });
+            });
+            if !exists {
+                send(
+                    &c,
+                    error(m.id, ErrorCode::UnknownTerminal, "unknown terminal"),
+                );
+            } else if let Some(result) = result {
+                match result {
+                    Ok(()) => {
                         send(&c, reply(m.id, Response::Done));
                     }
-                    None => {
+                    Err(PtyError::Closed) => {
+                        send(
+                            &c,
+                            error(m.id, ErrorCode::UnknownTerminal, "unknown terminal"),
+                        );
+                    }
+                    Err(PtyError::QueueFull) => {
                         send(
                             &c,
                             error(m.id, ErrorCode::Internal, "terminal input queue is full"),
                         );
                     }
+                    Err(_) => {
+                        send(
+                            &c,
+                            error(m.id, ErrorCode::Internal, "terminal input failed"),
+                        );
+                    }
                 }
-            }) {
-                send(
-                    &c,
-                    error(m.id, ErrorCode::UnknownTerminal, "unknown terminal"),
-                );
             }
         }
         Request::Resize {
@@ -765,10 +828,13 @@ fn spawn_terminal(
             emulator: Emulator::new(cols, rows, 1000),
             clients: HashSet::new(),
             exited: false,
+            pending_replies: Vec::new(),
         }),
         process: Mutex::new(None),
         grace: s.config.kill_grace,
         clients: s.clients.clone(),
+        registry: s.registry.clone(),
+        cleanup_workers: s.cleanup_workers.clone(),
     });
     let handler = TerminalHandler {
         terminal: terminal.clone(),
@@ -787,7 +853,15 @@ fn spawn_terminal(
         handler,
     ) {
         Ok(p) => {
-            *terminal.process.lock().unwrap() = Some(Arc::new(p));
+            let p = Arc::new(p);
+            let replies = {
+                let mut state = terminal.state.lock().unwrap();
+                *terminal.process.lock().unwrap() = Some(p.clone());
+                std::mem::take(&mut state.pending_replies)
+            };
+            for reply in replies {
+                let _ = p.write(&reply);
+            }
             reg.sessions.insert(key, id);
             reg.terminals.insert(id, terminal.clone());
             Ok(terminal)
@@ -805,6 +879,15 @@ impl PtyHandler for TerminalHandler {
             return;
         }
         let replies = state.emulator.feed(bytes);
+        let process = if replies.is_empty() {
+            None
+        } else {
+            let process = self.terminal.process.lock().unwrap().clone();
+            if process.is_none() {
+                state.pending_replies.push(replies.clone());
+            }
+            process
+        };
         let ids = state.clients.clone();
         for id in ids {
             if let Some(client) = self.terminal.clients.lock().unwrap().get(&id) {
@@ -820,18 +903,15 @@ impl PtyHandler for TerminalHandler {
             }
         }
         drop(state);
-        let process = self.terminal.process.lock().unwrap().clone();
-        if !replies.is_empty()
-            && let Some(p) = process
-        {
-            let _ = p.write(&replies);
+        if let Some(process) = process {
+            let _ = process.write(&replies);
         }
     }
     fn exited(&mut self) {
         exit_terminal(&self.terminal, None)
     }
 }
-fn exit_terminal(t: &Terminal, code: Option<i32>) {
+fn exit_terminal(t: &Arc<Terminal>, code: Option<i32>) {
     let mut st = t.state.lock().unwrap();
     if st.exited {
         return;
@@ -852,4 +932,26 @@ fn exit_terminal(t: &Terminal, code: Option<i32>) {
             );
         }
     }
+    let registry = t.registry.clone();
+    let terminal = t.clone();
+    let workers = t.cleanup_workers.clone();
+    let id = t.id;
+    let worker = thread::spawn(move || {
+        // Wait for spawn_terminal to finish publishing this terminal.
+        drop(registry.lock().unwrap());
+        let process = terminal.process.lock().unwrap().clone();
+        if let Some(process) = process {
+            process.kill(Duration::ZERO);
+        }
+        let mut registry = registry.lock().unwrap();
+        if registry
+            .terminals
+            .get(&id)
+            .is_some_and(|item| item.state.lock().unwrap().exited)
+        {
+            registry.terminals.remove(&id);
+            registry.sessions.retain(|_, terminal| *terminal != id);
+        }
+    });
+    workers.lock().unwrap().push(worker);
 }
