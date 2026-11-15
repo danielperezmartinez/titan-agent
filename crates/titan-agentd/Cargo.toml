@@ -14,6 +14,7 @@ tungstenite.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
+titan-agent-core.workspace = true
 
 [lints]
 workspace = true

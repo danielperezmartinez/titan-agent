@@ -244,8 +244,14 @@ fn team_threads_hang_from_the_director_and_sub_agents_from_their_parent() {
 
 #[test]
 fn projects_fold_worktrees_into_their_repository() {
-    assert_eq!(project_root("/home/<usuario>/dev/kite"), "/home/<usuario>/dev/kite");
-    assert_eq!(project_root("/home/<usuario>/dev/kite/"), "/home/<usuario>/dev/kite");
+    assert_eq!(
+        project_root("/home/<usuario>/dev/kite"),
+        "/home/<usuario>/dev/kite"
+    );
+    assert_eq!(
+        project_root("/home/<usuario>/dev/kite/"),
+        "/home/<usuario>/dev/kite"
+    );
     assert_eq!(
         project_root("/home/<usuario>/dev/kite/.claude/worktrees/menu/.agents/worktrees/x"),
         "/home/<usuario>/dev/kite"
@@ -259,7 +265,13 @@ fn projects_fold_worktrees_into_their_repository() {
         Some(("/r/.claude/worktrees/a".to_string(), "task".to_string()))
     );
     assert_eq!(team_worktree("/r/.agents/worktrees/"), None);
-    assert_eq!(tilde("/home/<usuario>/dev", Some("/home/<usuario>")), "~/dev");
-    assert_eq!(tilde("/home/<usuario>bel", Some("/home/<usuario>")), "/home/<usuario>bel");
+    assert_eq!(
+        tilde("/home/<usuario>/dev", Some("/home/<usuario>")),
+        "~/dev"
+    );
+    assert_eq!(
+        tilde("/home/<usuario>bel", Some("/home/<usuario>")),
+        "/home/<usuario>bel"
+    );
     assert_eq!(tilde("/home/<usuario>", Some("/home/<usuario>/")), "~");
 }
