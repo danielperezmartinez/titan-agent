@@ -311,10 +311,10 @@ fn session(id: &str, script: Option<&str>) -> Session {
         name: format!("fixture-{id}"),
         kind: SessionKind::Interactive,
         state: SessionState::Working,
-        cwd: std::env::temp_dir(),
+        cwd: std::env::temp_dir().to_string_lossy().into_owned(),
         project: Project {
             name: "fixture-project".into(),
-            root: std::env::temp_dir(),
+            root: std::env::temp_dir().to_string_lossy().into_owned(),
         },
         model: None,
         parent: None,
@@ -646,7 +646,7 @@ fn resize_reaches_the_pty_and_existing_session_directory_is_used() {
         "size",
         Some("stty -echo; printf 'ready\\n'; while IFS= read -r line; do stty size; pwd; done"),
     );
-    fixture.cwd = dir.0.clone();
+    fixture.cwd = dir.0.to_string_lossy().into_owned();
     let daemon = Running::start(vec![fixture]);
     let mut client = daemon.client();
     client.hello();
@@ -1153,8 +1153,8 @@ fn shutdown_reaps_all_terminal_processes_with_connected_idle_clients() {
         "second-process",
         Some("printf '%s' \"$$\" > second.pid; printf 'ready\\n'; exec cat"),
     );
-    first.cwd = dir.0.clone();
-    second.cwd = dir.0.clone();
+    first.cwd = dir.0.to_string_lossy().into_owned();
+    second.cwd = dir.0.to_string_lossy().into_owned();
     let mut daemon = Running::start(vec![first, second]);
     let mut clients = Vec::new();
     let mut pids = Vec::new();
