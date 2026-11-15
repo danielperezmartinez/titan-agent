@@ -2,15 +2,16 @@
 
 use crate::{
     client::{DaemonClient, Incoming, socket_from_env, spawn_daemon},
-    terminal_view::TerminalView,
+    terminal_view::{TerminalView, TerminalViewEvent},
     theme, view_model,
 };
 use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px, rgb,
+    AppContext, Context, Entity, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div, px, rgb,
 };
+use std::path::Path;
 use std::{collections::HashMap, time::Duration};
 use titan_agent_core::{
     protocol::{Event, Request, Response},
@@ -35,9 +36,13 @@ pub struct MainWindow {
     disconnected: bool,
     errors: HashMap<u64, String>,
     open_requests: HashMap<u64, SessionKey>,
+    terminal_errors: HashMap<SessionKey, String>,
     terminals: HashMap<SessionKey, Entity<TerminalView>>,
     terminal_ids: HashMap<SessionKey, u64>,
     ended: HashMap<SessionKey, bool>,
+    subscriptions: Vec<gpui::Subscription>,
+    confirm_stop: Option<(SessionKey, std::time::Instant)>,
+    focused_session: Option<SessionKey>,
 }
 
 impl MainWindow {
@@ -51,11 +56,27 @@ impl MainWindow {
             disconnected: true,
             errors: HashMap::new(),
             open_requests: HashMap::new(),
+            terminal_errors: HashMap::new(),
             terminals: HashMap::new(),
             terminal_ids: HashMap::new(),
             ended: HashMap::new(),
+            subscriptions: Vec::new(),
+            confirm_stop: None,
+            focused_session: None,
         };
         this.connect(cx);
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_spawn(async {
+                    std::thread::sleep(Duration::from_secs(30));
+                })
+                .await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         this
     }
 
@@ -80,6 +101,7 @@ impl MainWindow {
                             if let Some(client) = &view.client {
                                 client.send(Request::Subscribe);
                             }
+                            view.terminal_ids.clear();
                             let reopen: Vec<_> = view.terminals.keys().cloned().collect();
                             for key in reopen {
                                 view.request_terminal(key);
@@ -118,9 +140,12 @@ impl MainWindow {
         let Some(client) = &self.client else {
             return;
         };
-        if self.terminals.contains_key(&key) {
+        if self.terminal_ids.contains_key(&key)
+            || self.open_requests.values().any(|pending| pending == &key)
+        {
             return;
         }
+        self.terminal_errors.remove(&key);
         let id = client.send(Request::OpenTerminal {
             session: key.clone(),
             cols: 100,
@@ -146,9 +171,36 @@ impl MainWindow {
                 self.open_requests.remove(&id);
                 self.terminal_ids.insert(session.clone(), terminal);
                 self.ended.insert(session.clone(), false);
-                self.terminals
-                    .entry(session)
-                    .or_insert_with(|| cx.new(TerminalView::new));
+                if !self.terminals.contains_key(&session) {
+                    let view = cx.new(TerminalView::new);
+                    let key = session.clone();
+                    let subscription =
+                        cx.subscribe(&view, move |this, _, event: &TerminalViewEvent, cx| {
+                            let Some(terminal) = this.terminal_ids.get(&key).copied() else {
+                                return;
+                            };
+                            if let Some(client) = &this.client {
+                                match event {
+                                    TerminalViewEvent::Input(data) => {
+                                        client.send(Request::Input {
+                                            terminal,
+                                            data: data.clone().into(),
+                                        });
+                                    }
+                                    TerminalViewEvent::Resized { cols, rows } => {
+                                        client.send(Request::Resize {
+                                            terminal,
+                                            cols: *cols,
+                                            rows: *rows,
+                                        });
+                                    }
+                                }
+                            }
+                            cx.notify();
+                        });
+                    self.subscriptions.push(subscription);
+                    self.terminals.insert(session, view);
+                }
             }
             Incoming::Event(Event::TerminalSnapshot {
                 terminal,
@@ -177,7 +229,14 @@ impl MainWindow {
                 }
             }
             Incoming::Error { id, error } => {
-                self.errors.insert(id, error.message);
+                if let Some(key) = self.open_requests.remove(&id) {
+                    self.terminal_errors
+                        .insert(key.clone(), error.message.clone());
+                    self.errors.insert(id, error.message.clone());
+                    self.ended.remove(&key);
+                } else {
+                    self.errors.insert(id, error.message);
+                }
             }
             Incoming::Disconnected(_) => {
                 self.disconnected = true;
@@ -199,10 +258,12 @@ impl MainWindow {
             None => false,
         };
         if !selection_exists {
-            self.selection = self
-                .sessions
-                .first()
-                .map(|s| Selection::Session(s.key.clone()));
+            self.selection = build_tree(&self.sessions, &self.filter)
+                .into_iter()
+                .find_map(|row| match row {
+                    TreeRow::Session { key, .. } => Some(Selection::Session(key)),
+                    TreeRow::Project { .. } => None,
+                });
         }
     }
 
@@ -315,23 +376,36 @@ impl MainWindow {
                                 } else {
                                     rgb(theme::CANVAS)
                                 })
-                                .child(Self::text(
-                                    if depth == 0 { "" } else { branch.marker() },
-                                    13.0,
-                                    theme::STONE,
-                                ))
-                                .child(Self::text(marker, 13.0, color))
-                                .child(Self::text(
-                                    session.name.clone(),
-                                    13.0,
-                                    if session.state.is_live() {
-                                        theme::BODY
-                                    } else {
-                                        theme::MUTE
-                                    },
-                                ))
+                                .child(
+                                    Self::text(
+                                        if depth == 0 { "" } else { branch.marker() },
+                                        13.0,
+                                        theme::STONE,
+                                    )
+                                    .flex_none(),
+                                )
+                                .child(Self::text(marker, 13.0, color).flex_none())
                                 .child(
                                     div()
+                                        .flex_grow(1.0)
+                                        .flex_shrink(1.0)
+                                        .min_w(px(0.0))
+                                        .overflow_hidden()
+                                        .text_ellipsis()
+                                        .whitespace_nowrap()
+                                        .child(Self::text(
+                                            session.name.clone(),
+                                            13.0,
+                                            if session.state.is_live() {
+                                                theme::BODY
+                                            } else {
+                                                theme::MUTE
+                                            },
+                                        )),
+                                )
+                                .child(
+                                    div()
+                                        .flex_none()
                                         .px(px(4.0))
                                         .h(px(18.0))
                                         .flex()
@@ -473,7 +547,7 @@ impl MainWindow {
 }
 
 impl Render for MainWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = div()
             .h(px(48.0))
             .px(px(16.0))
@@ -505,8 +579,21 @@ impl Render for MainWindow {
             ))
             .child(Self::text("[i]", 14.0, theme::BODY))
             .child(Self::text("[*]", 14.0, theme::BODY));
-        let center = if let Some(session) = self.selected_session() {
+        let center = if let Some(session) = self.selected_session().cloned() {
+            if self.focused_session.as_ref() != Some(&session.key)
+                && let Some(view) = self.terminals.get(&session.key)
+            {
+                self.focused_session = Some(session.key.clone());
+                _window.focus(&view.read(cx).focus_handle(cx), cx);
+            }
             let (marker, state, state_color) = view_model::state_style(session.state);
+            if session.attach.is_some()
+                && !self.terminal_ids.contains_key(&session.key)
+                && !self.terminal_errors.contains_key(&session.key)
+            {
+                let key = session.key.clone();
+                self.request_terminal(key);
+            }
             let info = div()
                 .h(px(40.0))
                 .px(px(16.0))
@@ -518,19 +605,302 @@ impl Render for MainWindow {
                 .child(Self::text(session.name.clone(), 13.0, theme::INK))
                 .child(Self::text(format!("{marker} {state}"), 12.0, state_color))
                 .child(Self::text(
-                    view_model::agent_line(session),
+                    view_model::agent_line(&session),
                     12.0,
                     view_model::agent_color(session.key.cli),
                 ))
-                .child(Self::text(session.cwd.clone(), 12.0, theme::MUTE))
+                .child(Self::text(
+                    titan_agent_core::discovery::display_path(
+                        &session.cwd,
+                        std::env::var("HOME").ok().as_deref(),
+                    ),
+                    12.0,
+                    theme::MUTE,
+                ))
                 .child(div().flex_1())
                 .child(Self::text(
-                    view_model::attach_line(session).unwrap_or_default(),
+                    view_model::attach_line(&session).unwrap_or_default(),
                     12.0,
                     theme::STONE,
                 ));
             let view = self.terminals.get(&session.key).cloned();
-            div().flex_1().flex().flex_col().child(info).child(div().flex_1().flex().bg(rgb(theme::TERMINAL_BG)).child(if let Some(view) = view { div().flex_1().child(view) } else { div().flex_1().flex().items_center().justify_center().child(Self::text(view_model::not_attachable_text(session.key.cli).0, 20.0, theme::INK)) }).child(div().w(px(260.0)).p(px(16.0)).border_l_1().border_color(rgb(theme::HAIRLINE_STRONG)).child(Self::text("DETALLE\n\nproyecto\nrol\nlanzada por\nestado desde\n\nHABLA CON\nsin comunicaciones conocidas", 12.0, theme::MUTE))))
+            let has_terminal_view = view.is_some();
+            let terminal_key = session.key.clone();
+            let body = if session.attach.is_none() {
+                let (title, message) = view_model::not_attachable_text(session.key.cli);
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(8.0))
+                    .bg(rgb(theme::TERMINAL_BG))
+                    .child(Self::text(title, 20.0, theme::INK))
+                    .child(div().max_w(px(560.0)).text_center().child(Self::text(
+                        message,
+                        13.0,
+                        theme::MUTE,
+                    )))
+            } else {
+                let terminal = if self.ended.get(&terminal_key).copied().unwrap_or(false) {
+                    let key = terminal_key.clone();
+                    div().flex_1().flex().items_center().justify_center().child(
+                        div()
+                            .flex()
+                            .gap(px(5.0))
+                            .child(Self::text("[x] el terminal terminó ·", 12.0, theme::MUTE))
+                            .child(
+                                Self::text("[>] reabrir", 12.0, theme::ACCENT).on_mouse_down(
+                                    gpui::MouseButton::Left,
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.ended.insert(key.clone(), false);
+                                        this.request_terminal(key.clone());
+                                        cx.notify();
+                                    }),
+                                ),
+                            ),
+                    )
+                } else if let Some(message) = self.terminal_errors.get(&terminal_key) {
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Self::text(message.clone(), 13.0, theme::DANGER))
+                } else if let Some(view) = view {
+                    div().flex_1().child(view)
+                } else {
+                    let message = self
+                        .open_requests
+                        .iter()
+                        .find(|(_, key)| *key == &terminal_key)
+                        .and_then(|(id, _)| self.errors.get(id))
+                        .cloned()
+                        .unwrap_or_default();
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Self::text(message, 13.0, theme::DANGER))
+                };
+                let terminal_focus = has_terminal_view;
+                let entry_key = terminal_key.clone();
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .bg(rgb(theme::TERMINAL_BG))
+                    .child(terminal)
+                    .child(
+                        div()
+                            .mx(px(16.0))
+                            .mb(px(16.0))
+                            .p(px(8.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .border_1()
+                            .border_color(rgb(if terminal_focus {
+                                theme::ACCENT
+                            } else {
+                                theme::HAIRLINE_STRONG
+                            }))
+                            .rounded(px(4.0))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, window, cx| {
+                                    if let Some(view) = this.terminals.get(&entry_key) {
+                                        window.focus(&view.read(cx).focus_handle(cx), cx)
+                                    }
+                                }),
+                            )
+                            .child(Self::text(">", 13.0, theme::MUTE))
+                            .child(Self::text(
+                                "escribe aquí: hablas directamente con el CLI oficial",
+                                13.0,
+                                theme::MUTE,
+                            ))
+                            .child(div().w(px(8.0)).h(px(16.0)).bg(rgb(theme::ACCENT))),
+                    )
+            };
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(0);
+            let detail = view_model::detail(
+                &self.sessions,
+                &session.key,
+                now_ms,
+                std::env::var("HOME").ok().as_deref(),
+            );
+            let detail_panel = div()
+                .w(px(260.0))
+                .p(px(16.0))
+                .flex()
+                .flex_col()
+                .gap(px(16.0))
+                .border_l_1()
+                .border_color(rgb(theme::HAIRLINE_STRONG))
+                .text_size(px(12.0))
+                .child(Self::text("DETALLE", 12.0, theme::MUTE));
+            let detail_panel = if let Some(detail) = detail {
+                let key_project = session.project.clone();
+                let mut panel = detail_panel
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(2)
+                            .gap(px(8.0))
+                            .child(Self::text("proyecto", 11.0, theme::MUTE))
+                            .child(Self::text(detail.project.clone(), 12.0, theme::BODY))
+                            .child(Self::text("rol", 11.0, theme::MUTE))
+                            .child(Self::text(detail.role, 12.0, theme::BODY))
+                            .child(Self::text("lanzada por", 11.0, theme::MUTE))
+                            .child(Self::text(detail.launched_by, 12.0, theme::BODY))
+                            .child(Self::text("estado desde", 11.0, theme::MUTE))
+                            .child(Self::text(detail.since, 12.0, theme::BODY)),
+                    )
+                    .child(Self::text("HABLA CON", 12.0, theme::MUTE));
+                if detail.talks.is_empty() {
+                    panel = panel.child(Self::text(
+                        "sin comunicaciones conocidas",
+                        12.0,
+                        theme::MUTE,
+                    ));
+                } else {
+                    for talk in detail.talks {
+                        panel = panel.child(
+                            div()
+                                .p(px(8.0))
+                                .flex()
+                                .flex_col()
+                                .gap(px(2.0))
+                                .bg(rgb(theme::SURFACE))
+                                .rounded(px(4.0))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap(px(4.0))
+                                        .child(Self::text(talk.direction, 12.0, theme::MUTE))
+                                        .child(Self::text(talk.who, 12.0, talk.color)),
+                                )
+                                .child(Self::text(talk.what, 12.0, theme::MUTE)),
+                        );
+                    }
+                }
+                panel.child(
+                    Self::text("[>] ver el monitor del proyecto", 12.0, theme::ACCENT)
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                this.selection = Some(Selection::Project(key_project.clone()));
+                                cx.notify();
+                            }),
+                        ),
+                )
+            } else {
+                detail_panel
+            };
+            let open_path = Path::new(&session.cwd).to_path_buf();
+            let stopped_key = session.key.clone();
+            let action =
+                view_model::stop_action(&session, self.terminal_ids.contains_key(&session.key));
+            let stop_text = if self
+                .confirm_stop
+                .as_ref()
+                .is_some_and(|(k, t)| k == &session.key && t.elapsed() < Duration::from_secs(4))
+            {
+                "[x] confirmar"
+            } else {
+                match action {
+                    view_model::StopAction::StopSession => "[x] detener",
+                    view_model::StopAction::CloseTerminal => "[x] cerrar terminal",
+                    view_model::StopAction::Disabled => "[x] detener",
+                }
+            };
+            let bottom = div()
+                .mt_auto()
+                .flex()
+                .flex_wrap()
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .h(px(32.0))
+                        .px(px(12.0))
+                        .flex()
+                        .items_center()
+                        .border_1()
+                        .border_color(rgb(theme::HAIRLINE_STRONG))
+                        .rounded(px(4.0))
+                        .child(Self::text("[d] abrir carpeta", 12.0, theme::BODY))
+                        .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| {
+                            cx.open_with_system(&open_path);
+                        }),
+                )
+                .child(
+                    div()
+                        .h(px(32.0))
+                        .px(px(12.0))
+                        .flex()
+                        .items_center()
+                        .border_1()
+                        .border_color(rgb(if matches!(action, view_model::StopAction::Disabled) {
+                            theme::HAIRLINE_STRONG
+                        } else {
+                            theme::DANGER
+                        }))
+                        .rounded(px(4.0))
+                        .child(Self::text(
+                            stop_text,
+                            12.0,
+                            if matches!(action, view_model::StopAction::Disabled) {
+                                theme::STONE
+                            } else {
+                                theme::DANGER
+                            },
+                        ))
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _, _, cx| {
+                                if this.confirm_stop.as_ref().is_some_and(|(k, t)| {
+                                    k == &stopped_key && t.elapsed() < Duration::from_secs(4)
+                                }) {
+                                    if let Some(client) = &this.client {
+                                        match action {
+                                            view_model::StopAction::StopSession => {
+                                                client.send(Request::StopSession {
+                                                    session: stopped_key.clone(),
+                                                });
+                                            }
+                                            view_model::StopAction::CloseTerminal => {
+                                                if let Some(id) =
+                                                    this.terminal_ids.get(&stopped_key)
+                                                {
+                                                    client.send(Request::CloseTerminal {
+                                                        terminal: *id,
+                                                    });
+                                                }
+                                            }
+                                            view_model::StopAction::Disabled => {}
+                                        }
+                                    }
+                                } else {
+                                    this.confirm_stop =
+                                        Some((stopped_key.clone(), std::time::Instant::now()));
+                                }
+                                cx.notify();
+                            }),
+                        ),
+                );
+            div().flex_1().flex().flex_col().child(info).child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .child(body)
+                    .child(detail_panel.child(bottom)),
+            )
         } else {
             div().flex_1().flex().items_center().justify_center().bg(rgb(theme::TERMINAL_BG)).child(Self::text("Nueva sesión\n\nen [#] proyecto con Claude Code\n\nEscribe el encargo. titan-agent no lo completa ni lo reescribe.\n\ncl Claude Code   opus   high   default   [#] proyecto   [ok] lanzar\n\ndisponible en la fase 2", 20.0, theme::INK))
         };
@@ -541,11 +911,11 @@ impl Render for MainWindow {
             .bg(rgb(theme::CANVAS))
             .text_color(rgb(theme::BODY))
             .child(header)
-            .child(div().flex_1().flex().child(self.sidebar(_cx)).child(center))
+            .child(div().flex_1().flex().child(self.sidebar(cx)).child(center))
             .font_family(theme::FONT_FAMILY)
             .text_color(rgb(theme::BODY))
             .text_size(px(14.0))
-            .on_key_down(_cx.listener(|this, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key.eq_ignore_ascii_case("n")
                     && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
                 {
