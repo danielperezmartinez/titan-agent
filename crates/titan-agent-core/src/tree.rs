@@ -68,21 +68,23 @@ pub fn build_tree(sessions: &[Session], filter: &str) -> Vec<TreeRow> {
     }
     let by_key: HashMap<SessionKey, &Session> =
         unique.iter().map(|s| (s.key.clone(), *s)).collect();
-    let mut projects: Vec<Project> = unique.iter().map(|s| s.project.clone()).collect();
+    let mut grouped: HashMap<Project, Vec<&Session>> = HashMap::new();
+    for session in &unique {
+        grouped
+            .entry(session.project.clone())
+            .or_default()
+            .push(session);
+    }
+    let mut projects: Vec<Project> = grouped.keys().cloned().collect();
     projects.sort_by(|a, b| {
         a.name
             .to_lowercase()
             .cmp(&b.name.to_lowercase())
             .then_with(|| a.root.cmp(&b.root))
     });
-    projects.dedup();
     let mut output = Vec::new();
     for project in projects {
-        let members: Vec<&Session> = unique
-            .iter()
-            .copied()
-            .filter(|s| s.project == project)
-            .collect();
+        let members = grouped.remove(&project).unwrap_or_default();
         let member_keys: HashSet<SessionKey> = members.iter().map(|s| s.key.clone()).collect();
         let mut children: HashMap<SessionKey, Vec<&Session>> = HashMap::new();
         let mut roots = Vec::new();
@@ -126,15 +128,39 @@ pub fn build_tree(sessions: &[Session], filter: &str) -> Vec<TreeRow> {
         if visible.is_empty() {
             continue;
         }
-        // A cycle has no natural root. Start the first unvisited member in stable order.
+        // Find an artificial root inside each parent cycle after normal roots.
         let mut ordered_roots = roots;
-        let root_keys: HashSet<SessionKey> = ordered_roots.iter().map(|s| s.key.clone()).collect();
-        ordered_roots.extend(
-            members
-                .iter()
-                .copied()
-                .filter(|s| !root_keys.contains(&s.key)),
-        );
+        let mut cycle_roots = Vec::new();
+        let mut considered_cycles = HashSet::<SessionKey>::new();
+        for session in &members {
+            let mut path = Vec::<SessionKey>::new();
+            let mut positions = HashMap::<SessionKey, usize>::new();
+            let mut current = Some(session.key.clone());
+            while let Some(key) = current {
+                if let Some(&cycle_start) = positions.get(&key) {
+                    let mut cycle: Vec<&Session> = path[cycle_start..]
+                        .iter()
+                        .filter_map(|member_key| by_key.get(member_key).copied())
+                        .collect();
+                    cycle.sort_by(|a, b| session_order(a, b));
+                    if let Some(root) = cycle.first()
+                        && considered_cycles.insert(root.key.clone())
+                    {
+                        cycle_roots.push(*root);
+                    }
+                    break;
+                }
+                positions.insert(key.clone(), path.len());
+                path.push(key.clone());
+                current = by_key
+                    .get(&key)
+                    .and_then(|item| item.parent.as_ref())
+                    .filter(|parent| member_keys.contains(*parent))
+                    .cloned();
+            }
+        }
+        cycle_roots.sort_by(|a, b| session_order(a, b));
+        ordered_roots.extend(cycle_roots);
         let live_team = members.iter().any(|s| {
             s.state.is_live() && s.parent.as_ref().is_some_and(|p| member_keys.contains(p))
         });
@@ -189,7 +215,7 @@ pub fn build_tree(sessions: &[Session], filter: &str) -> Vec<TreeRow> {
                 );
             }
         }
-        // Any remaining node is reachable only through a previously emitted cycle edge.
+        // This is a defensive fallback for malformed parent graphs.
         for session in &members {
             if !emitted.contains(&session.key) {
                 visit(
