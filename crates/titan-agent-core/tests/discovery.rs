@@ -238,7 +238,7 @@ fn claude_session_requires_identity_and_only_attaches_background_ids() {
             let agent = ClaudeAgent {
                 id: id.map(str::to_owned),
                 pid,
-                kind: kind.clone(),
+                kind,
                 status: None,
                 state: None,
                 started_at_ms: None,
@@ -752,7 +752,7 @@ fn codex_session_preserves_every_loaded_state() {
         SessionState::Finished { failed: true },
     ] {
         let thread = CodexThread {
-            state: Some(state.clone()),
+            state: Some(state),
             ..codex_thread()
         };
         assert_eq!(codex_session(&thread, project()).unwrap().state, state);
