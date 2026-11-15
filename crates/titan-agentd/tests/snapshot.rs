@@ -311,9 +311,10 @@ fn unrelated_events_are_ignored_and_do_not_become_pty_replies() {
     let mut emulator = Emulator::new(12, 3, 0);
     assert!(
         emulator
-            .feed(b"\x1b]2;Example title\x07\x07\x1b[18t")
+            .feed(b"\x1b]2;Example title\x07\x07\x1b[14t")
             .is_empty()
     );
+    assert_eq!(emulator.feed(b"\x1b[18t"), b"\x1b[8;3;12t");
     assert_eq!(cell(&emulator, 0, 0).c, ' ');
     assert_eq!(emulator.feed(b"\x1b[6n"), b"\x1b[1;1R");
     assert_round_trip(&emulator);
