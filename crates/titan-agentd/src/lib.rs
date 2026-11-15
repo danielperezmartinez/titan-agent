@@ -2,4 +2,6 @@
 //! integration tests.
 
 pub mod pty;
+pub mod server;
 pub mod snapshot;
+pub mod source;
