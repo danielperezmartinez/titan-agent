@@ -3,3 +3,5 @@
 
 pub mod client;
 pub mod terminal_model;
+pub mod theme;
+pub mod view_model;
