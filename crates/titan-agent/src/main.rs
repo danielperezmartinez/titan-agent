@@ -12,6 +12,7 @@ fn main() {
         let _ = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(1024.0), px(640.0))),
                 ..Default::default()
             },
             |_, cx| cx.new(MainWindow::new),

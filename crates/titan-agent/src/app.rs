@@ -37,6 +37,7 @@ pub struct MainWindow {
     disconnected: bool,
     errors: HashMap<u64, String>,
     open_requests: HashMap<u64, SessionKey>,
+    stop_requests: HashMap<u64, SessionKey>,
     terminal_errors: HashMap<SessionKey, String>,
     terminals: HashMap<SessionKey, Entity<TerminalView>>,
     terminal_ids: HashMap<SessionKey, u64>,
@@ -46,6 +47,7 @@ pub struct MainWindow {
     focused_session: Option<SessionKey>,
     monitor_tab: &'static str,
     initial_selection: Option<String>,
+    new_session_project: Option<Project>,
 }
 
 impl MainWindow {
@@ -59,6 +61,7 @@ impl MainWindow {
             disconnected: true,
             errors: HashMap::new(),
             open_requests: HashMap::new(),
+            stop_requests: HashMap::new(),
             terminal_errors: HashMap::new(),
             terminals: HashMap::new(),
             terminal_ids: HashMap::new(),
@@ -68,6 +71,7 @@ impl MainWindow {
             focused_session: None,
             monitor_tab: "grafo",
             initial_selection: std::env::var("TITAN_AGENT_SELECT").ok(),
+            new_session_project: None,
         };
         this.connect(cx);
         cx.spawn(async move |this, cx| {
@@ -103,20 +107,27 @@ impl MainWindow {
                         let _ = this.update(cx, |view, cx| {
                             view.disconnected = false;
                             view.client = Some(client);
+                            view.open_requests.clear();
+                            view.stop_requests.clear();
+                            view.errors.clear();
                             if let Some(client) = &view.client {
                                 client.send(Request::Subscribe);
                             }
                             view.terminal_ids.clear();
                             let reopen: Vec<_> = view.terminals.keys().cloned().collect();
                             for key in reopen {
-                                view.request_terminal(key);
+                                view.request_terminal(key, cx);
                             }
                             cx.notify();
                         });
                         while let Some(message) = rx.next().await {
+                            let disconnected = matches!(message, Incoming::Disconnected(_));
                             let _ = cloned.update(cx, |view, cx| {
                                 view.incoming(message, cx);
                             });
+                            if disconnected {
+                                break;
+                            }
                         }
                     }
                     Err(_) => {
@@ -141,7 +152,7 @@ impl MainWindow {
         .detach();
     }
 
-    fn request_terminal(&mut self, key: SessionKey) {
+    fn request_terminal(&mut self, key: SessionKey, cx: &mut Context<Self>) {
         let Some(client) = &self.client else {
             return;
         };
@@ -151,16 +162,30 @@ impl MainWindow {
             return;
         }
         self.terminal_errors.remove(&key);
+        let (cols, rows) = self
+            .terminals
+            .get(&key)
+            .and_then(|view| view.read(cx).grid())
+            .unwrap_or((100, 30));
         let id = client.send(Request::OpenTerminal {
             session: key.clone(),
-            cols: 100,
-            rows: 30,
+            cols,
+            rows,
         });
         self.open_requests.insert(id, key);
     }
 
     fn incoming(&mut self, message: Incoming, cx: &mut Context<Self>) {
         match message {
+            Incoming::Response {
+                id,
+                response: Response::Done,
+            } => {
+                if let Some(key) = self.stop_requests.remove(&id) {
+                    self.terminal_errors.remove(&key);
+                    self.confirm_stop = None;
+                }
+            }
             Incoming::Response {
                 id: _,
                 response: Response::Sessions { sessions },
@@ -204,7 +229,10 @@ impl MainWindow {
                             cx.notify();
                         });
                     self.subscriptions.push(subscription);
-                    self.terminals.insert(session, view);
+                    self.terminals.insert(session.clone(), view);
+                }
+                if self.selection == Some(Selection::Session(session.clone())) {
+                    self.focused_session = None;
                 }
             }
             Incoming::Event(Event::TerminalSnapshot {
@@ -238,7 +266,8 @@ impl MainWindow {
                     self.terminal_errors
                         .insert(key.clone(), error.message.clone());
                     self.errors.insert(id, error.message.clone());
-                    self.ended.remove(&key);
+                } else if let Some(key) = self.stop_requests.remove(&id) {
+                    self.terminal_errors.insert(key, error.message);
                 } else {
                     self.errors.insert(id, error.message);
                 }
@@ -246,6 +275,8 @@ impl MainWindow {
             Incoming::Disconnected(_) => {
                 self.disconnected = true;
                 self.client = None;
+                self.open_requests.clear();
+                self.stop_requests.clear();
             }
             _ => {}
         }
@@ -262,6 +293,10 @@ impl MainWindow {
             Some(Selection::NewSession) => true,
             None => false,
         };
+        if !selection_exists {
+            self.selection = None;
+            self.focused_session = None;
+        }
         if !selection_exists && let Some(requested) = self.initial_selection.take() {
             self.selection = match requested.as_str() {
                 "new" => Some(Selection::NewSession),
@@ -290,6 +325,9 @@ impl MainWindow {
                     TreeRow::Project { .. } => None,
                 });
         }
+        if self.selection == Some(Selection::NewSession) && self.new_session_project.is_none() {
+            self.new_session_project = self.sessions.first().map(|s| s.project.clone());
+        }
     }
 
     fn text(value: impl Into<String>, size: f32, color: u32) -> gpui::Div {
@@ -315,6 +353,9 @@ impl MainWindow {
     }
 
     fn fallback_project(&self) -> Option<Project> {
+        if let Some(project) = &self.new_session_project {
+            return Some(project.clone());
+        }
         if let Some(session) = self.selected_session() {
             return Some(session.project.clone());
         }
@@ -588,6 +629,7 @@ impl MainWindow {
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(move |this, _, _, cx| {
+                                    this.focused_session = None;
                                     this.selection =
                                         Some(Selection::Project(project_for_click.clone()));
                                     cx.notify();
@@ -644,6 +686,7 @@ impl MainWindow {
                                 .on_mouse_down(
                                     gpui::MouseButton::Left,
                                     cx.listener(move |this, _, _, cx| {
+                                        this.focused_session = None;
                                         this.selection =
                                             Some(Selection::Session(key_for_click.clone()));
                                         cx.notify();
@@ -771,6 +814,17 @@ impl MainWindow {
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(|this, _, _, cx| {
+                                    this.new_session_project = this
+                                        .selected_session()
+                                        .map(|s| s.project.clone())
+                                        .or_else(|| match &this.selection {
+                                            Some(Selection::Project(p)) => Some(p.clone()),
+                                            _ => None,
+                                        })
+                                        .or_else(|| {
+                                            this.sessions.first().map(|s| s.project.clone())
+                                        });
+                                    this.focused_session = None;
                                     this.selection = Some(Selection::NewSession);
                                     cx.notify();
                                 }),
@@ -870,7 +924,7 @@ impl Render for MainWindow {
                 && !self.terminal_errors.contains_key(&session.key)
             {
                 let key = session.key.clone();
-                self.request_terminal(key);
+                self.request_terminal(key, cx);
             }
             let info = div()
                 .h(px(40.0))
@@ -932,8 +986,9 @@ impl Render for MainWindow {
                                 Self::text("[>] reabrir", 12.0, theme::ACCENT).on_mouse_down(
                                     gpui::MouseButton::Left,
                                     cx.listener(move |this, _, _, cx| {
-                                        this.ended.insert(key.clone(), false);
-                                        this.request_terminal(key.clone());
+                                        this.terminal_ids.remove(&key);
+                                        this.ended.insert(key.clone(), true);
+                                        this.request_terminal(key.clone(), cx);
                                         cx.notify();
                                     }),
                                 ),
@@ -1082,6 +1137,7 @@ impl Render for MainWindow {
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(move |this, _, _, cx| {
+                                this.focused_session = None;
                                 this.selection = Some(Selection::Project(key_project.clone()));
                                 cx.notify();
                             }),
@@ -1107,6 +1163,7 @@ impl Render for MainWindow {
                     view_model::StopAction::Disabled => "[x] detener",
                 }
             };
+            let stop_error = self.terminal_errors.get(&session.key).cloned();
             let bottom = div()
                 .mt_auto()
                 .flex()
@@ -1151,23 +1208,32 @@ impl Render for MainWindow {
                         .on_mouse_down(
                             gpui::MouseButton::Left,
                             cx.listener(move |this, _, _, cx| {
+                                if matches!(action, view_model::StopAction::Disabled) {
+                                    return;
+                                }
                                 if this.confirm_stop.as_ref().is_some_and(|(k, t)| {
                                     k == &stopped_key && t.elapsed() < Duration::from_secs(4)
                                 }) {
+                                    this.confirm_stop = None;
+                                    this.terminal_errors.remove(&stopped_key);
                                     if let Some(client) = &this.client {
                                         match action {
                                             view_model::StopAction::StopSession => {
-                                                client.send(Request::StopSession {
+                                                let id = client.send(Request::StopSession {
                                                     session: stopped_key.clone(),
                                                 });
+                                                this.stop_requests.insert(id, stopped_key.clone());
                                             }
                                             view_model::StopAction::CloseTerminal => {
                                                 if let Some(id) =
                                                     this.terminal_ids.get(&stopped_key)
                                                 {
-                                                    client.send(Request::CloseTerminal {
-                                                        terminal: *id,
-                                                    });
+                                                    let request =
+                                                        client.send(Request::CloseTerminal {
+                                                            terminal: *id,
+                                                        });
+                                                    this.stop_requests
+                                                        .insert(request, stopped_key.clone());
                                                 }
                                             }
                                             view_model::StopAction::Disabled => {}
@@ -1176,11 +1242,36 @@ impl Render for MainWindow {
                                 } else {
                                     this.confirm_stop =
                                         Some((stopped_key.clone(), std::time::Instant::now()));
+                                    let key = stopped_key.clone();
+                                    cx.spawn(async move |this, cx| {
+                                        cx.background_spawn(async {
+                                            std::thread::sleep(Duration::from_secs(4));
+                                        })
+                                        .await;
+                                        let _ = this.update(cx, |view, cx| {
+                                            if view.confirm_stop.as_ref().is_some_and(
+                                                |(current, started)| {
+                                                    current == &key
+                                                        && started.elapsed()
+                                                            >= Duration::from_secs(4)
+                                                },
+                                            ) {
+                                                view.confirm_stop = None;
+                                                cx.notify();
+                                            }
+                                        });
+                                    })
+                                    .detach();
                                 }
                                 cx.notify();
                             }),
                         ),
                 );
+            let detail_panel = if let Some(message) = stop_error {
+                detail_panel.child(Self::text(message, 12.0, theme::DANGER))
+            } else {
+                detail_panel
+            };
             div().flex_1().flex().flex_col().child(info).child(
                 div()
                     .flex_1()
@@ -1208,6 +1299,15 @@ impl Render for MainWindow {
                 if event.keystroke.key.eq_ignore_ascii_case("n")
                     && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
                 {
+                    this.new_session_project = this
+                        .selected_session()
+                        .map(|s| s.project.clone())
+                        .or_else(|| match &this.selection {
+                            Some(Selection::Project(p)) => Some(p.clone()),
+                            _ => None,
+                        })
+                        .or_else(|| this.sessions.first().map(|s| s.project.clone()));
+                    this.focused_session = None;
                     this.selection = Some(Selection::NewSession);
                     cx.notify();
                 }
