@@ -1,42 +1,27 @@
-//! titan-agent: GPUI desktop interface. For now it only opens an empty window
-//! with the canvas colour, to prove that the pinned GPUI builds and runs.
-
-use gpui::{
-    App, Bounds, Context, Window, WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
-};
+use gpui::{App, AppContext, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 use gpui_platform::application;
-
-/// `canvas` token inherited from titan-ssh.
-const CANVAS: u32 = 0x201d1d;
-/// `ink` token inherited from titan-ssh.
-const INK: u32 = 0xfdfcfc;
-
-struct MainWindow;
-
-impl Render for MainWindow {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .justify_center()
-            .items_center()
-            .bg(rgb(CANVAS))
-            .text_color(rgb(INK))
-            .child("titan-agent")
-    }
-}
+use titan_agent::app::MainWindow;
 
 fn main() {
+    // TITAN_AGENT_SELECT supports "new", "project:<name>", and "session:<id>" for demo startup selection.
     application().run(|cx: &mut App| {
-        let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
-        cx.open_window(
+        if let Err(error) = titan_agent::fonts::load(cx) {
+            eprintln!("could not load embedded fonts: {error}");
+        }
+        let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
+        let _ = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(1024.0), px(640.0))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("titan-agent".into()),
+                    ..Default::default()
+                }),
+                app_id: Some("titan-agent".to_string()),
                 ..Default::default()
             },
-            |_, cx| cx.new(|_| MainWindow),
-        )
-        .expect("failed to open the main window");
+            |_, cx| cx.new(MainWindow::new),
+        );
         cx.activate(true);
     });
 }
