@@ -446,11 +446,18 @@ mod tests {
         };
 
         process.kill(Duration::from_millis(200));
-        let stat = std::fs::read_to_string(format!("/proc/{child_pid}/stat"));
-        let is_gone_or_zombie = match stat {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Ok(stat) => stat.split_whitespace().nth(2) == Some("Z"),
-            _ => false,
+        let descendant_deadline = Instant::now() + Duration::from_secs(2);
+        let is_gone_or_zombie = loop {
+            let stat = std::fs::read_to_string(format!("/proc/{child_pid}/stat"));
+            let is_gone_or_zombie = match stat {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+                Ok(stat) => stat.split_whitespace().nth(2) == Some("Z"),
+                _ => false,
+            };
+            if is_gone_or_zombie || Instant::now() >= descendant_deadline {
+                break is_gone_or_zombie;
+            }
+            thread::sleep(Duration::from_millis(10));
         };
         let _ = std::fs::remove_file(path);
         assert!(is_gone_or_zombie, "descendant {child_pid} is still alive");
