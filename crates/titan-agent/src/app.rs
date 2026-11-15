@@ -197,6 +197,16 @@ impl MainView {
                     self.preselect = None;
                     self.select_session(key, None, cx);
                 }
+                if let Ok(name) = std::env::var("TITAN_AGENT_PROJECT")
+                    && self.selection == Selection::None
+                    && let Some(root) = self
+                        .sessions
+                        .iter()
+                        .find(|s| s.project == name)
+                        .map(|s| s.project_root.clone())
+                {
+                    self.selection = Selection::Project(root);
+                }
             }
             ServerMessage::Event(Event::Output { terminal, data }) => {
                 if let (Some(view), Some(bytes)) =
@@ -1072,7 +1082,10 @@ impl MainView {
             let members = sessions.iter().filter(|s| s.state.is_live()).count();
             format!("{members} agentes en vivo")
         } else {
-            format!("{} sesión(es), ninguna en equipo", sessions.len())
+            format!(
+                "{} sesión(es), ninguna en equipo ahora",
+                sessions.iter().filter(|s| s.parent.is_none()).count()
+            )
         };
         let bar = div()
             .flex()
@@ -1107,12 +1120,29 @@ impl MainView {
             "El monitor se anima cuando las sesiones del proyecto se encargan trabajo entre ellas."
                 .to_string()
         }];
-        let names: Vec<String> = sessions.iter().map(|s| s.name.clone()).collect();
-        lines.push(if team {
-            format!("Sesiones: {}", names.join(", "))
-        } else {
-            format!("Sesiones sueltas: {}", names.join(", "))
-        });
+        // Top-level sessions by name; threads launched by another one are
+        // only counted, so a long team run does not flood the panel.
+        let top: Vec<String> = sessions
+            .iter()
+            .filter(|s| s.parent.is_none())
+            .map(|s| s.name.clone())
+            .collect();
+        let nested = sessions.len() - top.len();
+        let shown = top.iter().take(6).cloned().collect::<Vec<_>>().join(", ");
+        let more = top.len().saturating_sub(6);
+        let mut list = format!(
+            "{}: {shown}",
+            if team { "Sesiones" } else { "Sesiones sueltas" }
+        );
+        if more > 0 {
+            list.push_str(&format!(" y {more} más"));
+        }
+        lines.push(list);
+        if nested > 0 {
+            lines.push(format!(
+                "{nested} hilo(s) lanzados por otras sesiones en los últimos 20 min."
+            ));
+        }
         div()
             .flex()
             .flex_col()

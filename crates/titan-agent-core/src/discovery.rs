@@ -41,7 +41,7 @@ fn claude_session(entry: &Value) -> Option<Session> {
     let state = claude_state(text("status").as_deref(), text("state").as_deref());
     let name = text("name")
         .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| format!("claude {}", &cli_id[..cli_id.len().min(8)]));
+        .unwrap_or_else(|| format!("claude {}", cli_id.chars().take(8).collect::<String>()));
     let pid = entry
         .get("pid")
         .and_then(Value::as_u64)
@@ -150,7 +150,7 @@ pub fn codex_session(thread: &Value, loaded: bool) -> Option<Session> {
                 .map(|preview| first_words(&preview, 6))
                 .filter(|preview| !preview.is_empty())
         })
-        .unwrap_or_else(|| format!("codex {}", &id[..id.len().min(8)]));
+        .unwrap_or_else(|| format!("codex {}", id.chars().take(8).collect::<String>()));
     let team_role = text("preview").and_then(|preview| team_role(&preview));
     let (name, role) = match (team_worktree(&cwd), team_role) {
         (Some((_, task)), Some(role)) => {
@@ -182,11 +182,8 @@ pub fn codex_session(thread: &Value, loaded: bool) -> Option<Session> {
         role,
         parent,
         started_at_ms: created.map(|seconds| seconds * 1000),
-        state_since_ms: if loaded {
-            None
-        } else {
-            updated.map(|seconds| seconds * 1000)
-        },
+        // The last update is the best hint of when the current state began.
+        state_since_ms: updated.map(|seconds| seconds * 1000),
         pid: None,
         attach: Some(vec![
             "codex".into(),
