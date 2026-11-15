@@ -1,11 +1,11 @@
 ---
 Nombre: Fase 1 - Daemon, árbol de sesiones y terminal integrado
-Estado: En curso
+Estado: Hecha
 Resumen: Primera versión usable - titan-agentd descubre las sesiones de Claude Code y Codex y mantiene los terminales; la interfaz GPUI muestra la ventana principal con el árbol de sesiones por proyecto y, al elegir una, su terminal con el CLI oficial en el que escribe el usuario.
 Decisiones: 'ADR-0007 (protocolo NDJSON v1 en socket Unix), ADR-0008 (portable-pty + alacritty_terminal), ADR-0009 (descubrimiento y jerarquía). Variante opus del experimento de comparación (rama feat/fase-1-opus), elegida por el usuario (2026-11-15) para cerrar la fase. Versión 0.2.0 (minor), acordada con el usuario vía la sesión de control.'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-15T18:57:00+01:00
+Última modificación: 2026-11-15T20:02:00+01:00
 ---
 
 # Fase 1 - Daemon, árbol de sesiones y terminal integrado
@@ -65,7 +65,12 @@ el 2026-11-15:
   por git: muestran nombres de sesiones reales).
 - Versión 0.2.0 en `Cargo.toml` (supera la 0.1.1 de `main`,
   `scripts/comprobar-version.sh` en verde).
-- Pendiente: CI (incluido Windows), la PR y su integración.
+- PR [#4](https://github.com/danielperezmartinez/titan-agent/pull/4): `Cambios`,
+  `Verificar` (2 min 14 s), `Fugas` y `Windows` (3 min 7 s) en verde. Integrada
+  con squash con autorización del usuario: commit `926cc8a` en `main`, versión
+  0.2.0; el CI de `main` sobre ese commit, en verde (los cuatro jobs). No publica release (sin tag). GitHub rechazó `--author-email` con el
+  noreply y el squash salió con el correo principal, que el usuario permite como
+  autor de commits (ver [[README#Repositorio y publicación]]).
 
 ## Resultado
 
@@ -85,8 +90,7 @@ el 2026-11-15:
   [[Catálogo técnico/Árbol de sesiones]], [[Catálogo técnico/Terminal integrado]],
   [[Catálogo técnico/titan-agentd]] y [[Catálogo técnico/Tipos de sesión]]
   ampliada.
-- Falta para «Hecha»: PR con versión acordada, CI en verde e integración
-  autorizada. Mejoras anotadas: selección y copiar en el terminal, named pipe en
+- Mejoras anotadas: selección y copiar en el terminal, named pipe en
   Windows, vistas del monitor (fase 3).
 
 ### Experimento: variante opus

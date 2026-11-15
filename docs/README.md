@@ -144,9 +144,15 @@ lo que se haga con MCP, CLI o panel.
   - Datos del entorno personal: nombres de host, de máquina o de dispositivo,
     usuarios del sistema operativo, IP (de red local, VPN o públicas), dominios y
     redes propios, rutas personales (`C:\Users\<nombre>`, `/home/<nombre>`,
-    unidades y carpetas propias) y correos personales.
+    unidades y carpetas propias) y correos personales (con la excepción de
+    abajo).
   - Vulnerabilidades sin corregir (ver "Vulnerabilidades y hallazgos
     sensibles").
+- **Excepción: el correo personal del usuario como autor de commits.** Ya es
+  público en su perfil de GitHub y es el único dato personal que puede quedar
+  en el repo, solo en la autoría de los commits (incluidos los squash de la
+  plataforma). Nunca se escribe en el código, la bóveda, los mensajes de commit,
+  las PR ni las issues. Decisión del usuario del 2026-11-15.
 - En la documentación se usan **marcadores genéricos** (`<usuario>`,
   `<host-de-pruebas>`, `<ruta-al-proyecto>`). Los valores reales viven fuera del
   repo: variables de entorno, la memoria local del agente (que no se versiona) o
@@ -250,11 +256,12 @@ enlazan en vez de repetirla.
   avisar al usuario con un reporte y detenerse: no reintentar, rehacer el tag ni
   retirar la release por iniciativa propia. La corrección es una PR nueva con su
   propia versión.
-- Los commits, incluidos los squash que hace la plataforma, usan el correo
-  privado de la forja (p. ej. `…@users.noreply.github.com`), nunca uno personal.
-  Al integrar con `gh pr merge --squash` se pasa siempre
-  `--author-email <correo noreply>`: sin él, GitHub usa el correo principal de
-  la cuenta si no está activado *Keep my email address private*.
+- Los commits locales usan el correo privado de la forja (p. ej.
+  `…@users.noreply.github.com`). Al integrar con `gh pr merge --squash` se
+  intenta `--author-email <correo noreply>`; si GitHub lo rechaza («Invalid
+  email address», como en la PR #4), se integra sin él y el squash sale con el
+  correo principal de la cuenta, que permite la excepción de
+  [[#Repositorio y publicación]].
 - Configuración: job `Cambios` en el CI (un cambio de solo bóveda omite
   `Verificar`); guarda en `.githooks/pre-push`. En GitHub: protección de `main`
   con los checks estrictos, `enforce_admins=false`, historial lineal e

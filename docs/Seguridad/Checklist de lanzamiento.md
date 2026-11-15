@@ -3,8 +3,8 @@ Nombre: Checklist de lanzamiento
 Tipo: Checklist
 Estado: Pendiente
 Resumen: Estado de la configuración fuera del código (ajustes del repo en GitHub, hooks en cada clon, firma y canales de distribución) que ningún test del repo comprueba. Sección GitHub revisada el 2026-11-14 salvo el correo privado de la cuenta; distribución y accesibilidad pendientes.
-Última revisión: 2026-11-14
-Última modificación: 2026-11-14T18:40:00+01:00
+Última revisión: 2026-11-15
+Última modificación: 2026-11-15T20:02:00+01:00
 ---
 
 # Checklist de lanzamiento
@@ -38,8 +38,11 @@ trimestre.
       comprobar por API y lo revisa el usuario. Incidencia del 2026-11-14: el
       squash de la PR #1 (`317eea3`) salió con el correo principal de la
       cuenta; el usuario decidió dejarlo (ya es público en su perfil). Desde
-      entonces se integra con `--author-email`. Conviene activar también
-      *Block command line pushes that expose my email*.
+      entonces se integra con `--author-email`. 2026-11-15: GitHub rechazó
+      `--author-email` con el noreply en la PR #4 y se integró con el correo
+      principal; el usuario permite ese correo en la autoría de los commits
+      (excepción en [[README#Repositorio y publicación]]). Conviene activar
+      también *Block command line pushes that expose my email*.
 
 ## Distribución
 
@@ -57,3 +60,4 @@ autoactualización) antes de la primera versión. -->
 | --- | --- | --- |
 | 2026-11-14 | diseño: titan-agent | Checklist creada; repo aún sin remoto. |
 | 2026-11-14 | titan-agent: implementación | Repo creado; sección GitHub revisada salvo el correo privado de la cuenta. Squash de la PR #1 con el correo principal: aceptado por el usuario. |
+| 2026-11-15 | titan-agent: fase 1 opus | PR #4: GitHub rechaza `--author-email` con el noreply; squash con el correo principal, permitido desde ahora por el usuario solo como autor de commits. |
