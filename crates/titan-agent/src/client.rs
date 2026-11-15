@@ -1,6 +1,6 @@
 use futures::channel::mpsc as async_mpsc;
 use std::fmt;
-use std::io::{self, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Write};
 use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -12,8 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 use titan_agent_core::paths::{SOCKET_ENV, socket_path};
 use titan_agent_core::protocol::{
-    ClientMessage, ErrorBody, Event, FrameError, PROTOCOL_VERSION, Request, Response,
-    ServerMessage, encode_line, read_frame,
+    ClientMessage, ErrorBody, Event, FrameError, MAX_FRAME_BYTES, PROTOCOL_VERSION, Request,
+    Response, ServerMessage, decode_line, encode_line, read_frame,
 };
 
 /// What the daemon sent, in arrival order.
@@ -73,9 +73,6 @@ impl DaemonClient {
         client: &str,
     ) -> Result<(Self, String, async_mpsc::UnboundedReceiver<Incoming>), ClientError> {
         let stream = UnixStream::connect(socket).map_err(ClientError::Connect)?;
-        stream
-            .set_read_timeout(Some(Self::TIMEOUT))
-            .map_err(ClientError::Connect)?;
         let mut handshake_reader =
             BufReader::new(stream.try_clone().map_err(ClientError::Connect)?);
         let hello = ClientMessage {
@@ -89,11 +86,7 @@ impl DaemonClient {
         handshake_writer
             .write_all(&encode_line(&hello))
             .map_err(ClientError::Connect)?;
-        let answer = match read_frame::<_, ServerMessage>(&mut handshake_reader) {
-            Ok(Some(message)) => message,
-            Ok(None) => return Err(ClientError::Handshake("connection closed".into())),
-            Err(error) => return Err(ClientError::Handshake(error.to_string())),
-        };
+        let answer = read_handshake(&stream, &mut handshake_reader, Self::TIMEOUT)?;
         let daemon = match answer {
             ServerMessage::Response {
                 id: 1,
@@ -187,6 +180,44 @@ impl DaemonClient {
 
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::Acquire)
+    }
+}
+
+fn read_handshake(
+    stream: &UnixStream,
+    reader: &mut BufReader<UnixStream>,
+    timeout: Duration,
+) -> Result<ServerMessage, ClientError> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ClientError::Handshake(
+                "timed out waiting for Hello answer".into(),
+            ));
+        }
+        stream
+            .set_read_timeout(Some(remaining))
+            .map_err(|error| ClientError::Handshake(error.to_string()))?;
+        let mut line = Vec::new();
+        let count = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|error| ClientError::Handshake(error.to_string()))?;
+        if Instant::now() >= deadline {
+            return Err(ClientError::Handshake(
+                "timed out waiting for Hello answer".into(),
+            ));
+        }
+        if count == 0 {
+            return Err(ClientError::Handshake("connection closed".into()));
+        }
+        if line.len() > MAX_FRAME_BYTES {
+            return Err(ClientError::Handshake(FrameError::TooLarge.to_string()));
+        }
+        if line.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        return decode_line(&line).map_err(|error| ClientError::Handshake(error.to_string()));
     }
 }
 
@@ -294,4 +325,49 @@ pub fn spawn_daemon(socket: &Path) -> io::Result<()> {
         .stderr(std::process::Stdio::null())
         .process_group(0);
     command.spawn().map(|_| ())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn handshake_deadline_is_absolute_across_blank_lines() {
+        let path = std::env::temp_dir().join(format!(
+            "titan-client-deadline-{}-{}.sock",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut hello = Vec::new();
+            reader.read_until(b'\n', &mut hello).unwrap();
+            loop {
+                thread::sleep(Duration::from_millis(300));
+                if stream.write_all(b"\n").is_err() {
+                    break;
+                }
+            }
+        });
+
+        let stream = UnixStream::connect(&path).unwrap();
+        let mut reader = BufReader::new(stream.try_clone().unwrap());
+        let started = Instant::now();
+        let result = read_handshake(&stream, &mut reader, Duration::from_millis(900));
+        let elapsed = started.elapsed();
+        assert!(matches!(result, Err(ClientError::Handshake(_))));
+        assert!(elapsed >= Duration::from_millis(800));
+        assert!(elapsed < Duration::from_millis(1400));
+        let _ = stream.shutdown(Shutdown::Both);
+        drop(reader);
+        drop(stream);
+        server.join().unwrap();
+        let _ = std::fs::remove_file(path);
+    }
 }
