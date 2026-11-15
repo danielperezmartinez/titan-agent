@@ -1,7 +1,7 @@
 //! Client-side terminal model rendered by the window.
 
 use alacritty_terminal::event::{Event, EventListener};
-use alacritty_terminal::grid::Scroll;
+use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::index::{Column, Line as GridLine};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Config, Term, TermMode};
@@ -108,7 +108,23 @@ impl TerminalModel {
     }
 
     pub fn feed(&mut self, bytes: &[u8]) {
-        self.processor.advance(&mut self.term, bytes);
+        // Alacritty interprets SGR 21 as “bold off”; this model follows the
+        // terminal convention where it enables double underline.
+        let rewritten = if bytes.windows(5).any(|window| window == b"\x1b[21m") {
+            let mut output = Vec::with_capacity(bytes.len());
+            let mut rest = bytes;
+            while let Some(index) = rest.windows(5).position(|window| window == b"\x1b[21m") {
+                output.extend_from_slice(&rest[..index]);
+                output.extend_from_slice(b"\x1b[4:2m");
+                rest = &rest[index + 5..];
+            }
+            output.extend_from_slice(rest);
+            Some(output)
+        } else {
+            None
+        };
+        self.processor
+            .advance(&mut self.term, rewritten.as_deref().unwrap_or(bytes));
     }
 
     pub fn resize(&mut self, cols: u16, rows: u16) {
@@ -126,7 +142,10 @@ impl TerminalModel {
     }
 
     pub fn scroll(&mut self, lines: i32) {
-        self.term.scroll_display(Scroll::Delta(lines));
+        let offset = self.display_offset() as i64;
+        let target = (offset + i64::from(lines)).clamp(0, self.term.grid().history_size() as i64);
+        self.term
+            .scroll_display(Scroll::Delta((target - offset) as i32));
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -210,9 +229,9 @@ impl TerminalModel {
             lines.push(Line { runs });
         }
 
-        let cursor = if offset == 0 && self.term.mode().contains(TermMode::SHOW_CURSOR) {
+        let cursor = if self.term.mode().contains(TermMode::SHOW_CURSOR) {
             let point = self.term.renderable_content().cursor.point;
-            let row = point.line.0;
+            let row = point.line.0 + offset as i32;
             (row >= 0 && row < i32::from(self.rows) && point.column.0 < usize::from(self.cols))
                 .then_some(Cursor {
                     line: row as u16,
