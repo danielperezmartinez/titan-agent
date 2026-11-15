@@ -665,18 +665,36 @@ impl MainWindow {
                                 rgb(theme::CANVAS)
                             })
                             .child(Self::text("[#]", 12.0, theme::MUTE))
-                            .child(Self::text(
-                                project.name.clone(),
-                                12.0,
-                                if active { theme::INK } else { theme::BODY },
-                            ))
-                            .child(div().flex_1().h(px(1.0)).bg(rgb(theme::HAIRLINE_STRONG)))
-                            .child(Self::text(
-                                if team_live { "[*]" } else { "" },
-                                12.0,
-                                theme::SUCCESS,
-                            ))
-                            .child(Self::text(count.to_string(), 12.0, theme::MUTE)),
+                            .child(
+                                div()
+                                    .flex_grow(1.0)
+                                    .flex_shrink(1.0)
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .text_ellipsis()
+                                    .whitespace_nowrap()
+                                    .child(Self::text(
+                                        project.name.clone(),
+                                        12.0,
+                                        if active { theme::INK } else { theme::BODY },
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .h(px(1.0))
+                                    .bg(rgb(theme::HAIRLINE_STRONG)),
+                            )
+                            .child(
+                                Self::text(
+                                    if team_live { "[*]" } else { "" },
+                                    12.0,
+                                    theme::SUCCESS,
+                                )
+                                .flex_none(),
+                            )
+                            .child(Self::text(count.to_string(), 12.0, theme::MUTE).flex_none()),
                     );
                 }
                 TreeRow::Session { key, depth, branch } => {
@@ -812,6 +830,7 @@ impl MainWindow {
             .child(
                 div()
                     .p(px(12.0))
+                    .flex_none()
                     .flex()
                     .flex_col()
                     .gap(px(8.0))
@@ -872,9 +891,10 @@ impl MainWindow {
                             .child(Self::text("por proyecto [v]", 12.0, theme::MUTE)),
                     ),
             )
-            .child(list.flex_1().pb(px(12.0)))
+            .child(list.flex_1().min_h(px(0.0)).pb(px(12.0)))
             .child(
                 div()
+                    .flex_none()
                     .border_t_1()
                     .border_color(rgb(theme::HAIRLINE_STRONG))
                     .p(px(12.0))
@@ -895,6 +915,7 @@ impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = div()
             .h(px(48.0))
+            .flex_none()
             .px(px(16.0))
             .flex()
             .items_center()
@@ -941,33 +962,49 @@ impl Render for MainWindow {
             }
             let info = div()
                 .h(px(40.0))
+                .flex_none()
                 .px(px(16.0))
                 .flex()
                 .items_center()
                 .gap(px(12.0))
                 .border_b_1()
                 .border_color(rgb(theme::HAIRLINE_STRONG))
-                .child(Self::text(session.name.clone(), 13.0, theme::INK))
-                .child(Self::text(format!("{marker} {state}"), 12.0, state_color))
-                .child(Self::text(
-                    view_model::agent_line(&session),
-                    12.0,
-                    view_model::agent_color(session.key.cli),
-                ))
-                .child(Self::text(
-                    titan_agent_core::discovery::display_path(
-                        &session.cwd,
-                        std::env::var("HOME").ok().as_deref(),
-                    ),
-                    12.0,
-                    theme::MUTE,
-                ))
-                .child(div().flex_1())
-                .child(Self::text(
-                    view_model::attach_line(&session).unwrap_or_default(),
-                    12.0,
-                    theme::STONE,
-                ));
+                .child(Self::text(session.name.clone(), 13.0, theme::INK).flex_none())
+                .child(Self::text(format!("{marker} {state}"), 12.0, state_color).flex_none())
+                .child(
+                    Self::text(
+                        view_model::agent_line(&session),
+                        12.0,
+                        view_model::agent_color(session.key.cli),
+                    )
+                    .flex_none(),
+                )
+                .child(
+                    div()
+                        .flex_grow(1.0)
+                        .flex_shrink(1.0)
+                        .min_w(px(0.0))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .whitespace_nowrap()
+                        .child(Self::text(
+                            titan_agent_core::discovery::display_path(
+                                &session.cwd,
+                                std::env::var("HOME").ok().as_deref(),
+                            ),
+                            12.0,
+                            theme::MUTE,
+                        )),
+                )
+                .child(div().flex_1().min_w(px(0.0)))
+                .child(
+                    Self::text(
+                        view_model::attach_line(&session).unwrap_or_default(),
+                        12.0,
+                        theme::STONE,
+                    )
+                    .flex_none(),
+                );
             let view = self.terminals.get(&session.key).cloned();
             let has_terminal_view = view.is_some();
             let terminal_key = session.key.clone();
@@ -1097,6 +1134,9 @@ impl Render for MainWindow {
             );
             let detail_panel = div()
                 .w(px(260.0))
+                .flex_1()
+                .min_h(px(0.0))
+                .min_w(px(260.0))
                 .p(px(16.0))
                 .flex()
                 .flex_col()
@@ -1107,31 +1147,24 @@ impl Render for MainWindow {
                 .child(Self::text("DETALLE", 12.0, theme::MUTE));
             let detail_panel = if let Some(detail) = detail {
                 let key_project = session.project.clone();
-                let mut panel = detail_panel
-                    .child(
-                        div()
-                            .grid()
-                            .grid_cols(2)
-                            .gap(px(8.0))
-                            .child(Self::text("proyecto", 12.0, theme::MUTE))
-                            .child(Self::text(detail.project.clone(), 12.0, theme::BODY))
-                            .child(Self::text("rol", 12.0, theme::MUTE))
-                            .child(Self::text(detail.role, 12.0, theme::BODY))
-                            .child(Self::text("lanzada por", 12.0, theme::MUTE))
-                            .child(Self::text(detail.launched_by, 12.0, theme::BODY))
-                            .child(Self::text("estado desde", 12.0, theme::MUTE))
-                            .child(Self::text(detail.since, 12.0, theme::BODY)),
-                    )
+                let mut talks = div()
+                    .id("detail-talks")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_y_scroll()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.0))
                     .child(Self::text("HABLA CON", 12.0, theme::MUTE));
                 if detail.talks.is_empty() {
-                    panel = panel.child(Self::text(
+                    talks = talks.child(Self::text(
                         "sin comunicaciones conocidas",
                         12.0,
                         theme::MUTE,
                     ));
                 } else {
                     for talk in detail.talks {
-                        panel = panel.child(
+                        talks = talks.child(
                             div()
                                 .w_full()
                                 .min_w(px(0.0))
@@ -1159,17 +1192,33 @@ impl Render for MainWindow {
                         );
                     }
                 }
-                panel.child(
-                    Self::text("[>] ver el monitor del proyecto", 12.0, theme::ACCENT)
-                        .on_mouse_down(
-                            gpui::MouseButton::Left,
-                            cx.listener(move |this, _, _, cx| {
-                                this.focused_session = None;
-                                this.selection = Some(Selection::Project(key_project.clone()));
-                                cx.notify();
-                            }),
-                        ),
-                )
+                detail_panel
+                    .child(
+                        div()
+                            .grid()
+                            .grid_cols(2)
+                            .gap(px(8.0))
+                            .child(Self::text("proyecto", 12.0, theme::MUTE))
+                            .child(Self::text(detail.project.clone(), 12.0, theme::BODY))
+                            .child(Self::text("rol", 12.0, theme::MUTE))
+                            .child(Self::text(detail.role, 12.0, theme::BODY))
+                            .child(Self::text("lanzada por", 12.0, theme::MUTE))
+                            .child(Self::text(detail.launched_by, 12.0, theme::BODY))
+                            .child(Self::text("estado desde", 12.0, theme::MUTE))
+                            .child(Self::text(detail.since, 12.0, theme::BODY)),
+                    )
+                    .child(talks)
+                    .child(
+                        Self::text("[>] ver el monitor del proyecto", 12.0, theme::ACCENT)
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, cx| {
+                                    this.focused_session = None;
+                                    this.selection = Some(Selection::Project(key_project.clone()));
+                                    cx.notify();
+                                }),
+                            ),
+                    )
             } else {
                 detail_panel
             };
@@ -1193,6 +1242,7 @@ impl Render for MainWindow {
             let stop_error = self.stop_errors.get(&session.key).cloned();
             let bottom = div()
                 .mt_auto()
+                .flex_none()
                 .flex()
                 .flex_wrap()
                 .gap(px(8.0))
@@ -1299,13 +1349,22 @@ impl Render for MainWindow {
             } else {
                 detail_panel
             };
-            div().flex_1().flex().flex_col().child(info).child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .child(body)
-                    .child(detail_panel.child(bottom)),
-            )
+            div()
+                .flex_1()
+                .min_h(px(0.0))
+                .min_w(px(0.0))
+                .flex()
+                .flex_col()
+                .child(info)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h(px(0.0))
+                        .min_w(px(0.0))
+                        .flex()
+                        .child(body)
+                        .child(detail_panel.child(bottom)),
+                )
         } else if let Some(Selection::Project(project)) = self.selection.clone() {
             self.render_monitor(&project, cx)
         } else {
@@ -1318,7 +1377,15 @@ impl Render for MainWindow {
             .bg(rgb(theme::CANVAS))
             .text_color(rgb(theme::BODY))
             .child(header)
-            .child(div().flex_1().flex().child(self.sidebar(cx)).child(center))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .flex()
+                    .child(self.sidebar(cx))
+                    .child(center.flex_1().min_h(px(0.0)).min_w(px(0.0))),
+            )
             .font_family(theme::FONT_FAMILY)
             .text_color(rgb(theme::BODY))
             .text_size(px(14.0))
