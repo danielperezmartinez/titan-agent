@@ -13,7 +13,10 @@ use gpui::{
     StyledText, Window, div, px, rgb, rgba,
 };
 use std::path::Path;
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 use titan_agent_core::{
     protocol::{Event, Request, Response},
     session::{Project, Session, SessionKey},
@@ -39,6 +42,8 @@ pub struct MainWindow {
     open_requests: HashMap<u64, SessionKey>,
     stop_requests: HashMap<u64, SessionKey>,
     terminal_errors: HashMap<SessionKey, String>,
+    stop_errors: HashMap<SessionKey, String>,
+    active_terminals: HashSet<SessionKey>,
     terminals: HashMap<SessionKey, Entity<TerminalView>>,
     terminal_ids: HashMap<SessionKey, u64>,
     ended: HashMap<SessionKey, bool>,
@@ -63,6 +68,8 @@ impl MainWindow {
             open_requests: HashMap::new(),
             stop_requests: HashMap::new(),
             terminal_errors: HashMap::new(),
+            stop_errors: HashMap::new(),
+            active_terminals: HashSet::new(),
             terminals: HashMap::new(),
             terminal_ids: HashMap::new(),
             ended: HashMap::new(),
@@ -114,7 +121,7 @@ impl MainWindow {
                                 client.send(Request::Subscribe);
                             }
                             view.terminal_ids.clear();
-                            let reopen: Vec<_> = view.terminals.keys().cloned().collect();
+                            let reopen: Vec<_> = view.active_terminals.iter().cloned().collect();
                             for key in reopen {
                                 view.request_terminal(key, cx);
                             }
@@ -152,6 +159,21 @@ impl MainWindow {
         .detach();
     }
 
+    fn select_new_session(&mut self) {
+        if self.selection != Some(Selection::NewSession) {
+            self.new_session_project = self
+                .selected_session()
+                .map(|s| s.project.clone())
+                .or_else(|| match &self.selection {
+                    Some(Selection::Project(p)) => Some(p.clone()),
+                    _ => None,
+                })
+                .or_else(|| self.sessions.first().map(|s| s.project.clone()));
+        }
+        self.focused_session = None;
+        self.selection = Some(Selection::NewSession);
+    }
+
     fn request_terminal(&mut self, key: SessionKey, cx: &mut Context<Self>) {
         let Some(client) = &self.client else {
             return;
@@ -182,7 +204,7 @@ impl MainWindow {
                 response: Response::Done,
             } => {
                 if let Some(key) = self.stop_requests.remove(&id) {
-                    self.terminal_errors.remove(&key);
+                    self.stop_errors.remove(&key);
                     self.confirm_stop = None;
                 }
             }
@@ -201,6 +223,7 @@ impl MainWindow {
                 self.open_requests.remove(&id);
                 self.terminal_ids.insert(session.clone(), terminal);
                 self.ended.insert(session.clone(), false);
+                self.active_terminals.insert(session.clone());
                 if !self.terminals.contains_key(&session) {
                     let view = cx.new(TerminalView::new);
                     let key = session.clone();
@@ -259,6 +282,7 @@ impl MainWindow {
             Incoming::Event(Event::TerminalExited { terminal, .. }) => {
                 if let Some((key, _)) = self.terminal_ids.iter().find(|(_, id)| **id == terminal) {
                     self.ended.insert(key.clone(), true);
+                    self.active_terminals.remove(key);
                 }
             }
             Incoming::Error { id, error } => {
@@ -267,7 +291,7 @@ impl MainWindow {
                         .insert(key.clone(), error.message.clone());
                     self.errors.insert(id, error.message.clone());
                 } else if let Some(key) = self.stop_requests.remove(&id) {
-                    self.terminal_errors.insert(key, error.message);
+                    self.stop_errors.insert(key, error.message);
                 } else {
                     self.errors.insert(id, error.message);
                 }
@@ -814,18 +838,7 @@ impl MainWindow {
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(|this, _, _, cx| {
-                                    this.new_session_project = this
-                                        .selected_session()
-                                        .map(|s| s.project.clone())
-                                        .or_else(|| match &this.selection {
-                                            Some(Selection::Project(p)) => Some(p.clone()),
-                                            _ => None,
-                                        })
-                                        .or_else(|| {
-                                            this.sessions.first().map(|s| s.project.clone())
-                                        });
-                                    this.focused_session = None;
-                                    this.selection = Some(Selection::NewSession);
+                                    this.select_new_session();
                                     cx.notify();
                                 }),
                             )
@@ -975,7 +988,26 @@ impl Render for MainWindow {
                         theme::MUTE,
                     )))
             } else {
-                let terminal = if self.ended.get(&terminal_key).copied().unwrap_or(false) {
+                let reopening = self.open_requests.values().any(|key| key == &terminal_key);
+                let terminal = if self.terminal_errors.contains_key(&terminal_key) {
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Self::text(
+                            self.terminal_errors[&terminal_key].clone(),
+                            13.0,
+                            theme::DANGER,
+                        ))
+                } else if reopening {
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Self::text("[>] reabriendo terminal…", 12.0, theme::MUTE))
+                } else if self.ended.get(&terminal_key).copied().unwrap_or(false) {
                     let key = terminal_key.clone();
                     div().flex_1().flex().items_center().justify_center().child(
                         div()
@@ -987,6 +1019,8 @@ impl Render for MainWindow {
                                     gpui::MouseButton::Left,
                                     cx.listener(move |this, _, _, cx| {
                                         this.terminal_ids.remove(&key);
+                                        this.terminal_errors.remove(&key);
+                                        this.open_requests.retain(|_, pending| pending != &key);
                                         this.ended.insert(key.clone(), true);
                                         this.request_terminal(key.clone(), cx);
                                         cx.notify();
@@ -994,13 +1028,6 @@ impl Render for MainWindow {
                                 ),
                             ),
                     )
-                } else if let Some(message) = self.terminal_errors.get(&terminal_key) {
-                    div()
-                        .flex_1()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(Self::text(message.clone(), 13.0, theme::DANGER))
                 } else if let Some(view) = view {
                     div().flex_1().child(view)
                 } else {
@@ -1163,7 +1190,7 @@ impl Render for MainWindow {
                     view_model::StopAction::Disabled => "[x] detener",
                 }
             };
-            let stop_error = self.terminal_errors.get(&session.key).cloned();
+            let stop_error = self.stop_errors.get(&session.key).cloned();
             let bottom = div()
                 .mt_auto()
                 .flex()
@@ -1215,7 +1242,7 @@ impl Render for MainWindow {
                                     k == &stopped_key && t.elapsed() < Duration::from_secs(4)
                                 }) {
                                     this.confirm_stop = None;
-                                    this.terminal_errors.remove(&stopped_key);
+                                    this.stop_errors.remove(&stopped_key);
                                     if let Some(client) = &this.client {
                                         match action {
                                             view_model::StopAction::StopSession => {
@@ -1299,16 +1326,7 @@ impl Render for MainWindow {
                 if event.keystroke.key.eq_ignore_ascii_case("n")
                     && (event.keystroke.modifiers.control || event.keystroke.modifiers.platform)
                 {
-                    this.new_session_project = this
-                        .selected_session()
-                        .map(|s| s.project.clone())
-                        .or_else(|| match &this.selection {
-                            Some(Selection::Project(p)) => Some(p.clone()),
-                            _ => None,
-                        })
-                        .or_else(|| this.sessions.first().map(|s| s.project.clone()));
-                    this.focused_session = None;
-                    this.selection = Some(Selection::NewSession);
+                    this.select_new_session();
                     cx.notify();
                 }
             }))
