@@ -1,6 +1,7 @@
 //! titan-agent library: the GPUI-free parts of the interface (daemon client,
 //! terminal model) and the window, used by the binary and the tests.
 
+pub mod app;
 pub mod client;
 pub mod fonts;
 pub mod terminal_model;
