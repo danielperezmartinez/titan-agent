@@ -4,9 +4,10 @@ use crate::source::{SessionSource, StopError};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{BufReader, Read, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
+use std::sync::Condvar;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -15,6 +16,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use titan_agent_core::paths::lock_path;
 use titan_agent_core::protocol::*;
 use titan_agent_core::session::{Session, SessionKey};
+
+// Lock order: registry -> terminal state -> terminal process. Never acquire an
+// earlier lock while holding a later one. Socket writes, source calls, and
+// PtyProcess::kill always happen without these locks held.
 
 pub struct DaemonConfig {
     pub socket: PathBuf,
@@ -63,9 +68,10 @@ impl ShutdownHandle {
 }
 
 struct Client {
-    tx: SyncSender<Vec<u8>>,
+    tx: Mutex<Option<SyncSender<Vec<u8>>>>,
     stream: UnixStream,
     subscribed: AtomicBool,
+    writer_done: Arc<AtomicBool>,
 }
 type Clients = Arc<Mutex<HashMap<u64, Arc<Client>>>>;
 struct TermState {
@@ -84,6 +90,7 @@ struct Registry {
     terminals: HashMap<TerminalId, Arc<Terminal>>,
     sessions: HashMap<SessionKey, TerminalId>,
     next: u64,
+    closed: bool,
 }
 struct Shared {
     clients: Clients,
@@ -91,7 +98,12 @@ struct Shared {
     sessions: Mutex<Vec<Session>>,
     source: Mutex<Box<dyn SessionSource>>,
     shutdown: Arc<AtomicBool>,
+    discovery: (Mutex<DiscoveryState>, Condvar),
     config: DaemonConfig,
+}
+struct DiscoveryState {
+    subscribed: bool,
+    requested: bool,
 }
 pub struct Daemon {
     shared: Arc<Shared>,
@@ -109,8 +121,9 @@ impl Daemon {
             .socket
             .parent()
             .ok_or_else(|| std::io::Error::other("socket has no parent"))?;
-        fs::create_dir_all(parent)?;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true).mode(0o700);
+        builder.create(parent)?;
         let lock_path = lock_path(&config.socket);
         let lock = File::options()
             .create(true)
@@ -134,10 +147,18 @@ impl Daemon {
                 terminals: HashMap::new(),
                 sessions: HashMap::new(),
                 next: 1,
+                closed: false,
             }),
             sessions: Mutex::new(sessions),
             source: Mutex::new(source),
             shutdown: Arc::new(AtomicBool::new(false)),
+            discovery: (
+                Mutex::new(DiscoveryState {
+                    subscribed: false,
+                    requested: false,
+                }),
+                Condvar::new(),
+            ),
             config,
         });
         Ok(Daemon {
@@ -154,41 +175,55 @@ impl Daemon {
     }
     pub fn run(mut self) -> Result<(), DaemonError> {
         let mut workers = Vec::new();
-        let mut last_poll = std::time::Instant::now();
+        let discovery_shared = self.shared.clone();
+        let discovery_thread = thread::spawn(move || discovery_loop(discovery_shared));
         while !self.shared.shutdown.load(Ordering::Acquire) {
             match self.listener.accept() {
                 Ok((stream, _)) => {
                     let id = NEXT_CLIENT.fetch_add(1, Ordering::Relaxed);
                     let (tx, rx) = mpsc::sync_channel(self.shared.config.client_queue.max(1));
-                    let writer = stream.try_clone()?;
+                    let writer_done = Arc::new(AtomicBool::new(false));
+                    let writer = match stream.try_clone() {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("titan-agentd: {e}");
+                            continue;
+                        }
+                    };
                     let client = Arc::new(Client {
-                        tx,
-                        stream: stream.try_clone()?,
+                        tx: Mutex::new(Some(tx)),
+                        stream: match stream.try_clone() {
+                            Ok(v) => v,
+                            Err(e) => {
+                                eprintln!("titan-agentd: {e}");
+                                continue;
+                            }
+                        },
                         subscribed: AtomicBool::new(false),
+                        writer_done: writer_done.clone(),
                     });
                     self.shared.clients.lock().unwrap().insert(id, client);
-                    workers.push(thread::spawn(move || writer_loop(writer, rx)));
+                    workers.push(thread::spawn(move || writer_loop(writer, rx, writer_done)));
                     let s = self.shared.clone();
                     workers.push(thread::spawn(move || client_loop(stream, id, s)));
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     thread::sleep(Duration::from_millis(10))
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => {
+                    eprintln!("titan-agentd accept: {e}");
+                    thread::sleep(Duration::from_millis(50));
+                }
             }
-            if self
-                .shared
-                .clients
-                .lock()
-                .unwrap()
-                .values()
-                .any(|c| c.subscribed.load(Ordering::Acquire))
-                && last_poll.elapsed() >= self.shared.config.poll_interval
-            {
-                poll_sessions(&self.shared);
-                last_poll = std::time::Instant::now();
-            }
-            thread::sleep(Duration::from_millis(10));
+        }
+        {
+            let mut reg = self.shared.registry.lock().unwrap();
+            reg.closed = true;
+        }
+        {
+            let (lock, cv) = &self.shared.discovery;
+            lock.lock().unwrap().requested = true;
+            cv.notify_all();
         }
         let clients: Vec<_> = self
             .shared
@@ -199,9 +234,20 @@ impl Daemon {
             .cloned()
             .collect();
         for c in &clients {
-            let _ = c.stream.shutdown(std::net::Shutdown::Both);
+            c.tx.lock().unwrap().take();
         }
         self.shared.clients.lock().unwrap().clear();
+        let drain_deadline = std::time::Instant::now() + Duration::from_secs(1);
+        while clients
+            .iter()
+            .any(|c| !c.writer_done.load(Ordering::Acquire))
+            && std::time::Instant::now() < drain_deadline
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
+        for c in &clients {
+            let _ = c.stream.shutdown(std::net::Shutdown::Both);
+        }
         drop(clients);
         let terms: Vec<_> = self
             .shared
@@ -215,7 +261,8 @@ impl Daemon {
         let mut killers = Vec::new();
         for t in terms {
             killers.push(thread::spawn(move || {
-                if let Some(p) = t.process.lock().unwrap().clone() {
+                let process = t.process.lock().unwrap().clone();
+                if let Some(p) = process {
                     p.kill(t.grace)
                 }
             }));
@@ -226,6 +273,7 @@ impl Daemon {
         for h in workers {
             let _ = h.join();
         }
+        let _ = discovery_thread.join();
         let _ = fs::remove_file(&self.socket);
         self.lock.take();
         Ok(())
@@ -251,9 +299,15 @@ fn normalize(mut rows: Vec<Session>, previous: Option<&[Session]>) -> Vec<Sessio
     rows
 }
 fn send(client: &Client, msg: ServerMessage) -> bool {
-    match client.tx.try_send(encode_line(&msg)) {
-        Ok(()) => true,
-        Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+    let result = client
+        .tx
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|tx| tx.try_send(encode_line(&msg)));
+    match result {
+        Some(Ok(())) => true,
+        Some(Err(TrySendError::Full(_) | TrySendError::Disconnected(_))) | None => {
             let _ = client.stream.shutdown(std::net::Shutdown::Both);
             false
         }
@@ -271,13 +325,14 @@ fn error(id: u64, c: ErrorCode, m: &str) -> ServerMessage {
         },
     }
 }
-fn writer_loop(mut stream: UnixStream, rx: mpsc::Receiver<Vec<u8>>) {
+fn writer_loop(mut stream: UnixStream, rx: mpsc::Receiver<Vec<u8>>, done: Arc<AtomicBool>) {
     for bytes in rx {
         if stream.write_all(&bytes).is_err() {
             break;
         }
     }
     let _ = stream.shutdown(std::net::Shutdown::Both);
+    done.store(true, Ordering::Release);
 }
 fn client_loop(stream: UnixStream, id: u64, shared: Arc<Shared>) {
     let mut reader = BufReader::new(stream);
@@ -405,6 +460,37 @@ fn poll_sessions(s: &Shared) {
     }
 }
 
+fn discovery_loop(s: Arc<Shared>) {
+    loop {
+        let (lock, cv) = &s.discovery;
+        let mut state = lock.lock().unwrap();
+        while !state.subscribed && !state.requested && !s.shutdown.load(Ordering::Acquire) {
+            state = cv.wait(state).unwrap();
+        }
+        if s.shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        let immediate = std::mem::take(&mut state.requested);
+        if !immediate && state.subscribed {
+            let (next, _) = cv.wait_timeout(state, s.config.poll_interval).unwrap();
+            state = next;
+            if s.shutdown.load(Ordering::Acquire) {
+                return;
+            }
+            if std::mem::take(&mut state.requested) {
+                drop(state);
+                poll_sessions(&s);
+                continue;
+            }
+            if !state.subscribed {
+                continue;
+            }
+        }
+        drop(state);
+        poll_sessions(&s);
+    }
+}
+
 fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
     let c = s.clients.lock().unwrap().get(&id).cloned();
     let Some(c) = c else { return true };
@@ -414,6 +500,9 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
             let rows = sessions.clone();
             send(&c, reply(m.id, Response::Sessions { sessions: rows }));
             c.subscribed.store(true, Ordering::Release);
+            let (lock, cv) = &s.discovery;
+            lock.lock().unwrap().subscribed = true;
+            cv.notify_all();
         }
         Request::Shutdown => {
             send(&c, reply(m.id, Response::Done));
@@ -438,8 +527,10 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
                     let result = s.source.lock().unwrap().stop(&session);
                     match result {
                         Ok(()) => {
-                            poll_sessions(s);
                             send(&c, reply(m.id, Response::Done));
+                            let (lock, cv) = &s.discovery;
+                            lock.lock().unwrap().requested = true;
+                            cv.notify_all();
                         }
                         Err(StopError::Unsupported(e)) => {
                             send(&c, error(m.id, ErrorCode::Unsupported, &e));
@@ -483,11 +574,12 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
             rows,
         } => {
             if !with_terminal(terminal, s, |t| {
+                let mut state = t.state.lock().unwrap();
+                state.emulator.resize(cols, rows);
                 let p = t.process.lock().unwrap().clone();
                 if let Some(p) = p {
                     let _ = p.resize(cols, rows);
                 }
-                t.state.lock().unwrap().emulator.resize(cols, rows);
                 send(&c, reply(m.id, Response::Done));
             }) {
                 send(
@@ -510,7 +602,8 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
         Request::CloseTerminal { terminal } => {
             let term = s.registry.lock().unwrap().terminals.get(&terminal).cloned();
             if let Some(t) = term {
-                if let Some(p) = t.process.lock().unwrap().clone() {
+                let process = t.process.lock().unwrap().clone();
+                if let Some(p) = process {
                     p.kill(s.config.kill_grace);
                 }
                 exit_terminal(&t, None);
@@ -530,9 +623,11 @@ fn handle_request(m: ClientMessage, id: u64, s: &Arc<Shared>) -> bool {
 }
 fn with_terminal(id: u64, s: &Shared, f: impl FnOnce(&Arc<Terminal>)) -> bool {
     let t = s.registry.lock().unwrap().terminals.get(&id).cloned();
-    if let Some(t) = t
-        && !t.state.lock().unwrap().exited
-    {
+    if let Some(t) = t {
+        let exited = t.state.lock().unwrap().exited;
+        if exited {
+            return false;
+        }
         f(&t);
         return true;
     }
@@ -565,68 +660,45 @@ fn open_terminal(
         );
         return;
     };
-    let existing = {
-        let registry = s.registry.lock().unwrap();
-        registry
+    let (t, reused) = {
+        let mut reg = s.registry.lock().unwrap();
+        if reg.closed {
+            send(c, error(req, ErrorCode::Internal, "shutting down"));
+            return;
+        }
+        let existing = reg
             .sessions
             .get(&key)
-            .and_then(|id| registry.terminals.get(id))
-            .cloned()
-    };
-    let reused = existing
-        .as_ref()
-        .is_some_and(|t| !t.state.lock().unwrap().exited);
-    let t = if let Some(t) = existing.filter(|t| !t.state.lock().unwrap().exited) {
-        t
-    } else {
-        let id = {
-            let mut reg = s.registry.lock().unwrap();
-            let id = reg.next;
-            reg.next += 1;
-            id
-        };
-        let terminal = Arc::new(Terminal {
-            id,
-            state: Mutex::new(TermState {
-                emulator: Emulator::new(cols, rows, 1000),
-                clients: HashSet::new(),
-                exited: false,
-            }),
-            process: Mutex::new(None),
-            grace: s.config.kill_grace,
-            clients: s.clients.clone(),
-        });
-        let handler = TerminalHandler {
-            terminal: terminal.clone(),
-        };
-        let cwd = std::path::Path::new(&session.cwd)
-            .is_dir()
-            .then(|| PathBuf::from(&session.cwd));
-        match PtyProcess::spawn(
-            PtySpawn {
-                argv,
-                cwd,
-                env: Vec::new(),
-                cols,
-                rows,
-            },
-            handler,
-        ) {
-            Ok(p) => {
-                *terminal.process.lock().unwrap() = Some(Arc::new(p));
-                let mut reg = s.registry.lock().unwrap();
-                reg.sessions.insert(key.clone(), id);
-                reg.terminals.insert(id, terminal.clone());
+            .and_then(|id| reg.terminals.get(id))
+            .cloned();
+        if let Some(existing) = existing {
+            let exited = existing.state.lock().unwrap().exited;
+            if !exited {
+                (existing, true)
+            } else {
+                match spawn_terminal(&mut reg, &session, key.clone(), cols, rows, argv, s) {
+                    Ok(t) => (t, false),
+                    Err(()) => {
+                        send(
+                            c,
+                            error(req, ErrorCode::SpawnFailed, "failed to start terminal"),
+                        );
+                        return;
+                    }
+                }
             }
-            Err(_) => {
-                send(
-                    c,
-                    error(req, ErrorCode::SpawnFailed, "failed to start terminal"),
-                );
-                return;
+        } else {
+            match spawn_terminal(&mut reg, &session, key.clone(), cols, rows, argv, s) {
+                Ok(t) => (t, false),
+                Err(()) => {
+                    send(
+                        c,
+                        error(req, ErrorCode::SpawnFailed, "failed to start terminal"),
+                    );
+                    return;
+                }
             }
         }
-        terminal
     };
     let mut state = t.state.lock().unwrap();
     let (actual_cols, actual_rows) = state.emulator.size();
@@ -658,7 +730,70 @@ fn open_terminal(
             },
         },
     );
-    state.clients.insert(client);
+    let already_exited = state.exited;
+    if !already_exited {
+        state.clients.insert(client);
+    }
+    drop(state);
+    if already_exited {
+        send(
+            c,
+            ServerMessage::Event {
+                event: Event::TerminalExited {
+                    terminal: t.id,
+                    code: None,
+                },
+            },
+        );
+    }
+}
+
+fn spawn_terminal(
+    reg: &mut Registry,
+    session: &Session,
+    key: SessionKey,
+    cols: u16,
+    rows: u16,
+    argv: Vec<String>,
+    s: &Shared,
+) -> Result<Arc<Terminal>, ()> {
+    let id = reg.next;
+    reg.next += 1;
+    let terminal = Arc::new(Terminal {
+        id,
+        state: Mutex::new(TermState {
+            emulator: Emulator::new(cols, rows, 1000),
+            clients: HashSet::new(),
+            exited: false,
+        }),
+        process: Mutex::new(None),
+        grace: s.config.kill_grace,
+        clients: s.clients.clone(),
+    });
+    let handler = TerminalHandler {
+        terminal: terminal.clone(),
+    };
+    let cwd = std::path::Path::new(&session.cwd)
+        .is_dir()
+        .then(|| PathBuf::from(&session.cwd));
+    match PtyProcess::spawn(
+        PtySpawn {
+            argv,
+            cwd,
+            env: Vec::new(),
+            cols,
+            rows,
+        },
+        handler,
+    ) {
+        Ok(p) => {
+            *terminal.process.lock().unwrap() = Some(Arc::new(p));
+            reg.sessions.insert(key, id);
+            reg.terminals.insert(id, terminal.clone());
+            Ok(terminal)
+        }
+        Err(_) => Err(()),
+    }
 }
 struct TerminalHandler {
     terminal: Arc<Terminal>,
@@ -685,8 +820,9 @@ impl PtyHandler for TerminalHandler {
             }
         }
         drop(state);
+        let process = self.terminal.process.lock().unwrap().clone();
         if !replies.is_empty()
-            && let Some(p) = self.terminal.process.lock().unwrap().clone()
+            && let Some(p) = process
         {
             let _ = p.write(&replies);
         }
