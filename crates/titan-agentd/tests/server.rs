@@ -1199,3 +1199,156 @@ fn bind_returns_io_error_when_socket_parent_is_a_file() {
         Err(DaemonError::Io(_))
     ));
 }
+
+#[test]
+fn concurrent_opens_share_one_terminal_and_spawn_only_one_process() {
+    let dir = TempDir::new();
+    let mut fixture = session(
+        "concurrent-open",
+        Some("echo started >> started; printf 'ready\\n'; exec cat"),
+    );
+    fixture.cwd = dir.0.to_string_lossy().into_owned();
+    let daemon = Running::start(vec![fixture]);
+    let barrier = Arc::new(std::sync::Barrier::new(2));
+    let (tx, rx) = mpsc::channel();
+    let mut workers = Vec::new();
+    for _ in 0..2 {
+        let mut client = daemon.client();
+        client.hello();
+        let barrier = barrier.clone();
+        let tx = tx.clone();
+        workers.push(thread::spawn(move || {
+            barrier.wait();
+            let (terminal, reused) = match client
+                .request(Request::OpenTerminal {
+                    session: key("concurrent-open"),
+                    cols: 80,
+                    rows: 24,
+                })
+                .unwrap()
+            {
+                Response::TerminalOpened {
+                    terminal, reused, ..
+                } => (terminal, reused),
+                other => panic!("expected TerminalOpened, got {other:?}"),
+            };
+            let snapshot = match client.event_until(Instant::now() + LIMIT) {
+                Event::TerminalSnapshot {
+                    terminal: actual,
+                    data,
+                    ..
+                } => {
+                    assert_eq!(actual, terminal);
+                    data.0
+                }
+                other => panic!("expected snapshot, got {other:?}"),
+            };
+            // The marker is written before ready, so both spawns (if any) have
+            // reached the marker before the parent inspects the file.
+            if !contains(&snapshot, b"ready") {
+                client.output_contains(terminal, b"ready");
+            }
+            tx.send((terminal, reused, client)).unwrap();
+        }));
+    }
+    drop(tx);
+    let deadline = Instant::now() + LIMIT;
+    let first = rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .unwrap();
+    let second = rx
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .unwrap();
+    for worker in workers {
+        worker.join().unwrap();
+    }
+    assert_eq!(first.0, second.0);
+    assert_ne!(
+        first.1, second.1,
+        "exactly one open must create the terminal"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.0.join("started")).unwrap(),
+        "started\n"
+    );
+}
+
+#[test]
+fn close_terminal_completes_while_program_continuously_queries_cursor_position() {
+    let daemon = Running::start(vec![session(
+        "cursor-queries",
+        Some("while :; do printf '\\033[6n'; sleep 0.01; done"),
+    )]);
+    let mut client = daemon.client();
+    client.hello();
+    let (terminal, _) = client.open(key("cursor-queries"), 80, 24, false);
+    client.output_contains(terminal, b"\x1b[6n");
+    let started = Instant::now();
+    let deadline = started + Duration::from_secs(5);
+    let id = client.send(Request::CloseTerminal { terminal });
+    loop {
+        match client
+            .receive_until(deadline)
+            .unwrap()
+            .expect("missing close reply")
+        {
+            ServerMessage::Event { .. } => {}
+            ServerMessage::Response {
+                id: actual,
+                response,
+            } => {
+                assert_eq!(actual, id);
+                assert_eq!(response, Response::Done);
+                break;
+            }
+            other => panic!("expected close reply, got {other:?}"),
+        }
+    }
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+#[test]
+fn shutdown_sender_receives_done_before_connection_closes() {
+    let mut daemon = Running::start(vec![]);
+    let mut client = daemon.client();
+    client.hello();
+    let id = client.send(Request::Shutdown);
+    assert_eq!(
+        client.receive_until(Instant::now() + LIMIT).unwrap(),
+        Some(ServerMessage::Response {
+            id,
+            response: Response::Done,
+        })
+    );
+    client.closed();
+    daemon.finish();
+}
+
+#[test]
+fn bind_preserves_existing_directory_permissions_and_creates_private_directory() {
+    let dir = TempDir::new();
+    for (name, existing, expected) in [("existing", true, 0o755), ("new", false, 0o700)] {
+        let folder = dir.0.join(name);
+        if existing {
+            fs::create_dir(&folder).unwrap();
+            fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+        } else {
+            assert!(!folder.exists());
+        }
+        let daemon =
+            Daemon::bind(DaemonConfig::new(folder.join("s")), Box::new(EmptySource)).unwrap();
+        let mode = fs::metadata(&folder).unwrap().permissions().mode() & 0o777;
+        let shutdown = daemon.shutdown_handle();
+        let (tx, rx) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _ = tx.send(daemon.run());
+        });
+        shutdown.shutdown();
+        rx.recv_timeout(LIMIT).unwrap().unwrap();
+        worker.join().unwrap();
+        assert_eq!(
+            mode, expected,
+            "unexpected permissions for {name} directory"
+        );
+    }
+}
