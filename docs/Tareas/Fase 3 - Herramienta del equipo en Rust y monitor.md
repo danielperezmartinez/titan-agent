@@ -2,10 +2,10 @@
 Nombre: Fase 3 - Herramienta del equipo en Rust y monitor
 Estado: En curso
 Resumen: Reescribir en Rust la herramienta del equipo (titan-team, con su skill) con un formato de eventos versionado, hacer que el daemon lo lea, y construir el monitor del proyecto con sus tres vistas (grafo, carriles, mesa de control) en la zona central.
-Decisiones: '[[Decisiones/ADR-0010 Formato de team.toml y de los eventos del equipo]]'
+Decisiones: '[[Decisiones/ADR-0010 Formato de team.toml y de los eventos del equipo]]. Variante equipo v4 (rama feat/fase-3-equipo-v4, sin push). Cuota de Codex por account/rateLimits/read; Claude «sin dato». bin/team pasa a envoltorio de titan-team. Versión sin subir: propuesta 0.4.0 (minor), pendiente de acordar.'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-16T18:42:00+01:00
+Última modificación: 2026-11-16T20:55:00+01:00
 ---
 
 # Fase 3 - Herramienta del equipo en Rust y monitor
@@ -141,4 +141,130 @@ Los roles de Codex mantienen su sandbox. Inicio: 2026-11-16 18:23.
 
 ## Verificación
 
+Variante **equipo v4** (rama `feat/fase-3-equipo-v4`, sin push), en local el
+2026-11-16:
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde: **107 tests de Rust** (65 de
+  antes y 42 nuevos: **7 de aceptación** de Sol, sin tocar desde su commit
+  `4bc8129`, y **35 propios**). Los 15 tests de Python de `bin/test_team.py` se
+  retiraron con el prototipo. Hooks de gitleaks en cada commit, sin fugas.
+- `crates/titan-agent-core/tests/protocol.rs` (de la fase 1, no de Sol) añade
+  `teams: vec![]` y `quotas: vec![]` a su literal del evento `sessions`:
+  adaptación mecánica para compilar, sin tocar aserciones.
+- **Encargo real del equipo en el monitor**: la propia revisión de Sol se hizo
+  ya con `titan-team` en Rust (`bin/team`), y sus eventos reales (encargo,
+  turno, cada orden que ejecutaba Sol) se vieron en vivo en las tres vistas,
+  con un daemon de prueba en un socket propio, CLI falsos y una sesión de
+  director inventada en este worktree (capturas `real-*.png`). No se tocó
+  ninguna sesión real del usuario ni el socket de la build de main.
+- **Equipo de un proyecto nuevo solo con `team.toml`**: en un repo vacío y
+  temporal, un `team.toml` con otros roles (jefe y crítico) y un prompt;
+  `titan-team check` explicó un valor erróneo (`roles.critico.effort:
+  unknown_value`) y, corregido, `roles`, `new` y `ask --dry-run` funcionaron sin
+  cambiar código. Se borró después.
+- **Cuota**: `account/rateLimits/read` comprobado contra el Codex real (lectura
+  en frío, sin hilos); en las capturas, la cuota viene de un app-server falso.
+- Capturas reales solo de la ventana de esta variante (KWin confirma el PID de
+  la ventana activa antes de cada captura y se descarta la que no mide
+  1440×900) en `.previa/fase-3-equipo-v4/` (ignorada por git), con datos
+  inventados; previas renderizadas en `previa-*.png`.
+- **Pendiente del usuario**: probar la ventana (clic en los botones, en un
+  agente para abrir su sesión y en `[ventana 36 s]`): no hay inyección de
+  clics. Y acordar la versión (propuesta 0.4.0) antes de la PR.
+
 ## Resultado
+
+- **`titan-team`** (crate `crates/titan-team`): mismas órdenes que el
+  prototipo (`roles/new/ask/show/diff/test/close`) más `check` y `decide`;
+  `team.toml` v1 validado con todos los errores a la vez (ruta y código);
+  opciones por orden; bloqueo por encargo; tope de rondas antes de ejecutar
+  nada; Codex sin shell, con tiempo límite que mata su grupo de procesos;
+  commit por turno y avisos de rutas; `events.jsonl` versionado con la
+  actividad en vivo de Codex. `bin/team` es ahora un envoltorio de shell.
+- **Núcleo**: `team` (eventos v1 y `TeamRun`), `quota`
+  (`parse_codex_rate_limits`) y `monitor` (el tablero que dibujan las tres
+  vistas, con sus tests). Protocolo: `teams` y `quotas` en `sessions`.
+- **Daemon**: `teams.rs` sigue los `events.jsonl` de las carpetas de las
+  sesiones conocidas (lectura incremental, solo lectura); cuota de Codex una
+  vez por minuto. `hub.rs` dividido por Luna en `hub.rs`, `hub/launch.rs` y
+  `hub/terminals.rs` ([[Llevar hub.rs y brief.rs bajo el umbral de tamaño]]).
+- **Interfaz**: `app/monitor.rs` (barra, pestañas y piezas comunes) y una vista
+  por módulo: `monitor/graph.rs`, `monitor/lanes.rs`, `monitor/desk.rs`. El
+  monitor se redibuja cada 100 ms solo mientras está en pantalla.
+- Bóveda: [[Decisiones/ADR-0010 Formato de team.toml y de los eventos del
+  equipo]] (con sus ampliaciones tras la revisión),
+  [[Investigar la cuota restante de cada CLI]] recuperada y al día, y la
+  skill `equipo` y `team.toml` descritos como v4.
+- Aplazado: abrir desde el monitor un hilo de Codex que el daemon ya no lista
+  (más de 20 min sin actualizarse) necesitaría una orden nueva del protocolo.
+  Pendiente aparte: dividir `brief.rs`.
+
+### Revisión de Sol (una ronda, contexto limpio)
+
+`fase-3-revision`, gpt-6.1-sol high, hilo nuevo con la especificación y el
+diff `54976da..HEAD`: `changes_requested`, **8 mayores, 10 menores y 1
+pregunta**. Decisiones:
+
+- **Aceptados (16)**: tests ejecutados antes del `--dry-run` y del tope de
+  rondas; opciones aceptadas por cualquier orden (`close --dry-run` borraba de
+  verdad); sin exclusión entre procesos (bloqueo por encargo); un commit
+  fallido dejaba el turno sin `turn_finished`; errores de escritura de eventos
+  ocultos (ahora no se lanza Codex sin sus eventos iniciales); tiempo límite
+  saltado con salida continua; procesos en segundo plano que retenían las
+  tuberías; el daemon cerraba encargos con un `task_closed` inválido; avisos de
+  rutas sin `autocommit`; `fnmatch` incompleto; `config` sin validar
+  `clave=valor`; `thread_id` viejo tras `--new`; hora del último evento en vez
+  del máximo; rutas fuera de la base sin `..`; el grafo descartaba roles; la
+  salida de `test` truncada.
+- **Aceptado en parte (1)**: comentarios en español. Los de `bin/team` pasan
+  al inglés; los de `team.toml` y `ci.yml` siguen en español como el resto de
+  esos ficheros de configuración.
+- **Aplazado (1)**: abrir hilos que el daemon ya no lista (arriba).
+- **Pregunta (1)**: con más de 300 eventos se perdía `task_created` y el
+  monitor decía «Sin equipo». Respuesta: dos campos opcionales en `TeamTask`
+  (`created` y `totals`), sin tocar el límite ni el test de Sol; anotado en
+  ADR-0010.
+
+### Evaluación visual (subagente de Opus nuevo en cada ronda)
+
+- Ronda 1: **8/10** (barra 9, grafo 7,5, carriles 6,5, mesa 9, acabado 7). Las
+  etiquetas de los mensajes se solapaban o cortaban en carriles y las tapaban
+  las cajas en el grafo; al nodo «tú» le faltaba «usuario»; el director no
+  mostraba un recuento; «ahora» repetido en el feed. Corregido todo salvo el
+  espaciado entre letras de los rótulos (GPUI no lo tiene).
+- Ronda 2: **9/10** (barra 10, grafo 9, carriles 8,5, mesa 8,5, acabado 8,5).
+  Quedaban: la franja no decía cuál de los dos «sol» hablaba, «1 hallazgos»,
+  etiquetas de carriles demasiado cortas y acción cortada en tarjetas
+  estrechas. Corregidos (segunda y última ronda de correcciones). La flecha
+  `->` no se convierte en ligadura porque la ventana las desactiva a propósito.
+
+### Métricas (experimento: variante equipo v4)
+
+- **Tiempo**: de 18:23 a 20:55, con una parada por el límite de uso de Claude
+  de unos 78 min (19:02–20:20). Trabajo efectivo: unos **74 min**.
+- **Uso de Claude** (transcript, Opus 5.5): sesión principal 178 respuestas y
+  unas 300 llamadas a herramientas; **251 k tokens de salida, 881 k de
+  escritura en caché y 62,9 M de lectura de caché**. Subagentes (los tres de
+  Opus): render de las previas 13 k de salida, 112 k de escritura y 1,4 M de
+  lectura; evaluador ronda 1 25 k, 129 k y 2,2 M; evaluador ronda 2 24 k,
+  123 k y 2,4 M.
+- **Codex**: 3 llamadas. Luna (mecánico, división de `hub.rs`): 308 k de
+  entrada (245 k en caché), 5,8 k de salida, 145 s. Sol (tests de
+  aceptación, medium): 298 k (283 k en caché), 11 k de salida, 251 s. Sol
+  (revisión, high): 2,59 M (2,44 M en caché), 14 k de salida, 458 s. Cuota de
+  ChatGPT Plus al empezar: 3 % usado en 5 h.
+- **Tests**: 42 nuevos (7 de aceptación + 35 propios); 107 en total.
+- **Hallazgos**: Sol 8 mayores + 10 menores + 1 pregunta (16 aceptados, 1 en
+  parte, 1 aplazado, la pregunta resuelta); evaluador visual 6 en la ronda 1
+  (5 corregidos) y 5 en la ronda 2 (4 corregidos).
+- **Autoevaluación visual**: fiel a las previas en medidas y colores (9/10
+  del evaluador independiente, medido al píxel). Diferencias deliberadas:
+  datos y roles reales, cuota por cuenta y «sin dato» para Claude, control de
+  ventana en carriles, «encargos» en lugar de «turnos» para el director, sin
+  espaciado de letras ni ligaduras.
+- **Incidencia**: la primera captura cogió por error una ventana de terminal
+  del usuario, con la sesión de la otra variante (el foco no había llegado a
+  la ventana nueva). Se borró sin usarla y desde entonces cada captura comprueba antes el PID de la ventana
+  activa.
+
