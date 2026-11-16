@@ -418,6 +418,23 @@ mod tests {
     }
 
     #[test]
+    fn launched_here_is_marked_and_only_serialized_when_true() {
+        let provisional = spec(AgentCli::Codex, "hola").provisional_session("launch:1", 0);
+        assert!(provisional.launched_here);
+        let value = serde_json::to_value(&provisional).unwrap();
+        assert_eq!(value["launched_here"], true);
+
+        let mut other = provisional.clone();
+        other.launched_here = false;
+        let mut value = serde_json::to_value(&other).unwrap();
+        assert!(value.get("launched_here").is_none());
+        // An older daemon does not send the field at all.
+        value.as_object_mut().unwrap().remove("launched_here");
+        let back: Session = serde_json::from_value(value).unwrap();
+        assert!(!back.launched_here);
+    }
+
+    #[test]
     fn codex_argv() {
         let s = spec(AgentCli::Codex, "-x it's");
         assert_eq!(

@@ -18,18 +18,10 @@ use crate::brief::BriefInput;
 use crate::terminal::TerminalView;
 use crate::theme::{self, color, hairline};
 
-use super::menu::{MenuItem, Pick, chip, menu_list, permission_title, plain_item, with_current};
+use super::menu::{
+    Menu, MenuItem, Pick, chip, menu_list, permission_title, plain_item, with_current,
+};
 use super::{MainView, Pending, Selection};
-
-/// The setting a button of the "new session" box opens.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Menu {
-    Agent,
-    Model,
-    Effort,
-    Permission,
-    Project,
-}
 
 /// State of the "new session" box (ADR-0002: the brief is only what the
 /// user types; one click, one launch; the exact command is shown).

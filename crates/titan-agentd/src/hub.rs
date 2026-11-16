@@ -1,5 +1,10 @@
 //! Shared state of the daemon: known sessions, connected clients and the
 //! terminals it keeps alive.
+//!
+//! Over the 800-line threshold of the code structure rule: it already was
+//! when the rule was set, and moving launches and terminals to their own
+//! modules is its own change (docs/Tareas/Llevar hub.rs y brief.rs bajo el
+//! umbral de tamaño.md), so it is not mixed with the phase 2 close.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};

@@ -9,8 +9,9 @@ use titan_agent_core::session::AgentCli;
 use crate::theme::{self, color, hairline};
 
 use super::MainView;
-use super::menu::{MenuItem, Pick, chip, menu_list, permission_title, plain_item, with_current};
-use super::new_session::Menu;
+use super::menu::{
+    Menu, MenuItem, Pick, chip, menu_list, permission_title, plain_item, with_current,
+};
 
 impl MainView {
     pub(super) fn set_default(&mut self, agent: AgentCli, menu: Menu, value: &str) {

@@ -12,6 +12,16 @@ use crate::theme::{self, color, hairline};
 
 use super::MainView;
 
+/// The setting a button opens, in the "new session" box or in the settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Menu {
+    Agent,
+    Model,
+    Effort,
+    Permission,
+    Project,
+}
+
 /// What a menu option does when picked.
 pub(super) type Pick = Rc<dyn Fn(&mut MainView, &mut Context<MainView>)>;
 

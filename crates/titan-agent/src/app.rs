@@ -37,7 +37,8 @@ mod session_view;
 mod settings;
 mod widgets;
 
-use new_session::{Menu, NewSession};
+use menu::Menu;
+use new_session::NewSession;
 use widgets::placeholder;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
