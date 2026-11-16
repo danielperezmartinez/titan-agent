@@ -375,7 +375,7 @@ impl MainView {
                                     .child(div().text_color(color(theme::CODEX)).child("*"))
                                     .child("Codex"),
                             )
-                            .child("clic en un nodo: su hilo (solo lectura) o su sesión"),
+                            .child("clic en un nodo: su hilo o su sesión"),
                     ),
             )
     }

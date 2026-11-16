@@ -16,7 +16,7 @@ use titan_agent_core::transcript::{TranscriptItem, TranscriptKind};
 use crate::terminal::TerminalView;
 use crate::theme::{self, color, hairline};
 
-use super::widgets::{button, marked};
+use super::widgets::button;
 use super::{MainView, Pending, Selection};
 
 /// The transcript is asked again this often while it is on screen.
@@ -34,6 +34,9 @@ pub(super) struct ThreadRef {
     pub role: String,
     pub model: String,
     pub task: String,
+    /// Project whose monitor it was opened from: it stays marked in the
+    /// tree and the bar leads back to it.
+    pub root: Option<String>,
 }
 
 pub(super) struct ThreadState {
@@ -83,7 +86,8 @@ impl MainView {
                 .agent(&role)
                 .and_then(|agent| super::monitor::target(&board, agent))
         });
-        if let Some(super::monitor::Target::Thread(r)) = target {
+        if let Some(super::monitor::Target::Thread(mut r)) = target {
+            r.root = Some(root);
             self.open_thread(r, cx);
         }
     }
@@ -133,6 +137,28 @@ impl MainView {
                 state.error = None;
             }
             Err(error) => state.error = Some(error),
+        }
+    }
+
+    /// The connection with the daemon dropped (`reason`) or came back: a
+    /// transcript asked before will never be answered, so it is not waited
+    /// for, and the one on screen is asked again on reconnection.
+    pub(super) fn thread_connection(&mut self, reason: Option<&str>) {
+        self.pending
+            .retain(|_, pending| !matches!(pending, Pending::Transcript(_)));
+        let Some(state) = self.thread.as_mut() else {
+            return;
+        };
+        state.waiting = false;
+        match reason {
+            Some(reason) => {
+                state.error = Some(ErrorBody {
+                    code: "disconnected".into(),
+                    message: reason.to_string(),
+                })
+            }
+            None if matches!(self.selection, Selection::Thread(_)) => self.ask_transcript(),
+            None => {}
         }
     }
 
@@ -206,6 +232,22 @@ impl MainView {
             .text_size(px(12.))
             .text_color(color(theme::MUTE))
             .overflow_hidden()
+            .when_some(r.root.clone(), |d, root| {
+                let name = titan_agent_core::project::project_name(&root);
+                d.child(
+                    div()
+                        .id("thread-back")
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .cursor_pointer()
+                        .hover(|d| d.text_color(color(theme::INK)))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.selection = Selection::Project(root.clone());
+                            cx.notify();
+                        }))
+                        .child(format!("[#] {name} ›")),
+                )
+            })
             .child(div().text_color(color(codex)).child(AgentCli::Codex.tag()))
             .child(
                 div()
@@ -239,11 +281,15 @@ impl MainView {
                 button(
                     "take-control",
                     "[>] tomar el control",
-                    theme::HAIRLINE_STRONG,
+                    if state.confirm {
+                        theme::ACCENT
+                    } else {
+                        theme::HAIRLINE_STRONG
+                    },
                     theme::BODY,
                 )
                 .flex_none()
-                .min_h(px(28.))
+                .min_h(px(30.))
                 .hover(|d| {
                     d.border_color(color(theme::ACCENT))
                         .text_color(color(theme::INK))
@@ -276,7 +322,7 @@ fn confirm_strip(r: &ThreadRef, cx: &mut Context<MainView>) -> Div {
         .items_center()
         .gap(px(12.))
         .mx(px(16.))
-        .mt(px(12.))
+        .my(px(12.))
         .px(px(12.))
         .py(px(8.))
         .bg(color(theme::SURFACE))
@@ -291,11 +337,19 @@ fn confirm_strip(r: &ThreadRef, cx: &mut Context<MainView>) -> Div {
                 .flex_grow_1()
                 .min_w(px(0.))
                 .gap(px(2.))
-                .child(marked(
-                    "[?]",
-                    theme::WARNING,
-                    format!("Se abrirá codex resume {thread} y la app será quien escribe en el hilo."),
-                ))
+                .child(
+                    div()
+                        .flex()
+                        .gap(px(6.))
+                        .child(div().text_color(color(theme::WARNING)).child("[?]"))
+                        .child("Se abrirá")
+                        .child(
+                            div()
+                                .text_color(color(theme::INK))
+                                .child(format!("codex resume {thread}")),
+                        )
+                        .child("y la app será quien escribe en el hilo."),
+                )
                 .child(div().text_color(color(theme::MUTE)).child(format!(
                     "Mientras siga abierto, el director no podrá encargar turnos a {} (titan-team saldrá con 4).",
                     r.role
@@ -307,7 +361,7 @@ fn confirm_strip(r: &ThreadRef, cx: &mut Context<MainView>) -> Div {
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.take_control(cx))),
         )
         .child(
-            button("take-cancel", "[esc] cancelar", theme::HAIRLINE_STRONG, theme::MUTE)
+            button("take-cancel", "[esc] cancelar", theme::HAIRLINE_STRONG, theme::BODY)
                 .flex_none()
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     this.cancel_take_control();
@@ -360,7 +414,12 @@ fn message(text: &str) -> AnyElement {
 fn transcript(result: &TranscriptResult, r: &ThreadRef) -> Vec<AnyElement> {
     let mut rows = Vec::new();
     if result.more {
-        rows.push(message("… hay elementos anteriores que no se muestran"));
+        rows.push(
+            div()
+                .mb(px(12.))
+                .child(message("… hay elementos anteriores que no se muestran"))
+                .into_any_element(),
+        );
     }
     let mut turn: Option<&str> = None;
     let mut turns = 0;
@@ -396,7 +455,15 @@ fn row(item: &TranscriptItem, r: &ThreadRef) -> AnyElement {
         TranscriptKind::User => ("director ›".into(), claude, theme::BODY),
         TranscriptKind::Agent => (format!("{} ›", r.title).into(), codex, theme::INK),
         TranscriptKind::Reasoning => ("~".into(), theme::STONE, theme::MUTE),
-        TranscriptKind::Command => ("$".into(), theme::MUTE, theme::BODY),
+        TranscriptKind::Command => (
+            "$".into(),
+            match item.detail.as_deref() {
+                Some("código 0") => theme::SUCCESS,
+                Some(_) => theme::DANGER,
+                None => theme::MUTE,
+            },
+            theme::BODY,
+        ),
         TranscriptKind::FileChange => ("[~]".into(), theme::MUTE, theme::BODY),
         TranscriptKind::Tool => ("[t]".into(), theme::MUTE, theme::BODY),
         TranscriptKind::Other => ("·".into(), theme::STONE, theme::MUTE),
@@ -413,10 +480,16 @@ fn row(item: &TranscriptItem, r: &ThreadRef) -> AnyElement {
             .text_color(color(hex))
             .child(detail)
     });
+    // Blank lines inside a message take less room than the gap between
+    // items, so the items still read as separate.
+    let paragraphs = item
+        .text
+        .split("\n\n")
+        .map(|paragraph| div().child(paragraph.trim_matches('\n').to_string()));
     div()
         .flex()
         .gap(px(12.))
-        .py(px(3.))
+        .py(px(5.))
         .child(
             div()
                 .w(px(PREFIX_W))
@@ -430,8 +503,11 @@ fn row(item: &TranscriptItem, r: &ThreadRef) -> AnyElement {
             div()
                 .flex_grow_1()
                 .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .gap(px(6.))
                 .text_color(color(text_hex))
-                .child(item.text.clone()),
+                .children(paragraphs),
         )
         .when_some(detail, |d, detail| d.child(detail))
         .into_any_element()

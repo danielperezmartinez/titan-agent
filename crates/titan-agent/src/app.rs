@@ -261,6 +261,7 @@ impl MainView {
             Incoming::Connected => {
                 self.connected = true;
                 self.status = None;
+                self.thread_connection(None);
                 // A new connection has no terminals attached: attach again
                 // the ones that were open.
                 let open: Vec<String> = self
@@ -274,6 +275,7 @@ impl MainView {
                 }
             }
             Incoming::Disconnected(reason) => {
+                self.thread_connection(Some(&reason));
                 self.connected = false;
                 self.status = Some(reason);
                 // The answer will never come: say so instead of waiting, and

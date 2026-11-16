@@ -32,8 +32,11 @@ pub struct Transcript {
 pub enum ReadError {
     /// `thread/read` refused the thread (`not_found`).
     NotFound(String),
-    /// Any other failure while talking to Codex (`codex_error`).
+    /// An error answer of Codex while reading the items (`codex_error`).
     Codex(String),
+    /// The app-server closed the connection or stopped answering
+    /// (`codex_unavailable`).
+    Transport(String),
 }
 
 /// Threads that are not loaded are still shown for this long after their last
@@ -205,7 +208,7 @@ impl CodexClient {
     pub fn thread(&mut self, thread: &str) -> Result<Value, ReadError> {
         let read = self
             .call("thread/read", json!({"threadId": thread}))
-            .map_err(ReadError::Codex)?
+            .map_err(ReadError::Transport)?
             .map_err(ReadError::NotFound)?;
         read.get("thread")
             .cloned()
@@ -226,7 +229,7 @@ impl CodexClient {
                 "thread/items/list",
                 json!({"threadId": thread, "limit": TRANSCRIPT_ITEMS, "sortDirection": "desc"}),
             )
-            .map_err(ReadError::Codex)?;
+            .map_err(ReadError::Transport)?;
         let (items, more) = match page {
             Ok(page) => transcript_from_items_page(&page),
             Err(_) => {
@@ -235,7 +238,7 @@ impl CodexClient {
                         "thread/read",
                         json!({"threadId": thread, "includeTurns": true}),
                     )
-                    .map_err(ReadError::Codex)?
+                    .map_err(ReadError::Transport)?
                     .map_err(ReadError::Codex)?;
                 transcript_from_thread(&read)
             }

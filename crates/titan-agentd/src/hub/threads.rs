@@ -51,6 +51,7 @@ impl Hub {
                 ("not_found", format!("Codex no encuentra el hilo: {text}"))
             }
             ReadError::Codex(text) => ("codex_error", text),
+            ReadError::Transport(text) => ("codex_unavailable", text),
         })?;
         Ok(TranscriptResult {
             session: key.to_string(),

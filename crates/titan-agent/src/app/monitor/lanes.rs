@@ -34,6 +34,7 @@ impl MainView {
             let target = target(board, agent);
             div()
                 .id(SharedString::from(format!("lane-{}", agent.id)))
+                .relative()
                 .flex()
                 .flex_col()
                 .justify_center()
@@ -43,6 +44,19 @@ impl MainView {
                 .border_b_1()
                 .border_color(with_alpha(theme::INK, 0.08))
                 .when(target.is_some(), |d| d.cursor_pointer())
+                // Its thread is open as a writer in the app: a warning bar
+                // like the selection of the tree.
+                .when(agent.writer_open, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(2.))
+                            .bg(color(theme::WARNING)),
+                    )
+                })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                     if let Some(target) = target.clone() {
                         this.open_agent(target, window, cx);
@@ -333,7 +347,7 @@ impl MainView {
                             .child(legend_box(0xff9f0a47, theme::WARNING))
                             .child("te necesita"),
                     )
-                    .child("el tiempo corre hacia la izquierda · clic en un carril: abre su sesión")
+                    .child("el tiempo corre hacia la izquierda · clic en un carril: su hilo o su sesión")
                     .child(
                         div()
                             .id("lane-window")

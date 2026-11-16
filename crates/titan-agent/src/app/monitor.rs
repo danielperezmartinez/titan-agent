@@ -37,6 +37,7 @@ pub(super) fn target(board: &Board, agent: &Agent) -> Option<Target> {
             role: agent.role.clone(),
             model: agent.model.clone(),
             task: board.task.clone(),
+            root: None,
         }));
     }
     agent.session.clone().map(Target::Session)
@@ -156,7 +157,11 @@ pub(super) fn look(board: &Board, agent: &Agent, now_ms: i64) -> Look {
     // Why the director may be waiting on a role: the app holds its thread,
     // or its last turn was refused because the thread was open elsewhere.
     if agent.writer_open {
-        l.action = "abierto en la app".into();
+        l.action = if agent.busy {
+            "abierto en la app · hilo ocupado".into()
+        } else {
+            "abierto en la app".into()
+        };
         l.action_hex = theme::WARNING;
         l.border = hsla(theme::WARNING);
         l.dim = false;
@@ -208,7 +213,12 @@ impl MainView {
         cx: &mut Context<Self>,
     ) {
         match target {
-            Target::Thread(r) => self.open_thread(r, cx),
+            Target::Thread(mut r) => {
+                if let Selection::Project(root) = &self.selection {
+                    r.root = Some(root.clone());
+                }
+                self.open_thread(r, cx)
+            }
             Target::Session(key) => self.select_session(key, Some(window), cx),
         }
     }

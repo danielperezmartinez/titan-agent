@@ -1,6 +1,7 @@
-//! «Tomar el control» of a Codex thread the daemon does not list: the
-//! daemon resolves it with `thread/read` on a fake app-server and opens it
-//! with the same `codex resume` as a listed thread.
+//! Codex threads the daemon does not list, against a fake app-server:
+//! «tomar el control» resolves one with `thread/read` and opens it with the
+//! same `codex resume` as a listed thread, and a transcript whose read is cut
+//! by the app-server is reported as `codex_unavailable`.
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
@@ -22,8 +23,8 @@ printf 'codex %s\r\n' "$*"
 while IFS= read -r line; do :; done
 "#;
 
-/// Answers JSON-RPC like the Codex app-server: it lists nothing and knows
-/// one thread, `known`.
+/// Answers JSON-RPC like the Codex app-server: it lists nothing, knows one
+/// thread, `known`, and drops the connection when asked for `cut`.
 fn serve(stream: UnixStream, project: PathBuf) {
     let Ok(mut ws) = tungstenite::accept(stream) else {
         return;
@@ -37,6 +38,9 @@ fn serve(stream: UnixStream, project: PathBuf) {
             continue;
         };
         let thread = request["params"]["threadId"].as_str().unwrap_or("");
+        if thread == "cut" {
+            return;
+        }
         let answer = match request["method"].as_str().unwrap_or("") {
             "thread/read" if thread == "known" => json!({"id": id, "result": {"thread": {
                 "id": "known", "cwd": project, "source": "exec",
@@ -68,8 +72,11 @@ impl Drop for Fixture {
     }
 }
 
-fn start() -> Fixture {
-    let dir = std::env::temp_dir().join(format!("titan-agentd-unlisted-{}", std::process::id()));
+fn start(name: &str) -> Fixture {
+    let dir = std::env::temp_dir().join(format!(
+        "titan-agentd-unlisted-{name}-{}",
+        std::process::id()
+    ));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("project")).unwrap();
     let write_exe = |name: &str, body: &str| {
@@ -130,7 +137,7 @@ fn wait_for<T>(reader: &mut BufReader<UnixStream>, mut pick: impl FnMut(&Value) 
 
 #[test]
 fn an_unlisted_codex_thread_is_attached_with_codex_resume() {
-    let fixture = start();
+    let fixture = start("attach");
     let (mut reader, mut writer) = connect(&fixture.dir.join("agentd.sock"));
     let mut send = |line: Value| writeln!(writer, "{line}").unwrap();
     send(json!({"id": 1, "method": "hello", "params": {"protocol": 1, "client": "test"}}));
@@ -155,4 +162,17 @@ fn an_unlisted_codex_thread_is_attached_with_codex_resume() {
         (m["id"] == 3).then(|| m["error"]["code"].as_str().unwrap_or("").to_string())
     });
     assert_eq!(code, "unknown_session");
+}
+
+#[test]
+fn a_read_cut_by_the_app_server_is_codex_unavailable() {
+    let fixture = start("cut");
+    let (mut reader, mut writer) = connect(&fixture.dir.join("agentd.sock"));
+    let mut send = |line: Value| writeln!(writer, "{line}").unwrap();
+    send(json!({"id": 1, "method": "hello", "params": {"protocol": 1, "client": "test"}}));
+    send(json!({"id": 2, "method": "transcript", "params": {"session": "cx:cut"}}));
+    let code = wait_for(&mut reader, |m| {
+        (m["id"] == 2).then(|| m["error"]["code"].as_str().unwrap_or("").to_string())
+    });
+    assert_eq!(code, "codex_unavailable");
 }

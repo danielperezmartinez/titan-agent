@@ -210,7 +210,10 @@ impl MainView {
                 count,
                 team_live,
             } => {
-                let selected = self.selection == Selection::Project(root.clone());
+                let selected = self.selection == Selection::Project(root.clone())
+                    || (matches!(self.selection, Selection::Thread(_))
+                        && self.thread.as_ref().and_then(|t| t.r.root.as_deref())
+                            == Some(root.as_str()));
                 let root_for_marker = root.clone();
                 let id = ElementId::Name(SharedString::from(format!("p:{root}")));
                 div()
