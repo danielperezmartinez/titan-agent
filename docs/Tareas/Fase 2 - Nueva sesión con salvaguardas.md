@@ -1,11 +1,11 @@
 ---
 Nombre: Fase 2 - Nueva sesión con salvaguardas
-Estado: En curso
+Estado: Hecha
 Resumen: Botón Nueva sesión en la columna izquierda y cuadro de encargo en el centro con los valores por defecto y botones para cambiar agente, modelo, esfuerzo, permisos o sandbox y proyecto; muestra el comando exacto y lanza el CLI oficial desde el daemon con las cinco salvaguardas de ADR-0002.
 Decisiones: 'Se integra la variante equipo v3 (rama feat/fase-2-equipo-v3) trayendo de la variante Opus el TUI de Codex con --remote unix:// y la marca launched_here (2026-11-16). Interfaz separada en un módulo por vista, condición del usuario para la PR, y regla de estructura del código en el README. Campo de texto propio sobre el input handler de GPUI (sin crate: sin ADR). Versión 0.3.0 (minor), acordada con el usuario en el encargo del cierre.'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-16T18:20:00+01:00
+Última modificación: 2026-11-16T18:22:00+01:00
 ---
 
 # Fase 2 - Nueva sesión con salvaguardas
@@ -269,3 +269,31 @@ menor, 1 pregunta y huecos de tests. Decisiones:
   «Nueva sesión» y recorrer las demás vistas. Correcta. Cubre el criterio
   «lanzar desde la app» que quedaba pendiente. Las sesiones de prueba se dejan
   (decisión del usuario).
+
+### Publicación
+
+- **PR #6** integrada con squash en `main` el 2026-11-16, commit `029c617`,
+  versión **0.3.0**. Checks `Cambios`, `Fugas`, `Verificar` y `Windows` en
+  verde. GitHub rechazó `--author-email` con el correo noreply («Invalid email
+  address», como en la PR #4), así que el squash sale con el correo principal
+  de la cuenta, como permite [[README#Repositorio y publicación]]. Sin tag ni
+  release: el pipeline de versiones aún no existe.
+
+### Métricas del cierre
+
+Sesión de Claude Code (Opus 5.5) del 2026-11-16, de 17:55 a 18:22 (unos
+27 min) desde el encargo hasta la PR integrada:
+
+- **Uso de Claude** (transcript): 87 respuestas y 84 llamadas a herramientas;
+  54 k tokens de salida, 172 k de escritura en caché y 12,9 M de lectura de
+  caché. Sin subagentes.
+- **Codex**: 1 llamada del equipo, la revisión de Sol (gpt-6.1-sol, high):
+  367 k tokens de entrada (299 k en caché), 3,8 k de salida y 108 s. Además,
+  una sesión real de Codex (luna, low) para comprobar `--remote unix://`, que
+  se borró después.
+- **Tests**: 65 (+1 neto: se quitó el del parche y se añadieron el de
+  `launched_here` en el daemon y el de serde).
+- **Hallazgos de Sol**: 1 mayor (aceptado como justificación), 1 menor
+  (aceptado), huecos de tests (1 aceptado y 1 descartado) y 1 pregunta
+  (respondida).
+
