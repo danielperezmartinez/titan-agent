@@ -312,3 +312,21 @@ menor y 1 nit**. Decisiones:
   ya se decidió que los comentarios de `team.toml` y `ci.yml` siguen en
   español como el resto de esos ficheros.
 
+### Prueba manual del cierre (usuario, 2026-11-16)
+
+- Ventana 0.4.0 con su propio daemon en un socket aparte y los CLI reales: el
+  encargo `fase-3-cierre-revision` se ve en las tres vistas, y el director
+  abre esta sesión (unión por `director_session`).
+- **Hilo ocupado, con el Codex real**: el usuario abrió el hilo del revisor
+  con `codex resume` en su terminal y `bin/team ask revisor … --force` salió
+  con **4** en 0,4 s, sin tokens. El rol conservó su hilo y su turno, la
+  ronda guardada no cambió, y `turn_finished` quedó con `busy`. Codex solo da
+  el error por stderr («thread-store conflict: thread … already has an active
+  writer»), que también se revisa. Arreglado de paso: el informe impreso de
+  un turno `busy` ya no dice «ronda de revisión 2/1».
+- Fallos anotados para fases futuras (sin arreglar en el cierre): el clic en
+  un rol de Codex no abre su hilo (en
+  [[Abrir los hilos del equipo en solo lectura desde la app]]) y los acentos
+  del terminal integrado
+  ([[Acentos y teclas muertas en el terminal integrado]]).
+

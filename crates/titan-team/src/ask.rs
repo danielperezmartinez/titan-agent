@@ -370,7 +370,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             &entry,
             &text,
             report.as_ref(),
-            is_reviewer.then_some(round),
+            (is_reviewer && !busy).then_some(round),
         );
     }
     if !failures.is_empty() {

@@ -245,6 +245,8 @@ fn a_thread_open_elsewhere_is_kept_and_exits_4() {
     fs::write(repo.0.join(".agents/state/kite.json"), state.to_string()).unwrap();
     let review = repo.run(&["ask", "checker", "kite", "-m", "revisa"]);
     assert_eq!(review.status.code(), Some(4), "{review:?}");
+    let printed = String::from_utf8_lossy(&review.stdout);
+    assert!(!printed.contains("ronda de revisión"), "{printed}");
     assert_eq!(repo.state()["review_rounds"], 0);
 }
 
