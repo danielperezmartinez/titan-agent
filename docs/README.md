@@ -226,7 +226,7 @@ enlazan en vez de repetirla.
 
 | Cambio | Cómo se publica | Versión | Despliegue |
 | --- | --- | --- | --- |
-| **Código**: cualquier archivo fuera de `docs/` | Rama corta y pull request contra `main`, integrada con squash | Sube en la propia PR | Ninguno al integrar; una versión se publica con un tag `vX.Y.Z` (ver abajo) |
+| **Código**: cualquier archivo fuera de `docs/` | Rama corta y pull request contra `main`, integrada con squash | Sube en la propia PR | Ninguno al integrar, salvo `experimentos/` (GitHub Pages, ver abajo); una versión se publica con un tag `vX.Y.Z` (ver abajo) |
 | **Solo bóveda**: todo dentro de `docs/` | Commit y push directo a `main` | No cambia | Ninguno |
 
 - Un commit o una PR que mezcle bóveda y código cuenta como **código**.
@@ -262,6 +262,11 @@ enlazan en vez de repetirla.
   email address», como en la PR #4), se integra sin él y el squash sale con el
   correo principal de la cuenta, que permite la excepción de
   [[#Repositorio y publicación]].
+- **Páginas de experimentos**: `experimentos/` se publica en GitHub Pages con el
+  workflow `.github/workflows/pages.yml` al integrar en `main` un cambio en esa
+  carpeta. Es código (va por PR y sube la versión). Tras integrar se verifica
+  como una release: la ejecución del workflow `Pages` de ese commit, su estado y
+  la página publicada. Activar o cambiar Pages en GitHub lo autoriza el usuario.
 - Configuración: job `Cambios` en el CI (un cambio de solo bóveda omite
   `Verificar`); guarda en `.githooks/pre-push`. En GitHub: protección de `main`
   con los checks estrictos, `enforce_admins=false`, historial lineal e
