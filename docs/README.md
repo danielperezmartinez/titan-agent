@@ -267,6 +267,11 @@ enlazan en vez de repetirla.
   carpeta. Es código (va por PR y sube la versión). Tras integrar se verifica
   como una release: la ejecución del workflow `Pages` de ese commit, su estado y
   la página publicada. Activar o cambiar Pages en GitHub lo autoriza el usuario.
+  Las variantes de cada fase, también la integrada tal como quedó antes del
+  squash, se archivan en `origin` como ramas `experimento/fase-N-<variante>`
+  (hoy: `fase-1-equipo-v1`, `fase-1-equipo-v2`, `fase-1-opus`, `fase-2-opus`,
+  `fase-2-equipo-v3`, `fase-3-opus`, `fase-3-equipo-v4`). Son la fuente de esas
+  páginas y no se borran.
 - Configuración: job `Cambios` en el CI (un cambio de solo bóveda omite
   `Verificar`); guarda en `.githooks/pre-push`. En GitHub: protección de `main`
   con los checks estrictos, `enforce_admins=false`, historial lineal e
