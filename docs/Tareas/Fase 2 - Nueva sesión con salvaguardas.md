@@ -5,7 +5,7 @@ Resumen: Botón Nueva sesión en la columna izquierda y cuadro de encargo en el 
 Decisiones: 'Se integra la variante equipo v3 (rama feat/fase-2-equipo-v3) trayendo de la variante Opus el TUI de Codex con --remote unix:// y la marca launched_here (2026-11-16). Interfaz separada en un módulo por vista, condición del usuario para la PR, y regla de estructura del código en el README. Campo de texto propio sobre el input handler de GPUI (sin crate: sin ADR). Versión 0.3.0 (minor), acordada con el usuario en el encargo del cierre.'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-16T18:12:00+01:00
+Última modificación: 2026-11-16T18:20:00+01:00
 ---
 
 # Fase 2 - Nueva sesión con salvaguardas
@@ -264,4 +264,8 @@ menor, 1 pregunta y huecos de tests. Decisiones:
   `cx:…`, con `launched_here`, de `working` (parable) a `waiting` y siguió viva
   con su terminal. Después se paró el daemon y se borró el hilo (`codex delete
   --force`).
-
+- **Prueba a mano del usuario** (2026-11-16), en la ventana real con un daemon
+  en un socket aparte y los CLI reales: lanzar una sesión de cada CLI desde
+  «Nueva sesión» y recorrer las demás vistas. Correcta. Cubre el criterio
+  «lanzar desde la app» que quedaba pendiente. Las sesiones de prueba se dejan
+  (decisión del usuario).
