@@ -2,10 +2,10 @@
 Nombre: Fase 2 - Nueva sesión con salvaguardas
 Estado: En curso
 Resumen: Botón Nueva sesión en la columna izquierda y cuadro de encargo en el centro con los valores por defecto y botones para cambiar agente, modelo, esfuerzo, permisos o sandbox y proyecto; muestra el comando exacto y lanza el CLI oficial desde el daemon con las cinco salvaguardas de ADR-0002.
-Decisiones: 'Variante equipo v3 del experimento (rama feat/fase-2-equipo-v3, sin push). Campo de texto propio sobre el input handler de GPUI (sin crate: sin ADR). Versión: pendiente de acordar con el usuario (propuesta 0.3.0, minor).'
+Decisiones: 'Se integra la variante equipo v3 (rama feat/fase-2-equipo-v3) trayendo de la variante Opus el TUI de Codex con --remote unix:// y la marca launched_here (2026-11-16). Interfaz separada en un módulo por vista, condición del usuario para la PR, y regla de estructura del código en el README. Campo de texto propio sobre el input handler de GPUI (sin crate: sin ADR). Versión 0.3.0 (minor), acordada con el usuario en el encargo del cierre.'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-15T20:43:00+01:00
+Última modificación: 2026-11-16T18:12:00+01:00
 ---
 
 # Fase 2 - Nueva sesión con salvaguardas
@@ -103,7 +103,7 @@ Variante **equipo v3** (rama `feat/fase-2-equipo-v3`, sin push), en local el
 | 2. Un clic, un lanzamiento | Token por clic de un solo uso (aunque falle), mismo agente+carpeta+encargo rechazado 30 s, sin reintentos, sin campos de programar/repetir (`bad_request`) | Tests de aceptación `duplicate_…` y `failed_cli_is_run_once…` |
 | 3. Ni credenciales ni binario | Se ejecuta el binario oficial sin shell; nada lee `~/.claude/.credentials*` ni `~/.codex/auth.json` | `grep` del código (solo el transcript para el modelo, como en la fase 1) |
 | 4. Se ve el comando exacto | La ventana muestra `command_line()`; el daemon rechaza otra línea (`command_mismatch`) y ejecuta exactamente `argv()` | Tests de aceptación (`sh -c` con CLI falso y argumentos registrados) |
-| 5. Codex por su vía oficial | TUI de `codex` en un PTY del daemon | Test de aceptación con PTY; prueba con Codex real |
+| 5. Codex por su vía oficial | TUI de `codex --remote unix://` en un PTY del daemon, unida al `codex app-server` compartido | Test de aceptación con PTY; prueba con Codex real |
 
 ## Resultado
 
@@ -114,8 +114,8 @@ Variante **equipo v3** (rama `feat/fase-2-equipo-v3`, sin push), en local el
   `id: null` para líneas ilegibles.
 - **Daemon**: `claude --bg` una vez (salida a un temporal exclusivo 0600), TUI de
   Codex en un PTY con fallo temprano como `launch_failed`, sesión provisional
-  hasta resolver, hilos lanzados mostrados vivos mientras su TUI sigue abierta,
-  errores explicados en español con el texto del CLI.
+  hasta resolver, hilo de Codex vivo en el app-server compartido (desde el
+  cierre, con `--remote unix://`), marca `launched_here`, errores explicados en español con el texto del CLI.
 - **Interfaz**: campo de encargo de varias líneas ([[Catálogo técnico/Campo de
   encargo]]), botones con lista corta para agente, modelo, esfuerzo,
   permisos/sandbox y proyecto (o `[d]` otra carpeta con el selector del
@@ -185,3 +185,83 @@ interfaz. Flujo `disenador_tests → (Opus) → revisor`, `max_review_rounds = 1
   independiente, medido al píxel). Diferencias deliberadas: `manual` en lugar de
   `default` (el CLI ya no tiene ese modo), comando exacto más largo que el de la
   previa (`-n`, `--`, comillas POSIX), `fable` en la lista de modelos.
+
+## Cierre e integración (2026-11-16)
+
+La fase se hizo en dos variantes: **B**, esta rama (equipo v3), y **A**,
+`feat/fase-2-opus` (Opus solo). Visualmente quedaron idénticas. Un evaluador
+independiente recomendó integrar B trayendo cosas de A, y el usuario lo decidió
+así, con la separación de la interfaz en módulos como condición para la PR.
+
+### Cambios del cierre
+
+- **Codex unido al app-server compartido (de A).** La TUI arranca con
+  `codex --remote unix:// -m … -c model_reasoning_effort=… -s … -- <encargo>`,
+  así que su hilo vive en el `codex app-server` compartido: se ve vivo y se
+  puede parar mientras trabaja, como cualquier otro. Se **quitó el parche de
+  B** que, con el terminal abierto, enseñaba como «Esperando» un hilo que el
+  app-server daba por terminado (y su test).
+- **Único cambio en los tests de aceptación de Sol:** en
+  `crates/titan-agent-core/tests/launch.rs` el argv esperado de Codex incluye
+  ahora `--remote`, `unix://` tras `codex`. Motivo: sin `--remote`, la TUI
+  levanta su propio app-server y el hilo no queda en el compartido (sale
+  «terminado» y no se puede parar); es la vía oficial correcta para la
+  salvaguarda 5. El test del daemon compara contra `argv()` y no cambió.
+  Además, `crates/titan-agent-core/tests/tree.rs` (de la fase 1, no de Sol)
+  inicializa el campo nuevo `launched_here: false` en su literal de `Session`:
+  adaptación mecánica para compilar, sin tocar aserciones.
+- **Marca `launched_here` (de A).** Campo aditivo de `Session` (por defecto
+  `false`, no se serializa si es `false`): el daemon lo pone en la sesión
+  provisional y en la real una vez resuelta, y el detalle muestra «lanzada por:
+  tú (titan-agent)».
+- **Interfaz en módulos, sin cambios de comportamiento.** `app.rs` pasó de
+  2401 a 463 líneas (arranque, estado compartido y enrutado) y cada vista va en
+  `crates/titan-agent/src/app/`: `header`, `nav` (árbol y filtro),
+  `session_view` (terminal), `detail` (detalle de sesión y de proyecto),
+  `new_session`, `settings`, más `menu` (botones de ajuste y listas, que
+  comparten nueva sesión y configuración) y `widgets`. El código se movió tal
+  cual con un script por rangos; una comparación de líneas entre el `app.rs`
+  original y los módulos solo difiere en imports, `pub(super)`, firmas que
+  rustfmt reparte en varias líneas y los separadores de sección.
+- **Regla de estructura del código** en [[README#7. Estructura del código]] y
+  en los criterios de Sol (`.agents/prompts/revisor.md`): un módulo por vista,
+  un módulo por responsabilidad en daemon y núcleo, y 800 líneas por fichero
+  como umbral. `hub.rs` y `brief.rs` ya lo superaban:
+  [[Tareas/Llevar hub.rs y brief.rs bajo el umbral de tamaño]].
+- **Versión 0.3.0.**
+
+### Revisión de Sol del cierre (una ronda, contexto limpio)
+
+`bin/team` encargo `fase-2-cierre-revision`, gpt-6.1-sol high, solo con el diff
+`189030e..HEAD` y la regla de estructura: `changes_requested`, 1 mayor, 1
+menor, 1 pregunta y huecos de tests. Decisiones:
+
+- **Aceptado en forma de justificación** (mayor): `hub.rs` supera las 800
+  líneas y el diff le toca código. El tamaño neto baja (de 1330 a 1326) y
+  dividirlo es un cambio aparte con su tarea; su cabecera `//!` lo justifica y
+  enlaza esa tarea.
+- **Aceptado** (menor): `Menu` lo comparten nueva sesión y configuración, así
+  que pasa de `new_session.rs` a `menu.rs`.
+- **Aceptado** (tests): un test de serde de `launched_here` (marcado en la
+  provisional, omitido si es `false`, `false` si falta el campo).
+- **Descartado** (tests): un test de que un terminal abierto ya no cambia
+  «Terminada»: ya no hay código que lo haga, y el test sería de algo ausente.
+  La integración real con el app-server compartido se comprobó con el CLI real
+  (abajo), no con dobles.
+- **Pregunta** sobre `tests/tree.rs`: no es un test de aceptación de Sol (es de
+  la fase 1); la adaptación mecánica se anota arriba.
+
+### Verificación del cierre
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace`: **65 tests de Rust** en verde (64 de
+  antes, menos el del parche quitado, más el de `launched_here` en el daemon y
+  el de serde). Hooks de gitleaks en cada commit, sin fugas.
+- **Codex real** por un daemon en un socket aparte (el del usuario no se
+  tocó), con la misma petición `launch` que manda la ventana (luna, low,
+  read-only, «Responde solo: hola», en este worktree): el comando mostrado y
+  ejecutado llevó `--remote unix://`; la sesión pasó de `launch:1` a su
+  `cx:…`, con `launched_here`, de `working` (parable) a `waiting` y siguió viva
+  con su terminal. Después se paró el daemon y se borró el hilo (`codex delete
+  --force`).
+
