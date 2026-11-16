@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::launch::LaunchSpec;
 use crate::quota::Quota;
 use crate::session::{AgentCli, Session};
+use crate::transcript::TranscriptItem;
 
 /// Version of this protocol. A daemon refuses a `hello` with another version.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -100,6 +101,10 @@ pub enum Request {
         spec: LaunchSpec,
         command: String,
     },
+    /// Read-only transcript of a Codex thread (`cx:<thread>`), listed or
+    /// not, from the official app-server. Opens no writer on the thread.
+    /// Answered with [`TranscriptResult`].
+    Transcript { session: String },
 }
 
 /// Answer to [`Request::Hello`].
@@ -130,6 +135,20 @@ pub struct LaunchResult {
     pub terminal: Option<String>,
     /// Id printed by `claude --bg`.
     pub cli_id: Option<String>,
+}
+
+/// Answer to [`Request::Transcript`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TranscriptResult {
+    /// The key asked for.
+    pub session: String,
+    /// Oldest first, at most [`crate::transcript::TRANSCRIPT_ITEMS`].
+    pub items: Vec<TranscriptItem>,
+    /// Older items exist that are not sent.
+    pub more: bool,
+    /// Working folder of the thread, as Codex reports it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
 }
 
 /// A launch and, once known, the real session it became.
