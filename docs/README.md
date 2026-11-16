@@ -241,6 +241,10 @@ enlazan en vez de repetirla.
   acuerdan con el usuario (`major` para cambios incompatibles, `minor` para
   funcionalidades compatibles, `patch` para correcciones), sin inferirlo del
   silencio, y el acuerdo queda en la PR.
+- **Versiones 0.x hasta que el usuario decida la 1.0.0.** Nada de 1.x
+  hasta que lo decida el usuario; las etiquetas son solo `v0.x` y solo por el
+  flujo de publicación (abajo). Decisión del usuario del 2026-11-16, al abrir
+  la ronda de arreglos 0.5.0.
 - **Publicar código** significa: rama corta (`feat/*`, `fix/*`, `chore/*`,
   `docs/*`), PR contra `main`, esperar los checks, integrarla solo si el usuario
   lo autorizó para esa PR (si no, detenerse con la PR abierta) y, si la PR
