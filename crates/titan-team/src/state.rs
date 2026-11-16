@@ -120,14 +120,13 @@ pub fn relative(base: &Path, path: &Path) -> String {
     let base: Vec<_> = base.components().collect();
     let target: Vec<_> = path.components().collect();
     let common = base.iter().zip(&target).take_while(|(a, b)| a == b).count();
-    let mut out = PathBuf::new();
-    for _ in common..base.len() {
-        out.push("..");
-    }
-    for part in &target[common..] {
-        out.push(part.as_os_str());
-    }
-    out.to_string_lossy().into_owned()
+    // Always `/`: these paths go into the state and the events, which must
+    // read the same on every system (Windows accepts `/` when resolving).
+    let ups = (common..base.len()).map(|_| "..".to_string());
+    let parts = target[common..]
+        .iter()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned());
+    ups.chain(parts).collect::<Vec<_>>().join("/")
 }
 
 pub fn now_ms() -> i64 {
