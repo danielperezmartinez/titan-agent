@@ -351,7 +351,7 @@ fn confirm_strip(r: &ThreadRef, cx: &mut Context<MainView>) -> Div {
                         .child("y la app será quien escribe en el hilo."),
                 )
                 .child(div().text_color(color(theme::MUTE)).child(format!(
-                    "Mientras siga abierto, el director no podrá encargar turnos a {} (titan-team saldrá con 4).",
+                    "Mientras siga abierto, el director no podrá encargar turnos al rol {} (titan-team saldrá con 4).",
                     r.role
                 ))),
         )
@@ -452,9 +452,9 @@ fn row(item: &TranscriptItem, r: &ThreadRef) -> AnyElement {
     let codex = theme::agent_color(AgentCli::Codex);
     let claude = theme::agent_color(AgentCli::ClaudeCode);
     let (prefix, prefix_hex, text_hex): (SharedString, u32, u32) = match item.kind {
-        TranscriptKind::User => ("director ›".into(), claude, theme::BODY),
-        TranscriptKind::Agent => (format!("{} ›", r.title).into(), codex, theme::INK),
-        TranscriptKind::Reasoning => ("~".into(), theme::STONE, theme::MUTE),
+        TranscriptKind::User => ("director ›".into(), claude, theme::MUTE),
+        TranscriptKind::Agent => (format!("{} ›", r.title).into(), codex, theme::BODY),
+        TranscriptKind::Reasoning => ("pensando".into(), theme::STONE, theme::MUTE),
         TranscriptKind::Command => (
             "$".into(),
             match item.detail.as_deref() {
@@ -489,7 +489,7 @@ fn row(item: &TranscriptItem, r: &ThreadRef) -> AnyElement {
     div()
         .flex()
         .gap(px(12.))
-        .py(px(5.))
+        .py(px(7.))
         .child(
             div()
                 .w(px(PREFIX_W))
@@ -505,7 +505,7 @@ fn row(item: &TranscriptItem, r: &ThreadRef) -> AnyElement {
                 .min_w(px(0.))
                 .flex()
                 .flex_col()
-                .gap(px(6.))
+                .gap(px(2.))
                 .text_color(color(text_hex))
                 .children(paragraphs),
         )

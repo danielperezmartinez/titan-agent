@@ -156,7 +156,10 @@ pub(super) fn look(board: &Board, agent: &Agent, now_ms: i64) -> Look {
     }
     // Why the director may be waiting on a role: the app holds its thread,
     // or its last turn was refused because the thread was open elsewhere.
+    // Own markers, so they do not read as «[?] te necesita».
     if agent.writer_open {
+        l.marker = "[w]".into();
+        l.marker_hex = theme::WARNING;
         l.action = if agent.busy {
             "abierto en la app · hilo ocupado".into()
         } else {
@@ -166,8 +169,10 @@ pub(super) fn look(board: &Board, agent: &Agent, now_ms: i64) -> Look {
         l.border = hsla(theme::WARNING);
         l.dim = false;
     } else if agent.busy && agent.state != SessionState::Working {
+        l.marker = "[!]".into();
+        l.marker_hex = theme::WARNING;
         l.action = "hilo ocupado".into();
-        l.action_hex = theme::WARNING;
+        l.action_hex = theme::BODY;
         l.dim = false;
     }
     l
