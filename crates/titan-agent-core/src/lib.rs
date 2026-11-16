@@ -5,6 +5,8 @@ pub mod discovery;
 pub mod launch;
 pub mod project;
 pub mod protocol;
+pub mod quota;
 pub mod session;
+pub mod team;
 pub mod time;
 pub mod tree;

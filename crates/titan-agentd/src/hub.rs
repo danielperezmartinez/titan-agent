@@ -15,8 +15,9 @@ use titan_agent_core::discovery::link_sessions;
 use titan_agent_core::launch::LaunchSpec;
 use titan_agent_core::protocol::{
     ClientMessage, Event, HelloResult, LaunchRef, PROTOCOL_VERSION, Request, ServerMessage,
-    SourceStatus, TerminalRef, encode_line,
+    SourceStatus, TeamTask, TerminalRef, encode_line,
 };
+use titan_agent_core::quota::Quota;
 use titan_agent_core::session::{AgentCli, Session, SessionState};
 
 use crate::claude::run_with_timeout;
@@ -73,6 +74,10 @@ struct State {
     /// Launched TUIs that ended before their launch was confirmed, as
     /// terminal id → (exit code, last output).
     ended_early: HashMap<String, (Option<u32>, String)>,
+    /// Open team tasks, from [`crate::teams::TeamScanner`].
+    teams: Vec<TeamTask>,
+    /// Quotas reported by each CLI, by agent.
+    quotas: HashMap<AgentCli, Vec<Quota>>,
 }
 
 /// A session launched by this daemon (ADR-0002).
@@ -129,6 +134,8 @@ impl Hub {
                 used_tokens: HashSet::new(),
                 recent: Vec::new(),
                 ended_early: HashMap::new(),
+                teams: Vec::new(),
+                quotas: HashMap::new(),
             }),
         })
     }
@@ -175,6 +182,34 @@ impl Hub {
         }
         rebuild(&mut state);
         broadcast_snapshot(&mut state, false);
+    }
+
+    /// Folders where a team may work: the folder and the project of every
+    /// known session.
+    pub fn team_folders(&self) -> Vec<String> {
+        let state = self.lock();
+        state
+            .sessions
+            .iter()
+            .flat_map(|s| [s.cwd.clone(), s.project_root.clone()])
+            .collect()
+    }
+
+    pub fn set_teams(&self, teams: Vec<TeamTask>) {
+        let mut state = self.lock();
+        if state.teams != teams {
+            state.teams = teams;
+            broadcast_snapshot(&mut state, false);
+        }
+    }
+
+    /// Replaces the quotas of one CLI (empty when it cannot be read).
+    pub fn set_quotas(&self, agent: AgentCli, quotas: Vec<Quota>) {
+        let mut state = self.lock();
+        if state.quotas.get(&agent) != Some(&quotas) {
+            state.quotas.insert(agent, quotas);
+            broadcast_snapshot(&mut state, false);
+        }
     }
 
     pub fn add_client(&self, id: u64, tx: Sender<String>) {
@@ -434,6 +469,13 @@ fn snapshot(state: &State) -> ServerMessage {
         sources: state.sources.to_vec(),
         terminals,
         launches,
+        teams: state.teams.clone(),
+        quotas: AgentCli::ALL
+            .iter()
+            .filter_map(|agent| state.quotas.get(agent))
+            .flatten()
+            .cloned()
+            .collect(),
     })
 }
 

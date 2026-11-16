@@ -12,6 +12,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 use titan_agent_core::discovery::codex_session;
+use titan_agent_core::quota::{Quota, parse_codex_rate_limits};
 use titan_agent_core::session::Session;
 
 /// Threads that are not loaded are still shown for this long after their last
@@ -172,6 +173,17 @@ impl CodexClient {
         Ok(sessions)
     }
 
+    /// Remaining quota of the account (`account/rateLimits/read`, the
+    /// variant meant for periodic reads). Nothing else of the account is
+    /// asked for or kept.
+    pub fn quotas(&mut self) -> Result<Vec<Quota>, String> {
+        let result = self.request(
+            "account/rateLimits/read",
+            json!({"excludeResetCreditDetails": true}),
+        )?;
+        Ok(parse_codex_rate_limits(&result))
+    }
+
     /// Interrupts the turn in progress of a thread, if there is one.
     pub fn interrupt(&mut self, thread: &str) -> Result<bool, String> {
         let turns = self.request("thread/turns/list", json!({"threadId": thread, "limit": 1}))?;
@@ -205,6 +217,10 @@ impl CodexClient {
     }
 
     pub fn sessions(&mut self) -> Result<Vec<Session>, String> {
+        Ok(Vec::new())
+    }
+
+    pub fn quotas(&mut self) -> Result<Vec<Quota>, String> {
         Ok(Vec::new())
     }
 

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::launch::LaunchSpec;
+use crate::quota::Quota;
 use crate::session::{AgentCli, Session};
 
 /// Version of this protocol. A daemon refuses a `hello` with another version.
@@ -166,6 +167,12 @@ pub enum Event {
         /// became, once the CLI reports it.
         #[serde(default)]
         launches: Vec<LaunchRef>,
+        /// Open team tasks of the known projects (docs/Decisiones/ADR-0010).
+        #[serde(default)]
+        teams: Vec<TeamTask>,
+        /// Remaining quota of each CLI that reports it.
+        #[serde(default)]
+        quotas: Vec<Quota>,
     },
     /// Output of a terminal, in base64.
     Output { terminal: String, data: String },
@@ -177,6 +184,22 @@ pub enum Event {
         exit_code: Option<u32>,
     },
 }
+
+/// The events of one open team task, as written by `titan-team`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TeamTask {
+    /// Project the team folder belongs to (worktrees folded).
+    pub project_root: String,
+    /// Folder that holds `.agents/team.toml`.
+    pub folder: String,
+    pub task: String,
+    /// Raw event objects of `events.jsonl`, in file order (the last
+    /// [`TEAM_EVENTS_SENT`] at most).
+    pub events: Vec<Value>,
+}
+
+/// Events of a task sent in each snapshot, at most.
+pub const TEAM_EVENTS_SENT: usize = 300;
 
 /// A live terminal and the session it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
