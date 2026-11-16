@@ -2,10 +2,10 @@
 Nombre: Fase 3 - Herramienta del equipo en Rust y monitor
 Estado: En curso
 Resumen: Reescribir en Rust la herramienta del equipo (titan-team, con su skill) con un formato de eventos versionado, hacer que el daemon lo lea, y construir el monitor del proyecto con sus tres vistas (grafo, carriles, mesa de control) en la zona central.
-Decisiones: '[[Decisiones/ADR-0010 Formato de team.toml y de los eventos del equipo]]. Variante equipo v4 (rama feat/fase-3-equipo-v4, sin push). Cuota de Codex por account/rateLimits/read; Claude «sin dato». bin/team pasa a envoltorio de titan-team. Versión sin subir: propuesta 0.4.0 (minor), pendiente de acordar.'
+Decisiones: '[[Decisiones/ADR-0010 Formato de team.toml y de los eventos del equipo]]. Se integra la variante equipo v4 (rama feat/fase-3-equipo-v4) por recomendación del evaluador independiente, con init/doc, catálogo y la unión exacta del director traídos de la variante A (feat/fase-3-opus). Hilo ocupado: salida 4 y status busy, conservando el hilo; la otra mitad en [[Abrir los hilos del equipo en solo lectura desde la app]]. Cuota de Codex por account/rateLimits/read; Claude «sin dato». bin/team pasa a envoltorio de titan-team. Versión 0.4.0 (minor).'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-16T20:55:00+01:00
+Última modificación: 2026-11-16T21:40:00+01:00
 ---
 
 # Fase 3 - Herramienta del equipo en Rust y monitor
@@ -267,4 +267,48 @@ pregunta**. Decisiones:
   del usuario, con la sesión de la otra variante (el foco no había llegado a
   la ventana nueva). Se borró sin usarla y desde entonces cada captura comprueba antes el PID de la ventana
   activa.
+
+## Cierre: integración de la variante equipo v4
+
+Lanzado desde la sesión de control el 2026-11-16 a las 21:23. Un evaluador
+independiente recomendó integrar esta variante (la A, de Opus solo, no tenía
+bloqueo por encargo y su tiempo límite no mataba el grupo de procesos) y
+traer cosas de A. La rama de A no se tocó.
+
+- **De A**: `titan-team init` (con plantillas genéricas de `team.toml`, dos
+  prompts y el esquema del revisor, para que `check` pase al momento) y
+  `titan-team doc` (con `crates/titan-team/FORMAT.md` embebido, escrito para
+  el formato de esta variante); las entradas del
+  [[Catálogo técnico]] (titan-team, eventos del equipo, modelo y monitor,
+  cuota) adaptadas a lo que hay aquí; y la unión exacta del director por
+  `CLAUDE_CODE_SESSION_ID`, que mejora la de B (la sesión más activa de la
+  carpeta, que falla con varias): campo opcional `director_session` en cada
+  evento.
+- **Hilo ocupado**: si el hilo de un rol está abierto en la app, Codex
+  rechaza el turno («already has an active writer»). Antes el rol podía
+  perder su hilo; ahora `titan-team` lo conserva, no abre otro, escribe
+  `turn_finished` con `status = "busy"` y sale con 4 y un mensaje claro; la
+  skill `equipo` hace que el director avise y repita cuando el usuario lo
+  diga. Contrato en ADR-0010 («Ampliaciones compatibles al cerrar la fase»).
+  La otra mitad, en la app, es
+  [[Abrir los hilos del equipo en solo lectura desde la app]] (Pendiente).
+- **Versión 0.4.0** (minor), acordada en el encargo.
+
+### Revisión de Sol del cierre (una ronda, contexto limpio)
+
+`fase-3-cierre-revision`, gpt-6.1-sol high, hilo nuevo con la especificación
+del cierre y el diff `1411551..1e780bd`: `changes_requested`, **1 mayor, 1
+menor y 1 nit**. Decisiones:
+
+- **Aceptado (mayor)**: la sesión del director se perdía si dejaba de estar
+  en los últimos 300 eventos. El daemon manda ahora la última de todo el
+  fichero en `TeamTask.director_session` (como `created` y `totals`), con su
+  test.
+- **Aceptado (menor)**: tras un turno `busy` del revisor, el monitor seguía
+  mostrando la ronda como gastada. `TeamRun` devuelve la ronda que había
+  adelantado su `turn_started`, con su test.
+- **Descartado (nit)**: comentarios en español en la plantilla de
+  `team.toml`. Es un fichero de configuración para el usuario, y en esta fase
+  ya se decidió que los comentarios de `team.toml` y `ci.yml` siguen en
+  español como el resto de esos ficheros.
 
