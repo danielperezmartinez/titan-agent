@@ -248,6 +248,36 @@ fn read_line(line: &str, out: &mut TurnOutput, cwd: &Path) -> Option<String> {
     }
 }
 
+/// `/usr/bin/bash -lc 'cargo test'` → `cargo test`: Codex runs every
+/// command through a login shell, which says nothing to the reader.
+fn unwrap_shell(command: &str) -> &str {
+    let Some((program, rest)) = command.split_once(' ') else {
+        return command;
+    };
+    let shell = program.rsplit('/').next().unwrap_or(program);
+    let Some(script) = ["sh", "bash", "zsh"]
+        .contains(&shell)
+        .then(|| {
+            rest.strip_prefix("-lc ")
+                .or_else(|| rest.strip_prefix("-c "))
+        })
+        .flatten()
+    else {
+        return command;
+    };
+    let script = script.trim();
+    for quote in ['\'', '"'] {
+        if let Some(inner) = script
+            .strip_prefix(quote)
+            .and_then(|s| s.strip_suffix(quote))
+            .filter(|inner| !inner.contains(quote))
+        {
+            return inner;
+        }
+    }
+    script
+}
+
 /// The activity line of an `item.started`, if its kind is shown.
 fn activity(item: &Value, cwd: &Path) -> Option<String> {
     match item.get("type").and_then(Value::as_str)? {
@@ -261,7 +291,7 @@ fn activity(item: &Value, cwd: &Path) -> Option<String> {
                     .join(" "),
                 _ => String::new(),
             };
-            Some(format!("$ {}", command.trim()))
+            Some(format!("$ {}", unwrap_shell(command.trim())))
         }
         "file_change" => {
             let root = format!("{}/", cwd.to_string_lossy().trim_end_matches('/'));
