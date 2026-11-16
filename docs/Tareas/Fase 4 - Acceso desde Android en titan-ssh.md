@@ -3,9 +3,9 @@ Nombre: Fase 4 - Acceso desde Android en titan-ssh
 Estado: Planificando
 Resumen: Controlar las sesiones del equipo desde Android como un plugin de titan-ssh que se conecta por SSH al daemon titan-agentd y habla su protocolo; se planifica con la sesión de titan-ssh cuando el escritorio esté terminado.
 Decisiones: ''
-Bloqueada: ["[[Fase 3 - Herramienta del equipo en Rust y monitor]]"]
+Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T15:28:51+01:00
+Última modificación: 2026-11-16T22:06:00+01:00
 ---
 
 # Fase 4 - Acceso desde Android en titan-ssh

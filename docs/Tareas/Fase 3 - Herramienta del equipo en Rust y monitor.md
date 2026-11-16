@@ -1,11 +1,11 @@
 ---
 Nombre: Fase 3 - Herramienta del equipo en Rust y monitor
-Estado: En curso
+Estado: Hecha
 Resumen: Reescribir en Rust la herramienta del equipo (titan-team, con su skill) con un formato de eventos versionado, hacer que el daemon lo lea, y construir el monitor del proyecto con sus tres vistas (grafo, carriles, mesa de control) en la zona central.
 Decisiones: '[[Decisiones/ADR-0010 Formato de team.toml y de los eventos del equipo]]. Se integra la variante equipo v4 (rama feat/fase-3-equipo-v4) por recomendación del evaluador independiente, con init/doc, catálogo y la unión exacta del director traídos de la variante A (feat/fase-3-opus). Hilo ocupado: salida 4 y status busy, conservando el hilo; la otra mitad en [[Abrir los hilos del equipo en solo lectura desde la app]]. Cuota de Codex por account/rateLimits/read; Claude «sin dato». bin/team pasa a envoltorio de titan-team. Versión 0.4.0 (minor).'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-16T21:40:00+01:00
+Última modificación: 2026-11-16T22:06:00+01:00
 ---
 
 # Fase 3 - Herramienta del equipo en Rust y monitor
@@ -329,4 +329,40 @@ menor y 1 nit**. Decisiones:
   [[Abrir los hilos del equipo en solo lectura desde la app]]) y los acentos
   del terminal integrado
   ([[Acentos y teclas muertas en el terminal integrado]]).
+
+### Publicación
+
+- **PR #7** integrada con squash en `main` el 2026-11-16, commit `b5ce3a1`,
+  versión **0.4.0**. Checks `Cambios`, `Fugas`, `Verificar` y `Windows` en
+  verde. El primer CI falló en Windows: un test de la fase esperaba rutas
+  relativas con `/` y `relative()` las daba con `\`. Se arregló haciendo que
+  las rutas del estado usen siempre `/` (commit `6022bfa`), y el segundo CI
+  salió en verde. GitHub rechazó `--author-email` con el correo noreply
+  («Invalid email address»), así que el squash sale con el correo principal
+  de la cuenta, como permite [[README#Repositorio y publicación]]. No hay tag
+  ni release, porque el pipeline de versiones aún no existe.
+- El encargo de revisión `fase-3-cierre-revision` se cerró con su worktree y
+  su rama. La rama de la variante A (`feat/fase-3-opus`) y su worktree no se
+  tocaron; retirarlos lo decide el usuario.
+
+### Métricas del cierre
+
+Sesión de Claude Code (Opus 5.5) del 2026-11-16, de 21:23 a 22:06 (unos
+43 min) desde el encargo hasta este commit. Incluye unos 12 min de espera
+por la prueba manual del usuario y unos 8 min de CI. Hubo una interrupción
+por el límite de uso de Claude, sin hueco medible en el transcript.
+
+- **Uso de Claude** (transcript): 113 respuestas y unas 106 llamadas a
+  herramientas; 70 k tokens de salida, 220 k de escritura en caché y 20,5 M
+  de lectura de caché. Sin subagentes.
+- **Codex**: 2 llamadas del equipo.
+  - Revisión de Sol (gpt-6.1-sol, high): 488 k tokens de entrada (409 k en
+    caché), 4,6 k de salida y 144 s.
+  - Comprobación del hilo ocupado con el Codex real: rechazada en 0,4 s, sin
+    tokens.
+- **Tests**: 112 (5 nuevos: el turno `busy` y la sesión del director en el
+  núcleo, la sesión exacta y la de todo el fichero en el monitor, `init` y
+  `doc`, y el hilo ocupado de punta a punta; la detección por la salida JSON
+  y por stderr se añadió a un test existente).
+- **Hallazgos de Sol**: 1 mayor y 1 menor, aceptados; 1 nit, descartado.
 
