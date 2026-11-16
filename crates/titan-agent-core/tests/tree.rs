@@ -33,6 +33,7 @@ fn session(key: &str, project: &str, parent: Option<&str>, started: i64) -> Sess
         pid: None,
         attach: None,
         stoppable: false,
+        launched_here: false,
     }
 }
 

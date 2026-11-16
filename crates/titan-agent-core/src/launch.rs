@@ -250,8 +250,12 @@ impl LaunchSpec {
                 "--permission-mode".into(),
                 self.permission.clone(),
             ],
+            // `--remote unix://` joins the shared `codex app-server`, so the
+            // thread is live there (listed, stoppable) while the TUI runs.
             AgentCli::Codex => vec![
                 "codex".into(),
+                "--remote".into(),
+                "unix://".into(),
                 "-m".into(),
                 self.model.clone(),
                 "-c".into(),
@@ -304,6 +308,7 @@ impl LaunchSpec {
             pid: None,
             attach: None,
             stoppable: false,
+            launched_here: true,
         }
     }
 
@@ -419,6 +424,8 @@ mod tests {
             s.argv(),
             [
                 "codex",
+                "--remote",
+                "unix://",
                 "-m",
                 "gpt-6-luna",
                 "-c",

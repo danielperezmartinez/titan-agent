@@ -852,22 +852,12 @@ fn resolve_launches(state: &mut State, sessions: &mut Vec<Session>) {
             }
         }
     }
-    // A Codex TUI launched here runs its own app-server, so the shared one
-    // reports its thread as not loaded ("finished") while it is open in our
-    // terminal: show it as live instead.
+    // «lanzada por: tú (titan-agent)» for every session launched here.
     for launch in launches.iter() {
-        if launch.spec.agent != AgentCli::Codex {
-            continue;
-        }
-        let Some(real) = &launch.session else {
-            continue;
-        };
-        let open = terminals.values().any(|t| &t.session == real);
-        if let Some(session) = sessions.iter_mut().find(|s| &s.key == real)
-            && open
-            && session.state == (SessionState::Finished { failed: false })
+        if let Some(real) = &launch.session
+            && let Some(session) = sessions.iter_mut().find(|s| &s.key == real)
         {
-            session.state = SessionState::Waiting;
+            session.launched_here = true;
         }
     }
     sessions.extend(provisional);
@@ -1203,15 +1193,17 @@ mod tests {
     }
 
     fn codex_thread(key: &str, cwd: &str, started_at_ms: i64) -> Session {
-        LaunchSpec {
+        let spec = LaunchSpec {
             agent: AgentCli::Codex,
             cwd: cwd.into(),
             model: "gpt-6-luna".into(),
             effort: "low".into(),
             permission: "read-only".into(),
             brief: "x".into(),
-        }
-        .provisional_session(key, started_at_ms)
+        };
+        let mut thread = spec.provisional_session(key, started_at_ms);
+        thread.launched_here = false;
+        thread
     }
 
     #[test]
@@ -1308,23 +1300,27 @@ mod tests {
     }
 
     #[test]
-    fn launched_tui_thread_is_live_while_its_terminal_is_open() {
+    fn a_resolved_launch_marks_its_session_as_launched_here() {
         let hub = hub();
-        let mut thread = codex_thread("cx:new", "/srv/demo/kite", now_ms());
-        thread.state = SessionState::Finished { failed: false };
         let mut launch = codex_launch("launch:1", "/srv/demo/kite", &[]);
         launch.session = Some("cx:new".into());
         hub.lock().launches.push(launch);
-        hub.set_source(AgentCli::Codex, Ok(vec![thread]));
-        // No terminal: the CLI's state stands.
-        assert_eq!(
-            hub.lock().sessions[0].state,
-            SessionState::Finished { failed: false }
+        hub.set_source(
+            AgentCli::Codex,
+            Ok(vec![
+                codex_thread("cx:new", "/srv/demo/kite", now_ms()),
+                codex_thread("cx:other", "/srv/demo/kite", now_ms()),
+            ]),
         );
-        let mut state = hub.lock();
-        state.terminals.insert("t1".into(), fake_terminal("cx:new"));
-        rebuild(&mut state);
-        assert_eq!(state.sessions[0].state, SessionState::Waiting);
-        let _ = state.terminals.get_mut("t1").map(|t| t.killer.kill());
+        let state = hub.lock();
+        let marked = |key: &str| {
+            state
+                .sessions
+                .iter()
+                .find(|s| s.key == key)
+                .map(|s| s.launched_here)
+        };
+        assert_eq!(marked("cx:new"), Some(true));
+        assert_eq!(marked("cx:other"), Some(false));
     }
 }

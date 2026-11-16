@@ -1196,6 +1196,7 @@ impl MainView {
                     .clone()
                     .unwrap_or_else(|| parent.agent.tag().into())
             ),
+            None if session.launched_here => "tú (titan-agent)".into(),
             None if session.kind == SessionKind::Interactive => "tú".into(),
             None => "sin dato del CLI".into(),
         };

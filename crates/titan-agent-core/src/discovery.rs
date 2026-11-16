@@ -68,6 +68,7 @@ fn claude_session(entry: &Value) -> Option<Session> {
         pid,
         attach: background.then(|| vec!["claude".into(), "attach".into(), cli_id.clone()]),
         stoppable: background && state.is_live(),
+        launched_here: false,
     })
 }
 
@@ -193,6 +194,7 @@ pub fn codex_session(thread: &Value, loaded: bool) -> Option<Session> {
             id,
         ]),
         stoppable: state == SessionState::Working || state == SessionState::NeedsYou,
+        launched_here: false,
     })
 }
 

@@ -48,6 +48,8 @@ fn official_argv_preserves_the_brief_and_names_use_unicode_characters() {
         codex.argv(),
         vec![
             "codex",
+            "--remote",
+            "unix://",
             "-m",
             "opus[1m]",
             "-c",
