@@ -1,5 +1,5 @@
 use gpui::{Keystroke, Modifiers};
-use titan_agent::keys::{keystroke_bytes, KeyModes};
+use titan_agent::keys::{KeyModes, keystroke_bytes};
 
 fn key(key: &str, key_char: Option<&str>, modifiers: Modifiers) -> Keystroke {
     Keystroke {
