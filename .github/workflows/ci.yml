@@ -2,8 +2,8 @@
 # "Seguridad, coste y cumplimiento".
 # - Cambios: detecta si hay algo fuera de docs/. Un cambio de solo bóveda omite
 #   Verificar (un check omitido cuenta como superado).
-# - Verificar: versión, formato, clippy y tests de Rust, y los tests del
-#   prototipo del equipo (bin/team). Se omite mientras no exista Cargo.toml.
+# - Verificar: versión, formato, clippy y tests de Rust (incluida la
+#   herramienta del equipo, titan-team). Se omite mientras no exista Cargo.toml.
 #   GPUI enlaza en Linux con xcb, xkbcommon, fontconfig y freetype.
 # - Windows: compila y prueba el workspace en Windows. No es un check
 #   obligatorio para integrar.
@@ -81,9 +81,6 @@ jobs:
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
-      - name: Tests del prototipo del equipo
-        if: hashFiles('bin/team') != ''
-        run: python3 -m unittest discover -s bin -p 'test_*.py' -v
       - name: Sin proyecto Rust todavía
         if: hashFiles('Cargo.toml') == ''
         run: echo "Aún no hay Cargo.toml; nada que compilar."
