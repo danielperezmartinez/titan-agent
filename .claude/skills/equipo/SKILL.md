@@ -1,18 +1,18 @@
 ---
 name: equipo
-description: Dirige el equipo multiagente v3 definido en .agents/team.toml (Opus implementa cada parte con sus tests; antes, Codex Sol escribe pocos tests de aceptación desde la especificación; al final, una revisión de Sol con contexto limpio y un evaluador visual de Opus nuevo; Luna solo para trabajo mecánico). Úsala cuando el usuario pida "encargar al equipo", "pásalo por el equipo" o un desarrollo con tests de aceptación, revisión independiente y evaluación visual.
+description: Dirige el equipo multiagente v4 definido en .agents/team.toml (Opus fija el contrato e implementa cada parte con sus tests; antes, Codex Sol escribe pocos tests de aceptación desde ese contrato; al final, una revisión de Sol con contexto limpio y un evaluador visual de Opus nuevo; Luna solo para trabajo mecánico). Úsala cuando el usuario pida "encargar al equipo", "pásalo por el equipo" o un desarrollo con tests de aceptación, revisión independiente y evaluación visual.
 ---
 
-# Equipo multiagente v3: bucle del director
+# Equipo multiagente v4: bucle del director
 
-Tú eres el **director** (rol `director` de `.agents/team.toml`) y **también implementas**. La v3 reparte el trabajo por **contexto**, no por rol: quien hace una parte hace también sus tests, y los demás roles aportan lo que solo da un contexto distinto (tests desde la especificación y una revisión limpia). Origen: experimento de la fase 1 (la variante con Luna implementando gastó más Claude, tardó más y quedó peor) y la valoración de la nota «Equipo multiagente con mis suscripciones» de la bóveda de control.
+Tú eres el **director** (rol `director` de `.agents/team.toml`) y **también implementas**. La v4 (como la v3) reparte el trabajo por **contexto**, no por rol: quien hace una parte hace también sus tests, y los demás roles aportan lo que solo da un contexto distinto (tests desde la especificación y una revisión limpia). Origen: experimento de la fase 1 (la variante con Luna implementando gastó más Claude, tardó más y quedó peor), la valoración de la nota «Equipo multiagente con mis suscripciones» de la bóveda de control y la fase 3 (v4: contrato antes que tests y evaluador nuevo en cada ronda).
 
-Herramienta: `bin/team` (en la carpeta que contiene `.agents/`). Lee `bin/team roles` al empezar: el TOML manda, no esta skill. Cada `team ask` es una llamada a la cuota de ChatGPT Plus: **no repitas llamadas**. Si la cuota se agota, para y avisa al usuario con la hora de reinicio.
+Herramienta: `bin/team`, envoltorio de `titan-team` (crate `crates/titan-team`; formato de `team.toml`, salidas y eventos en `docs/Decisiones/ADR-0010` y en `bin/team doc`). Lee `bin/team roles` al empezar (y `bin/team check` si cambias el TOML): el TOML manda, no esta skill. Cada paso queda en `.agents/state/<id>/events.jsonl`, que el monitor de titan-agent muestra en vivo. Cada `team ask` es una llamada a la cuota de ChatGPT Plus: **no repitas llamadas**. Si la cuota se agota, para y avisa al usuario con la hora de reinicio.
 
 ## 0. Especificación (tú, antes de nada)
 Escribe la especificación en un fichero fuera del repo (`$CLAUDE_JOB_DIR/tmp/<id>.md`). Debe bastar por sí sola, porque los roles de Codex no ven esta conversación **ni la bóveda** (`project.hidden_paths`, `[codex].config`). Contiene:
 - Objetivo y comportamiento visible, copiando lo necesario de la tarea, sus ADR y reglas.
-- El **contrato público** que tocarán los tests: crate y módulo, nombres, firmas, mensajes de protocolo, códigos de error y cuándo salen, y en qué `crates/<crate>/tests/` van.
+- El **contrato público** que tocarán los tests, cerrado por ti: crate y módulo, nombres, firmas, formatos, límites, mensajes de protocolo, códigos de error y cuándo salen, y en qué `crates/<crate>/tests/` van. Cópialo también a la nota de la tarea o a su ADR **antes** de lanzar a Sol: los tests comprueban comportamiento de ese contrato y no inventan detalles.
 - **Nada de tu diseño interno** (estructuras privadas, cómo lo vas a resolver): los tests deben salir de la especificación, no de tu plan.
 
 Si hay decisiones de producto abiertas, pregúntalas al usuario antes de gastar llamadas.
@@ -41,8 +41,8 @@ bin/team ask revisor <id>-revision -m "El diff a revisar es git diff <base>..HEA
 ```
 (`--diff` trunca a 60 000 caracteres: para una fase entera, que el revisor lo lea con git.) Tú **decides** cada hallazgo — aceptado, descartado o aplazado — y **anotas por qué** en la nota de la tarea. Corriges tú. Otra ronda solo con permiso del usuario.
 
-## 5. Evaluador visual (subagente de Opus nuevo)
-Con la interfaz terminada, captura la ventana real (p. ej. `spectacle -a -b -n -o <png>`, con datos de prueba, nunca sesiones reales del usuario) y lanza un subagente **nuevo** con la herramienta `Agent`, sin el contexto de la implementación: recibe las capturas, `design/preview/` (o capturas de la previa) y los criterios del paso 2, y puntúa cada criterio con lo que falla. Corriges y repites **como mucho 2 veces**.
+## 5. Evaluador visual (subagente de Opus nuevo en cada ronda)
+Con la interfaz terminada, captura la ventana real (solo la tuya: compruébalo por su título o su PID, con datos de prueba, nunca sesiones reales del usuario) y lanza un subagente **nuevo en cada ronda** con la herramienta `Agent`, sin el contexto de la implementación ni el de rondas anteriores: recibe las capturas, `design/preview/` (o capturas de la previa) y los criterios del paso 2, y puntúa cada criterio con lo que falla. Corriges y repites **como mucho 2 veces**.
 
 ## 6. Cierre
 - Métricas para la nota de la tarea: tiempo, uso de Claude, `bin/team show <id>` (llamadas y tokens de Codex), número de tests (de aceptación y propios), hallazgos de revisión aceptados/descartados y resultado del evaluador visual.
@@ -52,4 +52,5 @@ Con la interfaz terminada, captura la ventana real (p. ej. `spectacle -a -b -n -
 - Los roles de Codex mantienen su sandbox (`workspace-write` o `read-only`); nunca `danger-full-access`.
 - Una llamada por paso; no relances un paso que ha ido bien "por si acaso".
 - Si un `team ask` falla (exit 1), lee el `.stderr` del turno en `.agents/state/<id>/` antes de reintentar; un reintento como mucho y luego al usuario.
+- **Hilo ocupado (exit 4)**: el hilo de ese rol está abierto en otro sitio (normalmente el usuario lo abrió en titan-agent con `codex resume`). No se ejecutó nada y el rol conserva su hilo. **No uses `--new`** ni abras otro hilo: avisa al usuario («el hilo de <rol> está abierto en titan-agent; ciérralo o dime cuándo») y espera. Cuando te diga que ya está, repite **la misma orden**.
 - Variantes: si el usuario quiere otro reparto, se cambia en `.agents/team.toml` y aquí.

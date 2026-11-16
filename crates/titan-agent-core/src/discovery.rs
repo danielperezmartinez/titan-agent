@@ -265,7 +265,7 @@ fn first_words(text: &str, count: usize) -> String {
 /// 1. Codex `parentThreadId` (sub-agents).
 /// 2. A Codex thread working in `<folder>/.agents/worktrees/<task>` hangs from
 ///    the live Claude Code session whose working folder is `<folder>`: that is
-///    where the team tool (`bin/team`) creates its task worktrees.
+///    where the team tool (`titan-team`) creates its task worktrees.
 ///
 /// Claude Code does not report who launched a session, so Claude sessions are
 /// never nested.

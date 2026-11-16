@@ -66,6 +66,8 @@ fn server_messages_round_trip() {
             }],
             terminals: vec![],
             launches: vec![],
+            teams: vec![],
+            quotas: vec![],
         }),
         ServerMessage::Event(Event::TerminalClosed {
             terminal: "t3".into(),

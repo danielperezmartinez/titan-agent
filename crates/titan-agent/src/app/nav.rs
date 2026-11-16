@@ -211,6 +211,7 @@ impl MainView {
                 team_live,
             } => {
                 let selected = self.selection == Selection::Project(root.clone());
+                let root_for_marker = root.clone();
                 let id = ElementId::Name(SharedString::from(format!("p:{root}")));
                 div()
                     .id(id)
@@ -252,9 +253,10 @@ impl MainView {
                             .child(name),
                     )
                     .child(div().flex_grow_1().min_w(px(8.)).h(px(1.)).bg(hairline()))
-                    .when(team_live, |d| {
-                        d.child(div().text_color(color(theme::SUCCESS)).child("[*]"))
-                    })
+                    .when(
+                        team_live || self.teams.iter().any(|t| t.project_root == root_for_marker),
+                        |d| d.child(div().text_color(color(theme::SUCCESS)).child("[*]")),
+                    )
                     .child(div().flex_none().child(count.to_string()))
                     .into_any_element()
             }

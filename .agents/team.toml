@@ -1,11 +1,13 @@
-# Composición del equipo de titan-agent. La leen bin/team y la skill "equipo".
+# Composición del equipo de titan-agent. La leen titan-team (bin/team) y la skill "equipo".
+# Formato v1 y códigos de error: docs/Decisiones/ADR-0010. Compruébalo con `bin/team check`.
 # Para cambiar quién hace qué, edita este fichero: no hay nada fijo en el código.
 # Origen: prototipo de la sandbox multiagente, adaptado en la fase 0
 # (docs/Tareas/Fase 0 - Preparar el workspace y el equipo del prototipo.md).
 version = 1
 name = "titan-agent"
 
-# Dónde guarda bin/team el estado de cada encargo (thread_id, turnos, salidas).
+# Dónde guarda titan-team el estado de cada encargo (thread_id, turnos, salidas).
+# Incluye events.jsonl de cada encargo, que lee titan-agentd para el monitor.
 # No se versiona: las salidas pueden contener datos del entorno.
 state_dir = ".agents/state"
 
@@ -16,7 +18,7 @@ worktrees_dir = ".agents/worktrees" # un worktree por encargo (no se versiona)
 branch_prefix = "encargo/"
 test_cmd = "cargo test --workspace"
 test_timeout_s = 1800               # el primer build de GPUI en un worktree nuevo tarda
-autocommit = true                  # bin/team hace commit tras cada turno que escribe
+autocommit = true                  # titan-team hace commit tras cada turno que escribe
 # Lo que no se copia al worktree de cada encargo (sparse checkout; sigue en la
 # rama). Los roles trabajan solo con su prompt y el encargo: sin los punteros de
 # arranque ni la bóveda, que son del director.
@@ -32,17 +34,18 @@ config = [
 ]
 
 [flow]
-# Equipo v3 (2026-11-15): se reparte por contexto, no por rol. Opus (director)
-# implementa cada parte con sus propios tests; Codex solo escribe los tests de
-# aceptación antes (a partir de la especificación) y hace UNA revisión al final
-# con contexto limpio. Ver la skill "equipo".
+# Equipo v4 (2026-11-16; v3 del 2026-11-15): se reparte por contexto, no por rol.
+# Opus (director) fija el contrato en la especificación e implementa cada parte
+# con sus propios tests; Codex solo escribe antes los tests de aceptación (desde
+# el contrato, sin inventar detalles) y hace UNA revisión al final con contexto
+# limpio. Ver la skill "equipo".
 steps = ["disenador_tests", "revisor"]  # entre los dos, implementa el director
 review_role = "revisor"            # su informe lo decide el director
 fix_role = "director"              # quien corrige es el director, no Codex
 max_review_rounds = 1              # una sola ronda; más solo con permiso del usuario
 
 [roles.director]
-cli = "claude"                     # la sesión actual de Claude Code; bin/team no la lanza
+cli = "claude"                     # la sesión actual de Claude Code; titan-team no la lanza
 model = "opus"
 launch = false
 purpose = "Diseña, implementa cada parte con sus tests, decide qué hallazgos acepta y lanza el evaluador visual."

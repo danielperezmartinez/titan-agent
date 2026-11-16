@@ -6,12 +6,16 @@
 mod claude;
 mod codex;
 mod hub;
+mod teams;
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hub::{Config, Hub};
+
+/// Codex quota is read at most this often.
+const QUOTA_INTERVAL: Duration = Duration::from_secs(60);
 use titan_agent_core::protocol::socket_path;
 use titan_agent_core::session::AgentCli;
 
@@ -62,6 +66,7 @@ fn main() {
     let hub = Hub::new(config);
     spawn_claude_poller(Arc::clone(&hub));
     spawn_codex_poller(Arc::clone(&hub));
+    spawn_team_reader(Arc::clone(&hub));
     if let Err(error) = server::serve(&socket, hub) {
         eprintln!("titan-agentd: {error}");
         std::process::exit(1);
@@ -99,19 +104,38 @@ fn spawn_codex_poller(hub: Arc<Hub>) {
             let connected = codex::socket_path(&hub.config.codex)
                 .and_then(|path| codex::CodexClient::connect(&path));
             match connected {
-                Ok(mut client) => loop {
-                    match client.sessions() {
-                        Ok(sessions) => hub.set_source(AgentCli::Codex, Ok(sessions)),
-                        Err(error) => {
-                            hub.set_source(AgentCli::Codex, Err(error));
-                            break;
+                Ok(mut client) => {
+                    let mut quota_read: Option<Instant> = None;
+                    loop {
+                        match client.sessions() {
+                            Ok(sessions) => hub.set_source(AgentCli::Codex, Ok(sessions)),
+                            Err(error) => {
+                                hub.set_source(AgentCli::Codex, Err(error));
+                                break;
+                            }
                         }
+                        if quota_read.is_none_or(|at| at.elapsed() >= QUOTA_INTERVAL) {
+                            quota_read = Some(Instant::now());
+                            hub.set_quotas(AgentCli::Codex, client.quotas().unwrap_or_default());
+                        }
+                        std::thread::sleep(hub.config.poll);
                     }
-                    std::thread::sleep(hub.config.poll);
-                },
+                }
                 Err(error) => hub.set_source(AgentCli::Codex, Err(error)),
             }
+            // Without the shared daemon there is no fresh quota to show.
+            hub.set_quotas(AgentCli::Codex, Vec::new());
             std::thread::sleep(hub.config.poll.max(Duration::from_secs(5)));
+        }
+    });
+}
+
+/// Follows the events of the team tool in the folders of known sessions.
+fn spawn_team_reader(hub: Arc<Hub>) {
+    std::thread::spawn(move || {
+        loop {
+            hub.refresh_teams();
+            std::thread::sleep(hub.config.poll);
         }
     });
 }

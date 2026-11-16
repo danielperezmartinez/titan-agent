@@ -6,12 +6,15 @@
 //! `{"id":1,"result":...}` or `{"id":1,"error":{...}}` and pushes events
 //! (`{"event":"sessions","params":{...}}`). Terminal bytes travel in base64.
 
+use std::collections::BTreeMap;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::launch::LaunchSpec;
+use crate::quota::Quota;
 use crate::session::{AgentCli, Session};
 
 /// Version of this protocol. A daemon refuses a `hello` with another version.
@@ -166,6 +169,12 @@ pub enum Event {
         /// became, once the CLI reports it.
         #[serde(default)]
         launches: Vec<LaunchRef>,
+        /// Open team tasks of the known projects (docs/Decisiones/ADR-0010).
+        #[serde(default)]
+        teams: Vec<TeamTask>,
+        /// Remaining quota of each CLI that reports it.
+        #[serde(default)]
+        quotas: Vec<Quota>,
     },
     /// Output of a terminal, in base64.
     Output { terminal: String, data: String },
@@ -177,6 +186,42 @@ pub enum Event {
         exit_code: Option<u32>,
     },
 }
+
+/// The events of one open team task, as written by `titan-team`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TeamTask {
+    /// Project the team folder belongs to (worktrees folded).
+    pub project_root: String,
+    /// Folder that holds `.agents/team.toml`.
+    pub folder: String,
+    pub task: String,
+    /// Raw event objects of `events.jsonl`, in file order (the last
+    /// [`TEAM_EVENTS_SENT`] at most).
+    pub events: Vec<Value>,
+    /// The task's `task_created` event, kept even when it is no longer
+    /// among the last events (additive field, ADR-0010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<Value>,
+    /// Finished turns and tokens of each role over the whole file, which
+    /// the last events alone may undercount (additive field, ADR-0010).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub totals: BTreeMap<String, RoleTotals>,
+    /// Last `director_session` over the whole file, which the last events
+    /// alone may no longer carry (additive field, ADR-0010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_session: Option<String>,
+}
+
+/// Counters of one role over the whole events file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RoleTotals {
+    pub turns: u32,
+    /// Input plus output tokens of its finished turns.
+    pub tokens: u64,
+}
+
+/// Events of a task sent in each snapshot, at most.
+pub const TEAM_EVENTS_SENT: usize = 300;
 
 /// A live terminal and the session it belongs to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

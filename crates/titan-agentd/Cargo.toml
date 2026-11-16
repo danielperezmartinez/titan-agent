@@ -10,6 +10,7 @@ publish.workspace = true
 titan-agent-core.workspace = true
 portable-pty.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 tungstenite.workspace = true
 
 [dev-dependencies]
