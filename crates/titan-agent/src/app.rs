@@ -383,6 +383,7 @@ impl MainView {
                 {
                     self.selection = Selection::Project(root);
                 }
+                self.preselect_thread(cx);
             }
             ServerMessage::Event(Event::Output { terminal, data }) => {
                 if let (Some(view), Some(bytes)) =

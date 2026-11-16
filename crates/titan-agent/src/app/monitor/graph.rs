@@ -275,8 +275,9 @@ impl MainView {
                     .opacity(1. - i as f32 * 0.12)
                     .child(
                         div()
-                            .w(px(72.))
+                            .w(px(88.))
                             .flex_none()
+                            .whitespace_nowrap()
                             .text_color(color(theme::STONE))
                             .child(if i == 0 {
                                 ago(item.at_ms, now)
@@ -374,7 +375,7 @@ impl MainView {
                                     .child(div().text_color(color(theme::CODEX)).child("*"))
                                     .child("Codex"),
                             )
-                            .child("clic en un nodo: abre su sesión"),
+                            .child("clic en un nodo: su hilo (solo lectura) o su sesión"),
                     ),
             )
     }

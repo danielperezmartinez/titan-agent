@@ -60,13 +60,32 @@ impl MainView {
                 error: None,
                 asked_ms: 0,
                 waiting: false,
-                confirm: false,
+                // Screenshots only: how the confirmation looks.
+                confirm: std::env::var("TITAN_AGENT_DEMO_CONFIRM").is_ok(),
                 scroll: ScrollHandle::new(),
                 stick: true,
             });
         }
         self.ask_transcript();
         cx.notify();
+    }
+
+    /// `TITAN_AGENT_THREAD` (screenshots): opens the thread of that role of
+    /// the project shown, once its monitor has it.
+    pub(super) fn preselect_thread(&mut self, cx: &mut Context<Self>) {
+        let (Ok(role), Selection::Project(root)) =
+            (std::env::var("TITAN_AGENT_THREAD"), self.selection.clone())
+        else {
+            return;
+        };
+        let target = self.board_for(&root).and_then(|board| {
+            board
+                .agent(&role)
+                .and_then(|agent| super::monitor::target(&board, agent))
+        });
+        if let Some(super::monitor::Target::Thread(r)) = target {
+            self.open_thread(r, cx);
+        }
     }
 
     /// Asks for the transcript again when it is on screen and due.
