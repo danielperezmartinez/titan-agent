@@ -18,8 +18,8 @@ use gpui::{
 use titan_agent_core::protocol::{Request, encode_bytes};
 
 use crate::client::DaemonClient;
-use crate::keys::{KeyModes, keystroke_bytes};
 use crate::theme;
+use titan_agent::keys::{KeyModes, keystroke_bytes};
 
 /// Terminal text size and line height (design: 13 px, line-height 1.45).
 pub const FONT_SIZE: f32 = 13.0;
