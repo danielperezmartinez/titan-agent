@@ -5109,12 +5109,19 @@ dependencies = [
  "portable-pty",
  "serde_json",
  "titan-agent-core",
+ "toml 1.2.1+spec-1.1.0",
  "tungstenite",
 ]
 
 [[package]]
 name = "titan-team"
 version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "titan-agent-core",
+ "toml 1.2.1+spec-1.1.0",
+]
 
 [[package]]
 name = "tokio"

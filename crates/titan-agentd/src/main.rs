@@ -133,10 +133,8 @@ fn spawn_codex_poller(hub: Arc<Hub>) {
 /// Follows the events of the team tool in the folders of known sessions.
 fn spawn_team_reader(hub: Arc<Hub>) {
     std::thread::spawn(move || {
-        let mut scanner = teams::TeamScanner::default();
         loop {
-            let folders = hub.team_folders();
-            hub.set_teams(scanner.scan(&folders, hub::now_ms()));
+            hub.refresh_teams();
             std::thread::sleep(hub.config.poll);
         }
     });

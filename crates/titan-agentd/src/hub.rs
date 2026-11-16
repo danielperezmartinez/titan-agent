@@ -18,6 +18,8 @@ use titan_agent_core::protocol::{
     SourceStatus, TeamTask, TerminalRef, encode_line,
 };
 use titan_agent_core::quota::Quota;
+
+use crate::teams::TeamScanner;
 use titan_agent_core::session::{AgentCli, Session, SessionState};
 
 use crate::claude::run_with_timeout;
@@ -37,6 +39,9 @@ pub struct Config {
 pub struct Hub {
     pub config: Config,
     state: Mutex<State>,
+    /// Follows the team events. Never locked while waiting for `state`
+    /// (the other order is used by [`Hub::set_source`]).
+    teams: Mutex<TeamScanner>,
 }
 
 struct Client {
@@ -108,6 +113,7 @@ impl Hub {
     pub fn new(config: Config) -> Arc<Hub> {
         Arc::new(Hub {
             config,
+            teams: Mutex::new(TeamScanner::default()),
             state: Mutex::new(State {
                 claude: Vec::new(),
                 codex: Vec::new(),
@@ -181,21 +187,23 @@ impl Hub {
             }
         }
         rebuild(&mut state);
+        // The teams of the sessions just found go in the same snapshot.
+        let folders = team_folders(&state.sessions);
+        state.teams = self.scan_teams(&folders);
         broadcast_snapshot(&mut state, false);
     }
 
-    /// Folders where a team may work: the folder and the project of every
-    /// known session.
-    pub fn team_folders(&self) -> Vec<String> {
-        let state = self.lock();
-        state
-            .sessions
-            .iter()
-            .flat_map(|s| [s.cwd.clone(), s.project_root.clone()])
-            .collect()
+    fn scan_teams(&self, folders: &[String]) -> Vec<TeamTask> {
+        self.teams
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .scan(folders, now_ms())
     }
 
-    pub fn set_teams(&self, teams: Vec<TeamTask>) {
+    /// Reads new team events; called on every poll.
+    pub fn refresh_teams(&self) {
+        let folders = team_folders(&self.lock().sessions);
+        let teams = self.scan_teams(&folders);
         let mut state = self.lock();
         if state.teams != teams {
             state.teams = teams;
@@ -477,6 +485,15 @@ fn snapshot(state: &State) -> ServerMessage {
             .cloned()
             .collect(),
     })
+}
+
+/// Folders where a team may work: the folder and the project of every
+/// known session.
+fn team_folders(sessions: &[Session]) -> Vec<String> {
+    sessions
+        .iter()
+        .flat_map(|s| [s.cwd.clone(), s.project_root.clone()])
+        .collect()
 }
 
 fn broadcast_snapshot(state: &mut State, force: bool) {

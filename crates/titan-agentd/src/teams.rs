@@ -74,7 +74,10 @@ impl TeamScanner {
                 }
                 let state = self.files.entry(key).or_default();
                 follow(&file, state);
-                if state.closed || now_ms - state.last_ts_ms >= ACTIVE_WINDOW_MS {
+                if state.events.is_empty()
+                    || state.closed
+                    || now_ms - state.last_ts_ms >= ACTIVE_WINDOW_MS
+                {
                     continue;
                 }
                 tasks.push(TeamTask {
@@ -197,19 +200,32 @@ mod tests {
         let dir = folder("partial");
         let folders = vec![dir.to_string_lossy().to_string()];
         let mut scanner = TeamScanner::default();
-        append(&dir, "{\"v\":1,\"ts_ms\":100,\"task\":\"demo\",\"type\":\"task_cre");
+        append(
+            &dir,
+            "{\"v\":1,\"ts_ms\":100,\"task\":\"demo\",\"type\":\"task_cre",
+        );
         assert!(scanner.scan(&folders, 200).is_empty());
         append(&dir, "ated\"}\nnot json\n");
         let tasks = scanner.scan(&folders, 200);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].events.len(), 1);
         for n in 0..TEAM_EVENTS_SENT + 5 {
-            append(&dir, &format!("{{\"v\":1,\"ts_ms\":{},\"type\":\"activity\"}}\n", 200 + n));
+            append(
+                &dir,
+                &format!("{{\"v\":1,\"ts_ms\":{},\"type\":\"activity\"}}\n", 200 + n),
+            );
         }
         let tasks = scanner.scan(&folders, 1000);
         assert_eq!(tasks[0].events.len(), TEAM_EVENTS_SENT);
-        assert_eq!(tasks[0].events.last().unwrap()["ts_ms"], 200 + TEAM_EVENTS_SENT as i64 + 4);
-        assert!(scanner.scan(&folders, 200 + ACTIVE_WINDOW_MS + 10_000).is_empty());
+        assert_eq!(
+            tasks[0].events.last().unwrap()["ts_ms"],
+            200 + TEAM_EVENTS_SENT as i64 + 4
+        );
+        assert!(
+            scanner
+                .scan(&folders, 200 + ACTIVE_WINDOW_MS + 10_000)
+                .is_empty()
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -218,7 +234,10 @@ mod tests {
         let dir = folder("rewrite");
         let folders = vec![dir.to_string_lossy().to_string(), String::new()];
         let mut scanner = TeamScanner::default();
-        append(&dir, "{\"v\":1,\"ts_ms\":1,\"type\":\"task_created\"}\n{\"v\":1,\"ts_ms\":2,\"type\":\"decision\"}\n");
+        append(
+            &dir,
+            "{\"v\":1,\"ts_ms\":1,\"type\":\"task_created\"}\n{\"v\":1,\"ts_ms\":2,\"type\":\"decision\"}\n",
+        );
         assert_eq!(scanner.scan(&folders, 10)[0].events.len(), 2);
         std::fs::write(
             dir.join(".agents/estado/demo/events.jsonl"),

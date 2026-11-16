@@ -50,17 +50,18 @@ impl Quota {
 /// are ignored and a malformed entry only drops itself. Nothing about the
 /// account (ids, credits) is kept.
 pub fn parse_codex_rate_limits(result: &Value) -> Vec<Quota> {
-    let entries: Vec<(String, &Value)> = match result
-        .get("rateLimitsByLimitId")
-        .and_then(Value::as_object)
-    {
-        Some(map) => map.iter().map(|(key, value)| (key.clone(), value)).collect(),
-        None => result
-            .get("rateLimits")
-            .map(|value| (String::new(), value))
-            .into_iter()
-            .collect(),
-    };
+    let entries: Vec<(String, &Value)> =
+        match result.get("rateLimitsByLimitId").and_then(Value::as_object) {
+            Some(map) => map
+                .iter()
+                .map(|(key, value)| (key.clone(), value))
+                .collect(),
+            None => result
+                .get("rateLimits")
+                .map(|value| (String::new(), value))
+                .into_iter()
+                .collect(),
+        };
     let mut quotas = Vec::new();
     for (key, entry) in entries {
         if !entry.is_object() {

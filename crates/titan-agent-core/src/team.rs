@@ -502,7 +502,10 @@ mod tests {
         }
         let run = TeamRun::from_events(&events).unwrap();
         assert_eq!(run.spans, vec![("revisor".into(), 2000, Some(5000))]);
-        assert_eq!(run.feed.last().unwrap().text, "revisor -> director: [timeout] sin respuesta");
+        assert_eq!(
+            run.feed.last().unwrap().text,
+            "revisor -> director: [timeout] sin respuesta"
+        );
         assert_eq!(run.workers().count(), 1);
         assert_eq!(run.find("revisor").unwrap().tokens, 12);
     }
