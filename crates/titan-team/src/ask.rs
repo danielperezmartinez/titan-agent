@@ -181,14 +181,18 @@ pub fn ask(ctx: &Context, args: &AskArgs) -> Result<u8> {
         &wt,
         &prompt,
         Duration::from_secs(role.timeout_s),
-        move |action| {
-            let due = last
-                .as_ref()
-                .is_none_or(|(at, text)| at.elapsed() >= ACTION_EVERY && *text != action);
+        move |action, thread_id| {
+            // The thread id always goes out; other actions, at most every
+            // ACTION_EVERY and only when they change.
+            let due = thread_id.is_some()
+                || last
+                    .as_ref()
+                    .is_none_or(|(at, text)| at.elapsed() >= ACTION_EVERY && *text != action);
             if due {
                 action_log.emit(EventKind::Action {
                     role: action_role.clone(),
                     text: action.clone(),
+                    thread_id,
                 });
                 last = Some((Instant::now(), action));
             }

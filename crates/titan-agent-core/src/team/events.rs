@@ -69,8 +69,14 @@ pub enum EventKind {
         message: String,
     },
     /// What a role is doing during its turn (a command, an edit…), at most
-    /// every few seconds.
-    Action { role: String, text: String },
+    /// every few seconds. The first one carries the role's `thread_id` as
+    /// soon as Codex reports it, so its session can be opened mid-turn.
+    Action {
+        role: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thread_id: Option<String>,
+    },
     /// The role answered (or failed).
     TurnFinished {
         role: String,

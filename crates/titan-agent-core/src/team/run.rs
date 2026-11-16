@@ -153,7 +153,14 @@ impl TeamRun {
                 self.review_round = self.review_round.max(*round);
                 self.max_review_rounds = self.max_review_rounds.max(*max_rounds);
             }
-            EventKind::Action { role, .. } => self.ensure_role(role),
+            EventKind::Action {
+                role, thread_id, ..
+            } => {
+                self.ensure_role(role);
+                if let Some(thread) = thread_id {
+                    self.sessions.insert(role.clone(), format!("cx:{thread}"));
+                }
+            }
             EventKind::Note { .. } => {}
             EventKind::TaskClosed => self.closed = true,
         }

@@ -310,7 +310,9 @@ impl Monitor {
                     }
                     text = Some(format!("{dir} -> {}: {message}", name(role)));
                 }
-                EventKind::Action { role, text: action } => {
+                EventKind::Action {
+                    role, text: action, ..
+                } => {
                     if let Some(&i) = index.get(role) {
                         agents[i].action = action.clone();
                         if last_action_feed.is_some_and(|f| f == i)

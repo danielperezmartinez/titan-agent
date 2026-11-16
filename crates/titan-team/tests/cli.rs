@@ -281,7 +281,16 @@ fn a_turn_commits_warns_and_logs_its_events() {
         other => panic!("{other:?}"),
     }
     match &events[2] {
-        EventKind::Action { text, .. } => assert_eq!(text, "ejecuta cargo test"),
+        EventKind::Action {
+            text, thread_id, ..
+        } => {
+            assert_eq!(text, "abre su hilo");
+            assert_eq!(
+                thread_id.as_deref(),
+                Some("th-fake"),
+                "the session is known mid-turn"
+            );
+        }
         other => panic!("{other:?}"),
     }
 }

@@ -2,10 +2,10 @@
 Nombre: Fase 3 - Herramienta del equipo en Rust y monitor
 Estado: En curso
 Resumen: Reescribir en Rust la herramienta del equipo (titan-team, con su skill) con un formato de eventos versionado, hacer que el daemon lo lea, y construir el monitor del proyecto con sus tres vistas (grafo, carriles, mesa de control) en la zona central.
-Decisiones: ''
+Decisiones: '[[Decisiones/ADR-0010 Formato de eventos del equipo en JSONL versionado]]'
 Bloqueada: ["[[Fase 2 - Nueva sesión con salvaguardas]]"]
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-16T18:28:00+01:00
+Última modificación: 2026-11-16T20:35:00+01:00
 ---
 
 # Fase 3 - Herramienta del equipo en Rust y monitor
@@ -79,4 +79,104 @@ que el resultado pase.
 
 ## Verificación
 
+Variante **opus** (rama `feat/fase-3-opus`, sin push), en local el 2026-11-16.
+Opus implementa solo: sin la herramienta del equipo, sin subagentes y sin Codex
+salvo dos llamadas mínimas para la prueba real.
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde: **102 tests de Rust** (64 de
+  las fases anteriores y 38 nuevos). Los 15 tests de Python de `bin/` se
+  retiraron con el prototipo; sus casos tienen equivalente en Rust
+  (`crates/titan-team/tests/cli.rs` y los tests de `team::config`). Hooks de
+  gitleaks en cada commit, sin fugas.
+- **Encargo real** (criterio 1): repositorio desechable con solo un
+  `.agents/team.toml` nuevo (un rol Luna, esfuerzo bajo y solo lectura),
+  `titan-team new` + dos `titan-team ask` reales (un hilo nuevo y su
+  continuación). Un daemon de prueba con los CLI reales en un socket propio
+  (no el de main ni el de la otra variante) unió el director por su id de
+  sesión y el rol por su `thread_id`, y la ventana, filtrada a ese proyecto,
+  mostró en vivo el punto viajando de opus a luna, luna trabajando con su
+  spinner, y la vuelta y el feed en las otras vistas. El hilo de prueba se
+  borró después (`codex delete --force`) y el encargo se cerró (`titan-team
+  close --delete-branch`). No se tocó ninguna sesión real del usuario.
+- **Sin Python** (criterio 2): `bin/team` y `bin/test_team.py` se borraron,
+  igual que su paso del CI. `bin/titan-team` compila y ejecuta el crate.
+- **Equipo solo con `team.toml`** (criterio 3): la prueba real usó un proyecto
+  nuevo sin tocar código. `titan-team init` crea uno de partida, `check` lo
+  valida (una clave o un valor desconocido sale con su línea y los valores
+  válidos) y `doc` imprime el formato (`crates/titan-team/FORMAT.md`). Tests
+  en `check_init_and_doc_let_an_agent_set_up_a_team`.
+- **Capturas** de la ventana real (spectacle; datos inventados en un `--fixture`
+  y un log de eventos escrito por un guion) en el directorio temporal del
+  trabajo, no versionadas. **Incidente**: dos capturas cogieron la ventana de la
+  otra variante, que estaba haciendo sus propias capturas a la vez. El script de
+  enfoque usaba una ruta relativa que KWin no cargaba, y luego hubo una carrera
+  de foco. Se borraron sin usarlas y el script solo da una captura por buena si
+  KWin confirma el PID de mi ventana **antes y después** del disparo; si no,
+  borra el fichero. Todas las capturas restantes se compararon por contenido con
+  una de referencia.
+- **Pendiente del usuario**: pulsar en la ventana (clic en un nodo, una
+  tarjeta o un carril abre su sesión; los tres botones de vista; `ventana 36 s
+  [v]`). No hay inyección de clics en esta sesión.
+
+### Criterios visuales (autoevaluación con capturas, sin evaluador independiente)
+
+| Criterio | Resultado |
+| --- | --- |
+| 1. Barra y jerarquía | Cumple. |
+| 2. Grafo | Cumple. Ajustes deliberados: el nodo «tú» mide 184 px y no 160, para que quepa «responde en la sesión», y la etiqueta del mensaje va encima de los nodos, centrada en el hueco (en la previa queda debajo de los nodos). |
+| 3. Carriles | Cumple. Las etiquetas de mensajes muy seguidos se pisan, igual que en la previa. Añadido: `ventana 36 s [v]` cambia la ventana a 5 y 30 min, porque la decisión dice «configurable». |
+| 4. Mesa de control | Cumple, incluida la cuota real de Codex (bloques ámbar y «· baja» con un 30 % o menos). |
+| 5. Color y acabado | Cumple. GPUI no tiene espaciado entre letras, así que «AHORA» y «HABLANDO» van sin él. El latido ámbar de «te necesita» es un borde que pulsa, no un halo de sombra. |
+
+Nota global propia: 9/10.
+
+### Métricas del experimento (variante opus)
+
+- **Tiempo**: de 18:23 a ~20:40. Unos **55 min de trabajo activo**, más 81 min
+  de pausa (de 19:00 a 20:21) porque el usuario alcanzó su límite de uso.
+- **Uso de Claude** (transcript, Opus 5.5, hasta las 20:26): 137 respuestas;
+  200 k tokens de salida, 799 k de escritura en caché y 40,2 M de lectura de
+  caché. Sin subagentes.
+- **Codex**: 2 llamadas (Luna, low) solo para la prueba real: 53,9 k de entrada
+  (47,5 k en caché) y 77 de salida. Sol: 0.
+- **Tests**: 38 nuevos (102 en total).
+- **Hallazgos**: no hubo revisión independiente en esta variante. Fallos que
+  encontré yo al probar con la ventana real, todos corregidos: el daemon no
+  releía un log reemplazado (ahora lo detecta por inodo); el nodo «tú» perdía
+  una línea; la etiqueta del mensaje quedaba tapada; el director que te necesita
+  decía «envía: te necesita»; el rol no enlazaba su sesión hasta acabar el turno
+  (ahora la primera `action` lleva el `thread_id`). Y el incidente de las
+  capturas.
+
 ## Resultado
+
+- **titan-team** (`crates/titan-team`), la reescritura en Rust de `bin/team`.
+  Mantiene las mismas órdenes y el mismo estado (compatible con los encargos del
+  prototipo): `roles/new/ask/show/diff/test/close`, hilos por `thread_id`,
+  worktree con sparse checkout (`hidden_paths`), `[codex].config`, commit por
+  turno, avisos de rutas, tope de rondas (salida 3), informe del revisor con
+  esquema y `--json`. Añade `check`, `init`, `doc` y `note`, la acción en curso
+  del rol leída en vivo de `codex exec --json`, y el log de eventos de
+  [[Decisiones/ADR-0010 Formato de eventos del equipo en JSONL versionado]]. No
+  lanza Claude Code.
+- **Núcleo**: `team::config` (`team.toml` estricto, con `label` por rol),
+  `team::events` (formato v1), `team::run` (encargo plegado y unido a las
+  sesiones), `quota` y `monitor` (modelo puro de las tres vistas, con sus
+  tests).
+- **Daemon**: lee los logs de eventos junto a las sesiones cada segundo y de
+  forma incremental, lee la cuota de Codex cada minuto
+  (`account/rateLimits/read`) y la de Claude si existe el puente de la
+  statusline. `--fixture` sirve datos de prueba. `teams` y `quotas` van en el
+  snapshot. Los lanzamientos se movieron a `hub/launches.rs` (`hub.rs` ya no
+  pasa de 800 líneas).
+- **Interfaz**: `app/monitor.rs` (barra, botones y estado sin equipo), y una
+  vista por fichero: `monitor_graph.rs`, `monitor_lanes.rs` y
+  `monitor_desk.rs`. Anima a 20 fps solo mientras se ve un monitor con equipo;
+  el resto del tiempo, una vez por segundo. `[*]` en el árbol cuando un
+  proyecto tiene un encargo activo. Para capturas: `TITAN_AGENT_MONITOR_VIEW` y
+  `TITAN_AGENT_LANES_WINDOW`.
+- Skill `equipo` y `.agents/team.toml` pasados a `titan-team`.
+- **Falta para cerrar**: acordar la versión con el usuario (propuesta: 0.4.0,
+  `minor`), abrir la PR e integrarla, y la prueba de clics del usuario. Sigue
+  `En curso`.

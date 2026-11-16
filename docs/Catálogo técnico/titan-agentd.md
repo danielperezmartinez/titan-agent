@@ -6,16 +6,17 @@ Feature: "Sesiones"
 Estado: "Vigente"
 Ámbito: "Compartido"
 Fuente: "crates/titan-agentd/src/main.rs"
-Entrada pública: "titan-agentd [--socket <ruta>] [--print-socket]; variables TITAN_AGENTD_SOCKET, TITAN_AGENTD_POLL_MS, TITAN_AGENTD_CLAUDE, TITAN_AGENTD_CODEX"
-Resumen: "Daemon por usuario: sondea Claude Code y Codex, mantiene los PTY de los comandos oficiales de adjuntar con 2 MiB de historial, aplica stop con el comando oficial, lanza sesiones nuevas con las salvaguardas de ADR-0002 (claude --bg una sola vez, sin reintentos; la TUI de codex --remote unix:// en un PTY, unida al app-server compartido; marca launched_here; tokens de un solo uso y sin repetir el mismo encargo en 30 s; sesión provisional launch:<n> hasta que el CLI la registra) y sirve el protocolo de ADR-0007 en un socket Unix con un solo daemon por socket. Es el único componente que lanza procesos."
-Última modificación: "2026-11-16T18:12:00+01:00"
+Entrada pública: "titan-agentd [--socket <ruta>] [--fixture <fichero>] [--print-socket]; variables TITAN_AGENTD_SOCKET, TITAN_AGENTD_POLL_MS, TITAN_AGENTD_CLAUDE, TITAN_AGENTD_CODEX"
+Resumen: "Daemon por usuario: sondea Claude Code y Codex, mantiene los PTY de los comandos oficiales de adjuntar con 2 MiB de historial, aplica stop con el comando oficial, lanza sesiones nuevas con las salvaguardas de ADR-0002 (claude --bg una sola vez, sin reintentos; la TUI de codex --remote unix:// en un PTY, unida al app-server compartido; marca launched_here; tokens de un solo uso y sin repetir el mismo encargo en 30 s; sesión provisional launch:<n> hasta que el CLI la registra) y sirve el protocolo de ADR-0007 en un socket Unix con un solo daemon por socket. Lee cada segundo los logs de eventos del equipo junto a las sesiones y la cuota de los CLI cada minuto (fase 3); --fixture sirve sesiones y cuotas de prueba de un JSON. Es el único componente que lanza procesos."
+Última modificación: "2026-11-16T20:35:00+01:00"
 ---
 
 # titan-agentd
 
 Después de descubrir esta pieza en el catálogo, consulta [su implementación](../../crates/titan-agentd/src/main.rs)
 como fuente de verdad de su contrato detallado (estado compartido en
-`hub.rs`, fuentes en `claude.rs` y `codex.rs`). Decisiones en
+`hub.rs`, lanzamientos en `hub/launches.rs`, fuentes en `claude.rs` y `codex.rs`,
+equipo en `team.rs`, cuota en `quota.rs`). Decisiones en
 [[Decisiones/ADR-0004 Daemon titan-agentd e interfaz GPUI como cliente]],
 [[Decisiones/ADR-0007 Protocolo local de titan-agentd en NDJSON versionado]] y
 [[Decisiones/ADR-0009 Descubrimiento de sesiones y jerarquía lanzada por]].

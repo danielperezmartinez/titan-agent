@@ -30,6 +30,8 @@ pub struct TeamLogs {
 
 struct Log {
     base: String,
+    /// Identity of the file read (a replaced file is read from the start).
+    identity: Option<(u64, u64)>,
     offset: u64,
     partial: String,
     events: Vec<TeamEvent>,
@@ -48,6 +50,7 @@ impl TeamLogs {
             let path = log_path(&base);
             let log = self.logs.entry(path.clone()).or_insert_with(|| Log {
                 base: base.display().to_string(),
+                identity: None,
                 offset: 0,
                 partial: String::new(),
                 events: Vec::new(),
@@ -72,9 +75,14 @@ impl Log {
         let Ok(mut file) = File::open(path) else {
             return;
         };
-        let length = file.metadata().map(|m| m.len()).unwrap_or(0);
-        if length < self.offset {
+        let Ok(metadata) = file.metadata() else {
+            return;
+        };
+        let length = metadata.len();
+        let identity = file_identity(&metadata);
+        if length < self.offset || identity != self.identity {
             // Truncated or replaced: start again.
+            self.identity = identity;
             self.offset = 0;
             self.partial.clear();
             self.events.clear();
@@ -102,6 +110,17 @@ impl Log {
             self.events.drain(..extra);
         }
     }
+}
+
+#[cfg(unix)]
+fn file_identity(metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((metadata.dev(), metadata.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_identity(_metadata: &std::fs::Metadata) -> Option<(u64, u64)> {
+    None
 }
 
 /// The folder that holds the `.agents/team.toml` of a session's team.
@@ -208,6 +227,15 @@ mod tests {
         assert_eq!(runs[0].events.len(), 2);
         assert!(runs[0].closed);
         assert!(logs.runs(&sessions, now + REPORT_MS + 1).is_empty());
+
+        // A file replaced by another one (rotated, rewritten) is read again.
+        drop(file);
+        let replacement = path.with_extension("new");
+        std::fs::write(&replacement, line(EventKind::Note { text: "b".into() })).unwrap();
+        std::fs::rename(&replacement, &path).unwrap();
+        let runs = logs.runs(&sessions, now);
+        assert_eq!(runs[0].events.len(), 1);
+        assert!(!runs[0].closed);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

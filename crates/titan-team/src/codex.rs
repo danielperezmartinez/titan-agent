@@ -224,15 +224,15 @@ fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
 
-/// Runs one turn: the prompt on stdin, stdout read line by line (each line
-/// is also handed to `on_line`), stdout and stderr kept, killed after
-/// `timeout`.
+/// Runs one turn: the prompt on stdin, stdout read line by line (what the
+/// role does goes to `on_action`, with the thread id the first time Codex
+/// reports it), stdout and stderr kept, killed after `timeout`.
 pub fn run(
     argv: &[String],
     cwd: &Path,
     prompt: &str,
     timeout: Duration,
-    mut on_action: impl FnMut(String) + Send + 'static,
+    mut on_action: impl FnMut(String, Option<String>) + Send + 'static,
 ) -> std::io::Result<Outcome> {
     let mut child = Command::new(&argv[0])
         .args(&argv[1..])
@@ -253,14 +253,19 @@ pub fn run(
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else { break };
-                let action = {
+                let (action, new_thread) = {
                     let mut guard = parser.lock().unwrap_or_else(|p| p.into_inner());
                     guard.1.push_str(&line);
                     guard.1.push('\n');
-                    guard.0.line(&line)
+                    let before = guard.0.thread_id.is_some();
+                    let action = guard.0.line(&line);
+                    let thread = guard.0.thread_id.clone().filter(|_| !before);
+                    (action, thread)
                 };
-                if let Some(action) = action {
-                    on_action(action);
+                match (action, new_thread) {
+                    (Some(action), thread) => on_action(action, thread),
+                    (None, Some(thread)) => on_action("abre su hilo".into(), Some(thread)),
+                    (None, None) => {}
                 }
             }
         })

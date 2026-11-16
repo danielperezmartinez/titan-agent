@@ -27,17 +27,18 @@ struct Slot {
     h: f32,
     /// Path from the director's border to this node's border.
     path: &'static [(f32, f32)],
-    /// Top-left corner of the message label.
+    /// Centre of the message label: above the nodes for the side lines,
+    /// beside the line for the vertical ones.
     label: (f32, f32),
 }
 
 const YOU_SLOT: Slot = Slot {
     cx: 480.,
     cy: 48.,
-    w: 160.,
+    w: 184.,
     h: 56.,
     path: &[(480., 212.), (480., 76.)],
-    label: (492., 130.),
+    label: (552., 140.),
 };
 const DIRECTOR_SLOT: Slot = Slot {
     cx: 480.,
@@ -55,7 +56,7 @@ const ROLE_SLOTS: [Slot; 5] = [
         w: 220.,
         h: 96.,
         path: &[(370., 260.), (270., 260.)],
-        label: (262., 222.),
+        label: (320., 192.),
     },
     Slot {
         cx: 800.,
@@ -63,7 +64,7 @@ const ROLE_SLOTS: [Slot; 5] = [
         w: 220.,
         h: 96.,
         path: &[(590., 260.), (690., 260.)],
-        label: (582., 222.),
+        label: (640., 192.),
     },
     Slot {
         cx: 480.,
@@ -71,7 +72,7 @@ const ROLE_SLOTS: [Slot; 5] = [
         w: 220.,
         h: 96.,
         path: &[(480., 308.), (480., 412.)],
-        label: (492., 350.),
+        label: (552., 360.),
     },
     Slot {
         cx: 160.,
@@ -79,7 +80,7 @@ const ROLE_SLOTS: [Slot; 5] = [
         w: 220.,
         h: 96.,
         path: &[(480., 308.), (480., 372.), (160., 372.), (160., 412.)],
-        label: (172., 380.),
+        label: (320., 392.),
     },
     Slot {
         cx: 800.,
@@ -87,7 +88,7 @@ const ROLE_SLOTS: [Slot; 5] = [
         w: 220.,
         h: 96.,
         path: &[(480., 308.), (480., 372.), (800., 372.), (800., 412.)],
-        label: (812., 380.),
+        label: (640., 392.),
     },
 ];
 
@@ -172,6 +173,7 @@ impl MainView {
 
         // The message in flight: a dot from the sender along the line, and
         // its label.
+        let mut label = None;
         if let Some(m) = current {
             let other = if m.from == DIRECTOR { m.to } else { m.from };
             if let Some((_, slot)) = slots.iter().find(|(i, _)| *i == other) {
@@ -183,21 +185,35 @@ impl MainView {
                 };
                 let (x, y) = along(slot.path, t);
                 let tint = agent_tint(&monitor.agents[m.from]);
-                canvas = canvas
+                canvas = canvas.child(
+                    div()
+                        .absolute()
+                        .left(px(x - 5.))
+                        .top(px(y - 5.))
+                        .size(px(10.))
+                        .rounded_full()
+                        .bg(color(tint)),
+                );
+                label = Some((slot.label, tint, m.label.clone()));
+            }
+        }
+
+        // Nodes.
+        for (index, slot) in &slots {
+            canvas = canvas.child(self.graph_node(monitor, *index, slot, cx));
+        }
+        // The label goes over the nodes, centred on its anchor.
+        if let Some(((cx_, cy_), tint, text)) = label {
+            canvas = canvas.child(
+                div()
+                    .absolute()
+                    .left(px(cx_ - 130.))
+                    .top(px(cy_ - 10.))
+                    .w(px(260.))
+                    .flex()
+                    .justify_center()
                     .child(
                         div()
-                            .absolute()
-                            .left(px(x - 5.))
-                            .top(px(y - 5.))
-                            .size(px(10.))
-                            .rounded_full()
-                            .bg(color(tint)),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(slot.label.0))
-                            .top(px(slot.label.1))
                             .max_w(px(260.))
                             .px(px(6.))
                             .py(px(2.))
@@ -210,22 +226,13 @@ impl MainView {
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(m.label.clone()),
-                    );
-            }
-        }
-
-        // Nodes.
-        for (index, slot) in &slots {
-            canvas = canvas.child(self.graph_node(monitor, *index, slot, cx));
+                            .child(text),
+                    ),
+            );
         }
 
         let feed = monitor.feed.iter().take(4).enumerate().map(|(i, item)| {
-            let when = if i == 0 {
-                "ahora".to_string()
-            } else {
-                ago(item.at_ms, monitor.now_ms)
-            };
+            let when = ago(item.at_ms, monitor.now_ms);
             div()
                 .flex()
                 .gap(px(8.))
@@ -341,7 +348,7 @@ impl MainView {
             border = needs_border(monitor.now_ms);
             active = true;
         }
-        let action = if index == YOU {
+        let action = if index == YOU || agent.status == AgentStatus::NeedsYou {
             agent.action.clone()
         } else {
             monitor.action_now(index, true)
@@ -351,7 +358,20 @@ impl MainView {
             _ if active => theme::BODY,
             _ => theme::MUTE,
         };
+        // The user's node is short: its action, when it has one, takes the
+        // place of «usuario».
+        let (sub, action) = if index == YOU && !action.is_empty() {
+            (action, String::new())
+        } else {
+            (String::new(), action)
+        };
+        let sub_color = if sub.is_empty() {
+            theme::MUTE
+        } else {
+            action_color
+        };
         let sub = match index {
+            _ if !sub.is_empty() => sub,
             YOU => "usuario".to_string(),
             DIRECTOR => format!("{} · claude code", agent.label),
             _ => format!(
@@ -387,6 +407,7 @@ impl MainView {
             }))
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .items_center()
                     .gap(px(8.))
@@ -403,22 +424,26 @@ impl MainView {
             )
             .child(
                 div()
+                    .flex_none()
                     .text_size(px(11.))
-                    .text_color(color(theme::MUTE))
+                    .text_color(color(sub_color))
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .text_ellipsis()
                     .child(sub),
             )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(color(action_color))
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(action),
-            )
+            .when(!action.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .text_size(px(12.))
+                        .text_color(color(action_color))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(action),
+                )
+            })
     }
 }
 

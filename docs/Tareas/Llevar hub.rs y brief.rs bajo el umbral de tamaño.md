@@ -5,7 +5,7 @@ Resumen: Dos ficheros superaban las 800 líneas al fijar la regla de estructura 
 Decisiones: ''
 Bloqueada: []
 Fecha de creación: 2026-11-16T18:05:00+01:00
-Última modificación: 2026-11-16T18:05:00+01:00
+Última modificación: 2026-11-16T20:35:00+01:00
 ---
 
 # Llevar hub.rs y brief.rs bajo el umbral de tamaño
@@ -35,7 +35,12 @@ interfaz (`app.rs`).
 
 ## Verificación
 
-<Se rellena al completar.>
+- `hub.rs`: resuelto en la rama `feat/fase-3-opus` (fase 3, variante opus). La
+  fase añadía código al daemon, así que los lanzamientos pasaron a
+  `crates/titan-agentd/src/hub/launches.rs` (622 líneas, con sus tests) y
+  `hub.rs` quedó en 750, sin cambios de comportamiento (los mismos tests en
+  verde). Cuenta cuando esa rama se integre.
+- `brief.rs` (924 líneas): pendiente. La fase 3 no lo toca.
 
 ## Resultado
 

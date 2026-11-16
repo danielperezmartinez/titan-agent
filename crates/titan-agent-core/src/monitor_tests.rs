@@ -133,6 +133,7 @@ fn a_turn_is_a_message_out_a_working_lane_and_a_message_back() {
             EventKind::Action {
                 role: "revisor".into(),
                 text: "lee crates/a.rs".into(),
+                thread_id: None,
             },
         ),
     ]);
