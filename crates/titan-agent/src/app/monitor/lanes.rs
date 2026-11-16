@@ -169,7 +169,7 @@ impl MainView {
                             .absolute()
                             .left(px(6.))
                             .top(px(if b > a { sender_y - 6. } else { sender_y - 12. }))
-                            .max_w(px(220.))
+                            .w(px(220.))
                             .whitespace_nowrap()
                             .overflow_hidden()
                             .text_ellipsis()
