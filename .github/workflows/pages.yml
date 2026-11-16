@@ -1,0 +1,41 @@
+# Publica en GitHub Pages las páginas de experimentos/ (p. ej. la comparación
+# de la fase 1). Reglas en docs/README.md, sección "Publicación".
+# - Corre al integrar en main un cambio de experimentos/ o de este workflow, o a
+#   mano. Requiere Pages activado con origen "GitHub Actions".
+# - No usa secretos: el despliegue se autentica con el token OIDC del job.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "experimentos/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  desplegar:
+    name: Desplegar
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: experimentos
+      - id: despliegue
+        uses: actions/deploy-pages@v4

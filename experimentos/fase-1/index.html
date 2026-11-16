@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Experimento Fase 1 · titan-agent</title>
+<meta name="description" content="La Fase 1 de titan-agent hecha tres veces: un equipo multiagente con encargos grandes, Opus solo y un equipo con encargos pequeños. Métricas, capturas, fuentes y conclusiones.">
+<style>
+@font-face { font-family: "JetBrains Mono"; src: url("fuentes/JetBrainsMono-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "JetBrains Mono"; src: url("fuentes/JetBrainsMono-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
+:root {
+  color-scheme: dark;
+  --canvas: #201d1d; --surface: #302c2c; --surface-elevated: #3a3636; --terminal-bg: #161313;
+  --ink: #fdfcfc; --body: #d8d5d5; --mute: #9a9898; --stone: #6e6e73;
+  --hairline: rgba(253, 252, 252, 0.12); --hairline-strong: #646262;
+  --accent: #0a84ff; --success: #30d158; --warning: #ff9f0a; --danger: #ff453a;
+  --claude: #da8fff; --codex: #5ac8fa;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+* { box-sizing: border-box; }
+html { background: var(--canvas); }
+body { margin: 0; background: var(--canvas); color: var(--body); font: 16px/1.6 var(--sans); }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+header.top { border-bottom: 1px solid var(--hairline); }
+.bar { max-width: 1240px; margin: 0 auto; padding: 14px 16px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; font-family: var(--mono); font-size: 14px; }
+.bar b { color: var(--ink); }
+.bar .sub { color: var(--mute); }
+.bar .right { margin-left: auto; color: var(--mute); }
+main { max-width: 1240px; margin: 0 auto; padding: 0 16px 64px; }
+.hero { padding: 48px 0 32px; border-bottom: 1px solid var(--hairline); }
+.kicker { font-family: var(--mono); color: var(--mute); font-size: 13px; margin: 0 0 12px; }
+h1, h2, h3 { font-family: var(--mono); color: var(--ink); line-height: 1.25; font-weight: 700; }
+h1 { font-size: clamp(26px, 4vw, 40px); margin: 0 0 16px; max-width: 24ch; }
+h2 { font-size: 22px; margin: 56px 0 16px; padding-top: 8px; }
+h2 .m { color: var(--mute); font-weight: 400; }
+h3 { font-size: 16px; margin: 28px 0 10px; }
+.lead { font-size: 18px; max-width: 72ch; margin: 0 0 12px; }
+p, li { max-width: 78ch; }
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1px; background: var(--hairline); border: 1px solid var(--hairline); margin-top: 28px; }
+.verdict div { background: var(--canvas); padding: 16px; }
+.verdict .n { font-family: var(--mono); font-size: 26px; color: var(--ink); display: block; }
+.verdict .l { color: var(--mute); font-size: 14px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--hairline); padding: 18px; }
+.card.pick { border-color: var(--accent); }
+.card h3 { margin: 0 0 4px; }
+.card .meta { font-family: var(--mono); font-size: 13px; color: var(--mute); margin: 0 0 12px; }
+.card ul { padding-left: 18px; margin: 0; }
+.card li { margin: 4px 0; }
+.pill { font-family: var(--mono); font-size: 12px; border: 1px solid currentColor; border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+.cl { color: var(--claude); } .cx { color: var(--codex); }
+.tag { font-family: var(--mono); font-size: 13px; }
+.ok { color: var(--success); } .warn { color: var(--warning); } .muted { color: var(--mute); }
+.tablewrap { overflow-x: auto; border: 1px solid var(--hairline); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--hairline); }
+thead th { font-family: var(--mono); color: var(--ink); background: var(--surface); font-weight: 700; }
+tbody th { font-family: var(--mono); color: var(--mute); font-weight: 400; width: 17%; }
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+td.pick { background: rgba(10, 132, 255, 0.07); }
+.note { font-size: 14px; color: var(--mute); }
+.state { margin-top: 36px; }
+.state h3 { margin-bottom: 4px; }
+.state > p { margin-top: 0; }
+.shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin-top: 12px; }
+.shots.big { grid-template-columns: 1fr; gap: 24px; }
+figure { margin: 0; background: var(--terminal-bg); border: 1px solid var(--hairline); }
+figure a { display: block; line-height: 0; }
+figure img { width: 100%; height: auto; display: block; }
+figcaption { font-family: var(--mono); font-size: 13px; padding: 10px 12px; border-top: 1px solid var(--hairline); color: var(--body); line-height: 1.5; }
+figcaption b { color: var(--ink); }
+figure.empty { display: flex; align-items: center; justify-content: center; min-height: 160px; color: var(--mute); font-family: var(--mono); font-size: 13px; padding: 16px; text-align: center; }
+.ref { max-width: 760px; }
+.sources li { margin: 10px 0; }
+.sources .q { color: var(--mute); }
+ol.config { padding-left: 22px; }
+ol.config li { margin: 8px 0; }
+.callout { border-left: 2px solid var(--warning); background: var(--surface); padding: 12px 16px; margin: 16px 0; max-width: 78ch; }
+.callout p { margin: 6px 0; }
+footer { border-top: 1px solid var(--hairline); margin-top: 48px; padding-top: 16px; font-size: 14px; color: var(--mute); }
+@media (max-width: 520px) {
+  .shots { grid-template-columns: 1fr; }
+  .bar .right { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="bar"><b>titan-agent</b><span class="sub">torre de control</span><span class="right">[*] experimento · fase 1 · 2026-11-15</span></div>
+</header>
+<main>
+
+<section class="hero">
+  <p class="kicker">[#] experimento de comparación</p>
+  <h1>La misma Fase 1, hecha tres veces</h1>
+  <p class="lead">titan-agent nació para probar un <b>equipo multiagente</b> que funcione con las suscripciones de Claude y ChatGPT Plus, sin claves de API: Opus dirige, Codex Luna implementa y Codex Sol diseña tests y revisa. Antes de dar ese reparto por bueno, hicimos la misma tarea (la Fase 1: daemon, árbol de sesiones y terminal integrado) de tres formas y comparamos el resultado.</p>
+  <p class="lead">Salió elegida la versión de <b>Opus solo</b>: tardó menos, gastó menos Claude y fue la que más gustó en pantalla. Los dos equipos dieron muchos más tests y más hallazgos de revisión, pero no ahorraron Claude: coordinar costó más que hacerlo.</p>
+  <div class="verdict">
+    <div><span class="n">~40 min</span><span class="l">Opus solo, del encargo al resultado verificado</span></div>
+    <div><span class="n">~2 h 10 min</span><span class="l">equipo v2, con hasta cuatro encargos en paralelo</span></div>
+    <div><span class="n">169 k / 242 k</span><span class="l">tokens de salida de Opus: solo frente a dirigiendo el equipo v2</span></div>
+    <div><span class="n">37 / 253</span><span class="l">tests de Rust: Opus solo frente al equipo v2</span></div>
+  </div>
+</section>
+
+<h2><span class="m">01</span> Objetivo</h2>
+<p>La idea de partida era repartir el trabajo por <b>rol</b> y por <b>modelo</b>: Opus solo para lo que más pesa (diseñar, decidir, hablar con el usuario) y Luna, más barato, para escribir el código. Así la suscripción de Claude duraría más. Además, otro modelo escribiría los tests sin ver la implementación, para que no se escribieran «a medida» del código.</p>
+<p>El experimento quería responder a tres preguntas con una tarea real y no de juguete:</p>
+<ul>
+  <li>¿El equipo <b>ahorra Claude</b> frente a que Opus lo haga solo?</li>
+  <li>¿Sale <b>mejor</b> el resultado, en código, en tests y en lo que se ve en pantalla?</li>
+  <li>¿Cuánto <b>tiempo</b> y cuánta cuota de Codex cuesta cada forma?</li>
+</ul>
+<p>La tarea fue la misma en las tres variantes: la <a href="https://github.com/danielperezmartinez/titan-agent/blob/main/docs/Tareas/Fase%201%20-%20Daemon%2C%20%C3%A1rbol%20de%20sesiones%20y%20terminal%20integrado.md">Fase 1</a>, con el mismo objetivo, los mismos criterios de finalización y la misma <a href="https://github.com/danielperezmartinez/titan-agent/blob/main/design/preview/Main.dc.html">previa visual</a> como referencia.</p>
+
+<h2><span class="m">02</span> Las tres variantes</h2>
+<div class="cards">
+  <article class="card">
+    <h3>Equipo v1</h3>
+    <p class="meta">rama <a href="https://github.com/danielperezmartinez/titan-agent/tree/experimento/fase-1-equipo-v1">experimento/fase-1-equipo-v1</a> · 14 nov</p>
+    <ul>
+      <li><span class="pill cl">cl opus</span> dirige y decide sobre los informes.</li>
+      <li><span class="pill cx">cx luna</span> implementa <b>3 encargos grandes</b> (núcleo y protocolo, daemon, interfaz).</li>
+      <li><span class="pill cx">cx sol</span> diseña los tests a partir del encargo y revisa, con un tope de 3 rondas.</li>
+      <li>Con sandbox: la sesión del director no tenía pantalla ni acceso al daemon de Codex.</li>
+    </ul>
+  </article>
+  <article class="card pick">
+    <h3>Solo Opus <span class="tag ok">[ok] elegida</span></h3>
+    <p class="meta">rama <a href="https://github.com/danielperezmartinez/titan-agent/tree/experimento/fase-1-opus">experimento/fase-1-opus</a> · 15 nov · <a href="https://github.com/danielperezmartinez/titan-agent/pull/4">PR #4</a></p>
+    <ul>
+      <li><span class="pill cl">cl opus</span> diseña, implementa, escribe sus tests y revisa su propio diff.</li>
+      <li>Sin equipo, sin subagentes y sin Codex (solo una llamada de prueba).</li>
+      <li>Sin sandbox: abrió la ventana en el escritorio y corrigió lo que vio en las capturas.</li>
+      <li>Es la que se integró en <code>main</code> como versión 0.2.0.</li>
+    </ul>
+  </article>
+  <article class="card">
+    <h3>Equipo v2</h3>
+    <p class="meta">rama <a href="https://github.com/danielperezmartinez/titan-agent/tree/experimento/fase-1-equipo-v2">experimento/fase-1-equipo-v2</a> · 15 nov</p>
+    <ul>
+      <li>Las lecciones de la v1 aplicadas: <b>12 encargos pequeños</b>, uno por pieza, y el diseño difícil ya resuelto en el propio encargo.</li>
+      <li>Un hilo nuevo de Codex para cada corrección y hasta cuatro encargos en paralelo.</li>
+      <li>Sol medium diseña tests, Luna implementa y Sol high revisa.</li>
+      <li>Sin sandbox, con capturas de la ventana frente a la previa.</li>
+    </ul>
+  </article>
+</div>
+<p class="note">Solo Opus y equipo v2 empezaron a la vez (11:01 del 15 de noviembre), desde el mismo commit y en paralelo en la misma máquina. La v1 se hizo el día anterior, cuando aún no se pensaba comparar.</p>
+
+<h2><span class="m">03</span> Métricas</h2>
+<div class="tablewrap">
+<table>
+  <thead><tr><th></th><th>Equipo v1</th><th>Solo Opus</th><th>Equipo v2</th></tr></thead>
+  <tbody>
+    <tr><th>Tiempo</th><td class="muted">no medido</td><td class="pick">~40 min (11:01 → 11:40)</td><td>~2 h 10 min (11:01 → 13:10)</td></tr>
+    <tr><th>Claude (Opus)</th><td class="muted">no medido</td><td class="pick">121 respuestas · 169 k tokens de salida · 26,9 M leídos de caché</td><td>320 turnos · 242,5 k tokens de salida · 118,2 M leídos de caché</td></tr>
+    <tr><th>Codex</th><td>27 llamadas (Sol 11 · Luna 16)</td><td class="pick">1 llamada de prueba (6 061 tokens)</td><td>77 llamadas (22 tests · 38 implementación · 17 revisión) · 38,4 M tokens de entrada · cuota de Plus al 63 % (5 h) y 17 % (semana)</td></tr>
+    <tr><th>Encargos</th><td>3 grandes</td><td class="pick">ninguno</td><td>12 pequeños</td></tr>
+    <tr><th>Tests de Rust</th><td>108</td><td class="pick">37 (28 nuevos)</td><td>253</td></tr>
+    <tr><th>Revisión</th><td>Sol; daemon e interfaz agotaron las 3 rondas y el director verificó los últimos arreglos</td><td class="pick">propia: 2 hallazgos menores y 3 visuales (vistos en capturas)</td><td>Sol: 17 informes, 43 hallazgos mayores y 12 menores; el director encontró además 6 defectos visuales en capturas</td></tr>
+    <tr><th>Ventana vista en pantalla</th><td class="warn">no (sin pantalla en el sandbox)</td><td class="pick">sí, con capturas</td><td>sí, con capturas</td></tr>
+    <tr><th>Sesiones reales</th><td>Claude en el daemon; terminal solo con un CLI falso; Codex no</td><td class="pick">Claude y Codex, con sesiones de prueba propias</td><td>Claude con una sesión de prueba; escritura comprobada por protocolo</td></tr>
+    <tr><th>Aspecto</th><td>«bastante feo» (usuario)</td><td class="pick">fiel a la previa (autoevaluación) · elegida por el usuario</td><td>casi idéntico a la previa (autoevaluación)</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="callout">
+  <p><b class="warn">[?] Lo que no se pudo medir igual en las tres</b></p>
+  <ul>
+    <li><b>La v1 no tiene tiempo ni uso de Claude.</b> Se hizo antes de plantear el experimento y nadie lo registró. Solo constan sus llamadas a Codex y sus tests.</li>
+    <li><b>El uso de Claude sale del registro de cada sesión</b>, no de <code>/usage</code>, que no existe en una sesión en segundo plano. Sirve para comparar entre variantes, no como cifra de facturación.</li>
+    <li><b>La cuota de ChatGPT Plus solo se anotó en la v2.</b></li>
+    <li><b>Contar tests no mide su calidad.</b> La v2 partió el trabajo en más piezas y cada pieza trae sus tests. Nadie ha medido la cobertura ni cuántos fallos detectaría cada suite.</li>
+    <li><b>Los hallazgos de revisión no son comparables.</b> En la v1 y la v2 revisó Sol, con contexto limpio. En la variante opus, Opus revisó su propio diff.</li>
+    <li><b>El aspecto lo valoró cada sesión sobre su propio trabajo</b>, frente a la previa. No hubo un evaluador independiente: la única opinión externa es la del usuario, que eligió la de Opus.</li>
+    <li><b>Es una sola tarea.</b> Una muestra de uno sirve para orientar, no para generalizar.</li>
+  </ul>
+</div>
+
+<h2><span class="m">04</span> Capturas comparadas</h2>
+<p>Las tres ventanas, abiertas en el mismo escritorio (Linux, KDE Plasma sobre Wayland) con los <b>mismos datos inventados</b>: los proyectos y las sesiones de la previa, en rutas <code>/srv/demo/…</code>. No se adjuntó ni se mostró ninguna sesión real. Pulsa una captura para verla a tamaño completo.</p>
+
+<section class="state">
+  <h3>Referencia: la previa acordada</h3>
+  <p class="note">Render de <code>design/preview/Main.dc.html</code>, la decisión visual que debían seguir las tres.</p>
+  <figure class="ref"><a href="capturas/previa-sesion.png"><img src="capturas/previa-sesion.png" width="1440" height="900" alt="Previa de la ventana principal: árbol de sesiones a la izquierda, terminal de la sesión sftp-renombrar en el centro y panel de detalle a la derecha" loading="lazy"></a><figcaption><b>Previa</b> · sesión «sftp-renombrar: titan-ssh» elegida</figcaption></figure>
+</section>
+
+<section class="state">
+  <h3>1 · Una sesión elegida, con su terminal</h3>
+  <p>La sesión del director «sftp-renombrar: titan-ssh», con el CLI (falso) adjunto en el terminal integrado.</p>
+  <div class="shots big">
+    <figure><a href="capturas/v1-sesion.png"><img src="capturas/v1-sesion.png" width="1200" height="800" alt="Equipo v1: tipografía proporcional en la interfaz, terminal con letras muy espaciadas que parten las líneas, pastillas de agente con el nombre completo del modelo" loading="lazy"></a><figcaption><b>Equipo v1</b> · terminal con las letras separadas y líneas partidas, interfaz con fuente proporcional, pastillas con el modelo completo (<code>gpt-6.1-sol</code>) y sin modelo en las de Claude.</figcaption></figure>
+    <figure><a href="capturas/opus-sesion.png"><img src="capturas/opus-sesion.png" width="1440" height="900" alt="Solo Opus: ventana muy parecida a la previa, con los hilos de Codex del equipo anidados bajo su director" loading="lazy"></a><figcaption><b>Solo Opus</b> · muy cerca de la previa; anida los hilos del equipo bajo su director y el detalle muestra con quién habla.</figcaption></figure>
+    <figure><a href="capturas/v2-sesion.png"><img src="capturas/v2-sesion.png" width="1440" height="900" alt="Equipo v2: ventana muy parecida a la previa, con la franja «escribe aquí» bajo el terminal; los hilos de Codex aparecen sueltos" loading="lazy"></a><figcaption><b>Equipo v2</b> · también muy cerca de la previa, con la franja «escribe aquí»; los hilos del equipo salen sueltos porque su descubrimiento solo anida por <code>parentThreadId</code>.</figcaption></figure>
+  </div>
+</section>
+
+<section class="state">
+  <h3>2 · Al abrir la ventana</h3>
+  <p>Lo primero que se ve, sin tocar nada.</p>
+  <div class="shots">
+    <figure><a href="capturas/v1-inicio.png"><img src="capturas/v1-inicio.png" width="1200" height="800" alt="Equipo v1 al arrancar: árbol a la izquierda y el texto «elige una sesión en la columna izquierda»" loading="lazy"></a><figcaption><b>Equipo v1</b> · «elige una sesión»; el panel de detalle queda vacío.</figcaption></figure>
+    <figure><a href="capturas/opus-inicio.png"><img src="capturas/opus-inicio.png" width="1440" height="900" alt="Solo Opus al arrancar: pantalla de bienvenida «Elige una sesión» con ayuda" loading="lazy"></a><figcaption><b>Solo Opus</b> · «Elige una sesión», con ayuda para empezar.</figcaption></figure>
+    <figure><a href="capturas/v2-inicio.png"><img src="capturas/v2-inicio.png" width="1440" height="900" alt="Equipo v2 al arrancar: elige sola la primera sesión, una interactiva de Claude Code que no se puede adjuntar" loading="lazy"></a><figcaption><b>Equipo v2</b> · elige sola la primera sesión del árbol (aquí, una interactiva que no se puede adjuntar).</figcaption></figure>
+  </div>
+</section>
+
+<section class="state">
+  <h3>3 · Un proyecto elegido</h3>
+  <p>La vista del monitor del proyecto todavía es un marcador (sus vistas llegan en la fase 3).</p>
+  <div class="shots">
+    <figure class="empty">Equipo v1 · no tiene vista de proyecto</figure>
+    <figure><a href="capturas/opus-proyecto.png"><img src="capturas/opus-proyecto.png" width="1440" height="900" alt="Solo Opus: proyecto titan-ssh elegido, «Equipo trabajando en titan-ssh» con los hilos lanzados" loading="lazy"></a><figcaption><b>Solo Opus</b> · detecta que hay un equipo trabajando y cuenta sus hilos.</figcaption></figure>
+    <figure><a href="capturas/v2-proyecto.png"><img src="capturas/v2-proyecto.png" width="1440" height="900" alt="Equipo v2: proyecto titan-ssh elegido, con los botones grafo, carriles y mesa de control" loading="lazy"></a><figcaption><b>Equipo v2</b> · ya trae los botones de las tres vistas; con estos datos dice «sin equipo trabajando».</figcaption></figure>
+  </div>
+</section>
+
+<section class="state">
+  <h3>4 · Nueva sesión</h3>
+  <p>El cuadro de la fase 2, todavía sin función.</p>
+  <div class="shots">
+    <figure class="empty">Equipo v1 · no tiene cuadro de nueva sesión</figure>
+    <figure><a href="capturas/opus-nueva.png"><img src="capturas/opus-nueva.png" width="1440" height="900" alt="Solo Opus: cuadro de nueva sesión con el comando que se ejecutará" loading="lazy"></a><figcaption><b>Solo Opus</b> · enseña el comando exacto que se ejecutará.</figcaption></figure>
+    <figure><a href="capturas/v2-nueva.png"><img src="capturas/v2-nueva.png" width="1440" height="900" alt="Equipo v2: cuadro de nueva sesión con el botón lanzar activo" loading="lazy"></a><figcaption><b>Equipo v2</b> · mismo cuadro, con «disponible en la fase 2».</figcaption></figure>
+  </div>
+</section>
+
+<h3>Cómo se hicieron</h3>
+<ul>
+  <li>Cada variante se compiló desde el commit de su rama de archivo y se abrió con su propio daemon en un socket privado.</li>
+  <li><b>Equipo v2</b>: con su opción <code>--fixture</code>, que carga las sesiones ya interpretadas. Su descubrimiento real no interviene.</li>
+  <li><b>Solo Opus y equipo v1</b>: con CLI falsos de <code>claude</code>, <code>codex</code> y <code>git</code> que devuelven los mismos datos inventados, así que su descubrimiento sí interviene. Para Codex se simuló el <code>app-server</code>: por WebSocket para la variante opus y por <code>proxy</code> en stdio para la v1.</li>
+  <li><b>Anidado</b>: los datos son los mismos y lo que cambia es lo que hace cada variante con ellos. La variante opus enlaza los hilos de un equipo con su director por la carpeta del encargo. La v1 y la v2 solo anidan por <code>parentThreadId</code>, que Claude Code no da. Por eso, en las capturas de esta página, los hilos de la v2 salen sueltos, aunque en las de su nota de fase salían anidados: allí su fixture fijaba el padre a mano.</li>
+  <li><b>Equipo v1</b>: no tiene forma de abrir una sesión ya elegida y no había herramienta para simular clics. Para la captura 1 se le añadió, solo en la copia compilada, un preselector de sesión por variable de entorno, sin cambios en la interfaz. Abre a 1200 × 800 px y las otras dos a 1440 × 900.</li>
+  <li>Capturas de la ventana activa con Spectacle, sin la barra de título del gestor de ventanas.</li>
+</ul>
+
+<h2><span class="m">05</span> Investigación</h2>
+<p>Después del experimento se buscó qué dicen las fuentes sobre equipos de agentes como este. Coinciden bastante con lo que pasó:</p>
+<ul class="sources">
+  <li><b>Repartir por rol funciona mal; repartir por contexto, mejor.</b> La guía de Anthropic de enero de 2026 llama «teléfono roto» a pasar el trabajo de un rol a otro y recomienda que quien hace una funcionalidad haga también sus tests. Calcula que un sistema multiagente gasta de 3 a 10 veces más tokens, y que solo compensa con trabajo de verdad paralelo o cuando el contexto se contamina. <span class="q">— <a href="https://claude.com/resources/articles/building-multi-agent-systems-when-and-how-to-use-them">Building multi-agent systems: when and how to use them</a> (Anthropic)</span></li>
+  <li><b>Un modelo pequeño dirigido por uno grande falla en el trabajo de criterio.</b> A Cognition le salió mal cuando la diferencia entre modelos era grande. <span class="q">— <a href="https://cognition.com/blog/multi-agents-working">Multi-agents: what's actually working</a> (Cognition)</span></li>
+  <li><b>En tareas secuenciales, el multiagente empeora el resultado.</b> <span class="q">— <a href="https://arxiv.org/html/2512.08296">estudio de Google y el MIT</a> (arXiv 2512.08296)</span></li>
+  <li><b>Lo que sí funciona: un revisor o evaluador aparte, con contexto limpio</b>, y un evaluador visual que trabaja con capturas y criterios escritos. <span class="q">— Cognition (arriba) y <a href="https://www.anthropic.com/engineering/harness-design-long-running-apps">Harness design for long-running apps</a> (Anthropic)</span></li>
+  <li><b>Que los tests los escriba otro modelo no marca diferencia.</b> Lo que aporta es que partan de la especificación y no del código. <span class="q">— <a href="https://drops.dagstuhl.de/entities/document/10.4230/LIPIcs.ESEM.2026.11">ESEM 2026</a> (LIPIcs)</span></li>
+</ul>
+<p class="note">Antes del experimento ya se había comprobado que el equipo es viable solo con suscripciones. Codex se maneja con <code>codex exec --json</code> y continúa un hilo con <code>codex exec resume</code>. Antigravity (<code>agy</code>) quedó fuera porque sus términos de uso no permiten envolverlo en agentes de terceros.</p>
+
+<h2><span class="m">06</span> Conclusiones</h2>
+<ul>
+  <li><b>El equipo no ahorró Claude.</b> Dirigir 12 encargos y leer 17 revisiones gastó más Opus (242 k tokens de salida) que hacer la fase entera (169 k), y además tardó tres veces más. El ahorro de verdad sale de no coordinar.</li>
+  <li><b>El resultado que más gustó fue el de Opus solo.</b> Todo apunta a que lo decisivo fue ver la ventana: la v1, la única que nunca se vio en pantalla mientras se hacía, es la que salió fea. La variante opus y la v2 corrigieron en las capturas defectos que ningún test detecta, como ligaduras, anchos, desbordes y fuentes que no se aplicaban.</li>
+  <li><b>El equipo sí aportó tests y revisión.</b> La v2 tiene siete veces más tests, y Sol encontró 43 problemas mayores, sobre todo de concurrencia y del ciclo de vida del daemon. Ese valor es real, pero se puede conseguir sin repartir la implementación.</li>
+  <li><b>Encargos pequeños y bien definidos funcionan mejor que encargos grandes</b> (v2 frente a v1), pero no lo bastante para compensar el coste de coordinar.</li>
+  <li><b>Luna no sirve para la interfaz.</b> La ventana de la v2 no cupo en un turno y hubo que partirla en cinco. Además, Luna interpreta «no toques los tests» en sentido amplio y no escribe tests unitarios aunque se le pidan.</li>
+</ul>
+
+<h2><span class="m">07</span> Lo que se probará en la Fase 2</h2>
+<p>Una configuración que conserva lo que funcionó (el revisor con contexto limpio, los tests que parten de la especificación y la evaluación con capturas) y quita lo que costó sin aportar (la implementación repartida por rol):</p>
+<ol class="config">
+  <li><span class="pill cl">cl opus</span> <b>implementa cada parte con sus propios tests.</b></li>
+  <li><span class="pill cx">cx sol</span> escribe antes <b>unos pocos tests de aceptación</b> a partir de la especificación, y Opus no puede tocarlos.</li>
+  <li><span class="pill cx">cx sol</span> hace al final <b>una sola revisión con contexto limpio</b> (solo el diff y la especificación). Opus decide qué acepta.</li>
+  <li><b>Un evaluador visual</b> compara las capturas con el diseño según criterios escritos.</li>
+  <li><span class="pill cx">cx luna</span> queda solo para <b>trabajo mecánico o lecturas en paralelo</b>, nunca para la interfaz.</li>
+</ol>
+<p class="note">Esto contradice la idea inicial de ahorrar Claude delegando la escritura en Luna. La Fase 2 dirá si esta configuración mejora el resultado sin multiplicar el coste.</p>
+
+<footer>
+  <p>Ramas del experimento: <a href="https://github.com/danielperezmartinez/titan-agent/tree/experimento/fase-1-equipo-v1">equipo v1</a> · <a href="https://github.com/danielperezmartinez/titan-agent/tree/experimento/fase-1-opus">solo Opus</a> · <a href="https://github.com/danielperezmartinez/titan-agent/tree/experimento/fase-1-equipo-v2">equipo v2</a>. Cada una incluye su nota de fase con el detalle y las métricas.</p>
+  <p>Repositorio: <a href="https://github.com/danielperezmartinez/titan-agent">titan-agent</a>. Tipografía: JetBrains Mono (licencia OFL), incluida en <code>fuentes/</code>.</p>
+</footer>
+</main>
+</body>
+</html>
