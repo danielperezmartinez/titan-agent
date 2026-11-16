@@ -1,0 +1,48 @@
+# Equipo de este proyecto para titan-team. Formato completo: titan-team doc.
+# Compruébalo con titan-team check tras cada cambio.
+version = 1
+name = "mi-proyecto"
+
+[project]
+repo = "."
+base = "main"
+worktrees_dir = ".agents/worktrees"  # añádelo a .gitignore
+branch_prefix = "encargo/"
+test_cmd = "cargo test"
+test_timeout_s = 600
+autocommit = true
+hidden_paths = ["/AGENTS.md", "/CLAUDE.md"]  # lo que los roles no deben leer
+
+[codex]
+config = ["project_doc_max_bytes=0"]  # los roles no cargan AGENTS.md
+
+[flow]
+steps = ["tests", "revisor"]
+review_role = "revisor"
+fix_role = "director"
+max_review_rounds = 1
+
+[roles.director]
+cli = "claude"            # la sesión de Claude Code que usa titan-team
+model = "opus"
+launch = false
+purpose = "Diseña, implementa y decide."
+
+[roles.tests]
+cli = "codex"
+model = "gpt-6.1-sol"
+effort = "medium"
+sandbox = "workspace-write"
+prompt_file = ".agents/prompts/tests.md"
+allowed_paths = ["tests/"]
+label = "tests"
+purpose = "Escribe tests de aceptación desde la especificación."
+
+[roles.revisor]
+cli = "codex"
+model = "gpt-6.1-sol"
+effort = "high"
+sandbox = "read-only"
+prompt_file = ".agents/prompts/revisor.md"
+label = "revisor"
+purpose = "Revisa el diff con contexto limpio."

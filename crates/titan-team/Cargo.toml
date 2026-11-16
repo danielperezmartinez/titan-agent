@@ -1,10 +1,15 @@
 [package]
 name = "titan-team"
-description = "Team tool of titan-agent (phase 3). Until then the Python prototype in bin/team is used."
+description = "Team tool of titan-agent: hands work to the roles of .agents/team.toml with the official Codex CLI and logs it for the monitor (ADR-0005, ADR-0010)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+
+[dependencies]
+titan-agent-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

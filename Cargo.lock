@@ -5100,6 +5100,7 @@ dependencies = [
  "base64",
  "serde",
  "serde_json",
+ "toml 1.2.1+spec-1.1.0",
 ]
 
 [[package]]
@@ -5115,6 +5116,11 @@ dependencies = [
 [[package]]
 name = "titan-team"
 version = "0.3.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "titan-agent-core",
+]
 
 [[package]]
 name = "tokio"

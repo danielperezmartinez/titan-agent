@@ -11,3 +11,11 @@ pub fn ago(since_ms: i64, now_ms: i64) -> String {
         _ => format!("hace {} d", seconds / 86_400),
     }
 }
+
+/// Current Unix time in milliseconds.
+pub fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or_default()
+}

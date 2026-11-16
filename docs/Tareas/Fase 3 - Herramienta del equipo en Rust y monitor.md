@@ -1,11 +1,11 @@
 ---
 Nombre: Fase 3 - Herramienta del equipo en Rust y monitor
-Estado: Pendiente
+Estado: En curso
 Resumen: Reescribir en Rust la herramienta del equipo (titan-team, con su skill) con un formato de eventos versionado, hacer que el daemon lo lea, y construir el monitor del proyecto con sus tres vistas (grafo, carriles, mesa de control) en la zona central.
 Decisiones: ''
 Bloqueada: ["[[Fase 2 - Nueva sesión con salvaguardas]]"]
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-14T19:20:00+01:00
+Última modificación: 2026-11-16T18:28:00+01:00
 ---
 
 # Fase 3 - Herramienta del equipo en Rust y monitor
@@ -44,6 +44,38 @@ Fecha de creación: 2026-11-14T15:28:51+01:00
 - El prototipo en Python ya no está en el repo.
 - Un agente monta el equipo de un proyecto nuevo solo con `team.toml`, sin
   cambiar código.
+
+## Criterios visuales
+
+Escritos antes de implementar (variante «opus»), frente a `MonitorA/B/C.dc.html`,
+`Main.dc.html` (`inicio="monitor"`) y las decisiones visuales. No se cambian para
+que el resultado pase.
+
+1. **Barra y jerarquía**: barra de 40 px con `[#] proyecto` en `ink` negrita,
+   «encargo · ronda n de m · k agentes» en `mute`, `[*] en vivo` verde que late
+   y, a la derecha, `[grafo] [carriles] [mesa de control]` con la vista elegida
+   en `surface-elevated` y borde `accent`. Fondo del monitor `terminal-bg`.
+2. **Grafo**: «tú» arriba, el director en el centro y los roles alrededor
+   (primer paso a la izquierda, revisor a la derecha, el resto abajo), nodos de
+   220×96 en `canvas` con hairline; el que trabaja con borde verde y `[>]` con
+   spinner `| / - \`; el mensaje viaja como punto del color de quien envía con su
+   etiqueta en una pastilla; abajo «AHORA» con los últimos eventos que se
+   apagan.
+3. **Carriles**: frase «AHORA» en 20 px negrita; columna de 240 px con una fila
+   de 72 px por agente; barras verdes (trabajando) y ámbar (te necesita) con
+   borde superior de 2 px, líneas verticales del color de quien envía con el
+   punto en quien recibe; línea `accent` «ahora» a la derecha; el tiempo corre
+   hacia la izquierda; leyenda al pie.
+4. **Mesa de control**: franja HABLANDO / TRABAJANDO / TE NECESITAN con la
+   línea ASCII animada (`opus ----*---> sol`) y la ronda en bloques; tarjetas
+   con borde de 4 px de radio, director a todo el ancho y el resto en dos
+   columnas; nombre en 20 px negrita, estado, acción, «n s en este estado»,
+   histograma de actividad de 24 barras, turnos y tokens, y cuota en 10 bloques
+   (ámbar y «· baja» si queda poca).
+5. **Color y acabado**: violeta solo para Claude Code y cian solo para Codex
+   (pastillas `cl`/`cx` y lo que envía cada uno); verde, ámbar y rojo solo para
+   estados; `accent` solo para interacción y la línea «ahora»; JetBrains Mono en
+   todo, sin sombras ni gradientes; nada se corta ni se solapa a 1440×900.
 
 ## Verificación
 

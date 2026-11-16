@@ -1,11 +1,13 @@
-# Composición del equipo de titan-agent. La leen bin/team y la skill "equipo".
+# Composición del equipo de titan-agent. La leen titan-team y la skill "equipo".
 # Para cambiar quién hace qué, edita este fichero: no hay nada fijo en el código.
+# Formato documentado: titan-team doc (crates/titan-team/FORMAT.md); valídalo
+# con titan-team check.
 # Origen: prototipo de la sandbox multiagente, adaptado en la fase 0
 # (docs/Tareas/Fase 0 - Preparar el workspace y el equipo del prototipo.md).
 version = 1
 name = "titan-agent"
 
-# Dónde guarda bin/team el estado de cada encargo (thread_id, turnos, salidas).
+# Dónde guarda titan-team el estado de cada encargo (thread_id, turnos, salidas).
 # No se versiona: las salidas pueden contener datos del entorno.
 state_dir = ".agents/state"
 
@@ -16,7 +18,7 @@ worktrees_dir = ".agents/worktrees" # un worktree por encargo (no se versiona)
 branch_prefix = "encargo/"
 test_cmd = "cargo test --workspace"
 test_timeout_s = 1800               # el primer build de GPUI en un worktree nuevo tarda
-autocommit = true                  # bin/team hace commit tras cada turno que escribe
+autocommit = true                  # titan-team hace commit tras cada turno que escribe
 # Lo que no se copia al worktree de cada encargo (sparse checkout; sigue en la
 # rama). Los roles trabajan solo con su prompt y el encargo: sin los punteros de
 # arranque ni la bóveda, que son del director.
@@ -42,13 +44,13 @@ fix_role = "director"              # quien corrige es el director, no Codex
 max_review_rounds = 1              # una sola ronda; más solo con permiso del usuario
 
 [roles.director]
-cli = "claude"                     # la sesión actual de Claude Code; bin/team no la lanza
+cli = "claude"                     # la sesión actual de Claude Code; titan-team no la lanza
 model = "opus"
 launch = false
 purpose = "Diseña, implementa cada parte con sus tests, decide qué hallazgos acepta y lanza el evaluador visual."
 
 # Los tests de aceptación viven en las carpetas tests/ de cada crate (tests de
-# integración de Cargo). Las rutas admiten comodines (fnmatch); una ruta que
+# integración de Cargo). Las rutas admiten comodines de shell; una ruta que
 # termina en "/" cubre todo lo que hay debajo.
 [roles.disenador_tests]
 cli = "codex"
@@ -57,6 +59,7 @@ effort = "medium"                  # gasta cuota de Sol, como el revisor
 sandbox = "workspace-write"
 prompt_file = ".agents/prompts/disenador_tests.md"
 allowed_paths = ["crates/*/tests/"] # aviso si toca algo fuera de aquí
+label = "tests"
 timeout_s = 1200
 purpose = "Antes de implementar, escribe POCOS tests de aceptación a partir de la especificación. El director no puede tocarlos."
 
@@ -70,6 +73,7 @@ effort = "medium"
 sandbox = "workspace-write"
 prompt_file = ".agents/prompts/mecanico.md"
 forbidden_paths = ["crates/*/tests/", "docs/", "crates/titan-agent/"] # aviso: tests, bóveda o interfaz
+label = "mecánico"
 timeout_s = 1800
 purpose = "Trabajo mecánico sin criterio que le encarga el director; nunca la interfaz."
 
@@ -80,5 +84,6 @@ effort = "high"                    # decisión del usuario (2026-11-14)
 sandbox = "read-only"
 prompt_file = ".agents/prompts/revisor.md"
 output_schema = ".agents/schemas/review.json"
+label = "revisor"
 timeout_s = 900
 purpose = "Una revisión al final, en un hilo nuevo (contexto limpio): solo la especificación y el diff. Informa; decide el director."

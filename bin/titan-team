@@ -1,0 +1,5 @@
+#!/bin/sh
+# titan-team desde este repo, sin instalarlo: compila (si hace falta) y ejecuta
+# el crate crates/titan-team. Se usa igual que el binario: bin/titan-team --help.
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec cargo run --quiet --release --manifest-path "$root/Cargo.toml" -p titan-team -- "$@"

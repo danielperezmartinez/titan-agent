@@ -211,6 +211,8 @@ impl MainView {
                 team_live,
             } => {
                 let selected = self.selection == Selection::Project(root.clone());
+                // A live team: nested sessions, or a task of the team tool.
+                let team_live = team_live || self.active_team(&root).is_some();
                 let id = ElementId::Name(SharedString::from(format!("p:{root}")));
                 div()
                     .id(id)

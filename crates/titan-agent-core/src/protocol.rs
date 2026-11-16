@@ -12,7 +12,9 @@ use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 use crate::launch::LaunchSpec;
+use crate::quota::Quota;
 use crate::session::{AgentCli, Session};
+use crate::team::run::TeamRun;
 
 /// Version of this protocol. A daemon refuses a `hello` with another version.
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -166,6 +168,13 @@ pub enum Event {
         /// became, once the CLI reports it.
         #[serde(default)]
         launches: Vec<LaunchRef>,
+        /// Tasks of the team tool found next to the sessions (ADR-0010),
+        /// joined to them. Older daemons leave it out.
+        #[serde(default)]
+        teams: Vec<TeamRun>,
+        /// Remaining quota of each CLI, when it can be read.
+        #[serde(default)]
+        quotas: Vec<Quota>,
     },
     /// Output of a terminal, in base64.
     Output { terminal: String, data: String },

@@ -208,6 +208,10 @@ impl CodexClient {
         Ok(Vec::new())
     }
 
+    pub fn request(&mut self, _method: &str, _params: Value) -> Result<Value, String> {
+        Err("el daemon de Codex aún no se lee en Windows".into())
+    }
+
     pub fn interrupt(&mut self, _thread: &str) -> Result<bool, String> {
         Ok(false)
     }

@@ -5,8 +5,10 @@
 //! This module holds the start-up, the state shared by every view and the
 //! routing (daemon messages, selection, keys, which view goes in the centre).
 //! Each view lives in its own submodule: `header`, `nav` (tree and filter),
-//! `session_view` (terminal), `detail` (session and project detail),
-//! `new_session`, `settings`; `menu` and `widgets` are pieces they share.
+//! `session_view` (terminal), `detail` (session detail), `monitor` (project
+//! monitor: bar, routing and shared pieces) with its views `monitor_graph`,
+//! `monitor_lanes` and `monitor_desk`, `new_session`, `settings`; `menu` and
+//! `widgets` are pieces they share.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -18,10 +20,13 @@ use gpui::{
     MouseDownEvent, Subscription, Window, div, prelude::*, px,
 };
 use titan_agent_core::launch::LaunchDefaults;
+use titan_agent_core::monitor::StateLog;
 use titan_agent_core::protocol::{
     AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, decode_bytes,
 };
+use titan_agent_core::quota::Quota;
 use titan_agent_core::session::{AgentCli, Session};
+use titan_agent_core::team::run::TeamRun;
 
 use crate::brief::{BriefEvent, BriefInput};
 use crate::client::{DaemonClient, Incoming};
@@ -31,6 +36,10 @@ use crate::theme::{self, color};
 mod detail;
 mod header;
 mod menu;
+mod monitor;
+mod monitor_desk;
+mod monitor_graph;
+mod monitor_lanes;
 mod nav;
 mod new_session;
 mod session_view;
@@ -38,6 +47,7 @@ mod settings;
 mod widgets;
 
 use menu::Menu;
+use monitor::{LANE_WINDOWS, MonitorTab};
 use new_session::NewSession;
 use widgets::placeholder;
 
@@ -89,6 +99,14 @@ pub struct MainView {
     /// Real session of each launch, from the last snapshot (it can arrive
     /// before the launch's own answer).
     resolved: HashMap<String, String>,
+    /// Team tasks and quotas from the last snapshot (phase 3 monitor).
+    teams: Vec<TeamRun>,
+    quotas: Vec<Quota>,
+    /// States the sessions went through, for the lanes of the monitor.
+    state_log: StateLog,
+    monitor_tab: MonitorTab,
+    /// Index in `LANE_WINDOWS`.
+    lanes_window: usize,
     _brief_events: Subscription,
 }
 
@@ -117,17 +135,20 @@ impl MainView {
             }
         })
         .detach();
+        // The clock: once a second, or 20 frames a second while a monitor
+        // with a team is on screen (spinner, travelling dot, moving lanes).
         cx.spawn(async move |this, cx| {
+            let mut wait = Duration::from_secs(1);
             loop {
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this
-                    .update(cx, |view, cx| {
-                        view.now_ms = now_ms();
-                        cx.notify();
-                    })
-                    .is_err()
-                {
-                    break;
+                cx.background_executor().timer(wait).await;
+                match this.update(cx, |view, cx| {
+                    view.now_ms = now_ms();
+                    cx.notify();
+                    view.animating()
+                }) {
+                    Ok(true) => wait = Duration::from_millis(50),
+                    Ok(false) => wait = Duration::from_secs(1),
+                    Err(_) => break,
                 }
             }
         })
@@ -200,6 +221,14 @@ impl MainView {
             folders: Vec::new(),
             focus_brief: true,
             resolved: HashMap::new(),
+            teams: Vec::new(),
+            quotas: Vec::new(),
+            state_log: StateLog::default(),
+            monitor_tab: MonitorTab::from_env(),
+            lanes_window: std::env::var("TITAN_AGENT_LANES_WINDOW")
+                .ok()
+                .and_then(|w| LANE_WINDOWS.iter().position(|(_, label)| *label == w))
+                .unwrap_or(0),
             _brief_events: brief_events,
         }
     }
@@ -291,10 +320,16 @@ impl MainView {
                 sessions,
                 sources,
                 launches,
+                teams,
+                quotas,
                 ..
             }) => {
+                self.now_ms = now_ms();
+                self.state_log.observe(&sessions, self.now_ms);
                 self.sessions = sessions;
                 self.sources = sources;
+                self.teams = teams;
+                self.quotas = quotas;
                 self.follow_launches(&launches, cx);
                 if let Some(fragment) = self.preselect.clone()
                     && let Some(key) = self
@@ -404,7 +439,7 @@ impl MainView {
                 )
                 .into_any_element(),
             },
-            Selection::Project(root) => self.project_view(&root).into_any_element(),
+            Selection::Project(root) => self.project_view(&root, cx).into_any_element(),
             Selection::New => self.new_session_view(window, cx).into_any_element(),
             Selection::Settings => self.settings_view(cx).into_any_element(),
             Selection::None => placeholder(
