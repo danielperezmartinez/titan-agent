@@ -9,6 +9,8 @@
 mod text;
 pub use text::BriefText;
 
+use std::ops::Range;
+
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
     EntityInputHandler, EventEmitter, FocusHandle, Focusable, GlobalElementId, KeyDownEvent,

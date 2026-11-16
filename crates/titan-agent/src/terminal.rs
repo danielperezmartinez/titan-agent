@@ -15,8 +15,8 @@ use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
 use gpui::{
     App, Bounds, ClipboardItem, Context, ElementInputHandler, FocusHandle, Focusable, Font,
-    FontStyle, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, ScrollEvent, TextAlign, TextRun, Window,
-    canvas, div, fill, font, point, prelude::*, px, size,
+    FontStyle, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, ScrollEvent,
+    TextAlign, TextRun, Window, canvas, div, fill, font, point, prelude::*, px, size,
 };
 use titan_agent_core::protocol::{Request, encode_bytes};
 
@@ -702,8 +702,9 @@ fn paint_marked(
         }),
         strikethrough: None,
     };
-    let line = window
-        .text_system()
-        .shape_line(text.to_string().into(), px(FONT_SIZE), &[run], Some(cw));
+    let line =
+        window
+            .text_system()
+            .shape_line(text.to_string().into(), px(FONT_SIZE), &[run], Some(cw));
     let _ = line.paint(at, lh, TextAlign::Left, None, window, cx);
 }

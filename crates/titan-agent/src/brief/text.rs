@@ -1,5 +1,5 @@
-//! The brief field editing model: text, selection and IME marked range, without GPUI types.
-//! Its rules can be tested on their own.
+//! The editing model of the brief field: text, selection and IME marked
+//! range, without GPUI types, so its rules can be tested on their own.
 
 use std::ops::Range;
 
