@@ -2,10 +2,10 @@
 Nombre: Acentos y teclas muertas en el terminal integrado
 Estado: En curso
 Resumen: 'En el terminal integrado de titan-agent, una tecla muerta (el acento agudo de un teclado español) no se compone con la letra siguiente: se escribe una comilla simple y luego la letra (á sale como ''a). Hay que componer las teclas muertas (y, si GPUI lo da, el método de entrada) antes de mandar los bytes al PTY.'
-Decisiones: 'Visto por el usuario al escribir desde titan-agent en la prueba manual del cierre de la fase 3 (2026-11-16). Para una fase futura; no se arregla en el cierre.'
+Decisiones: 'Visto por el usuario en la prueba manual del cierre de la fase 3 (2026-11-16). Ronda 0.5.0: como el terminal de Zed, el texto lo entrega el manejador de entrada de la plataforma (EntityInputHandler), ya compuesto, y el manejador de teclas solo manda teclas especiales y combinaciones con control o alt. Falta la prueba a mano del usuario y la PR.'
 Bloqueada: []
 Fecha de creación: 2026-11-16T21:50:00+01:00
-Última modificación: 2026-11-16T22:35:00+01:00
+Última modificación: 2026-11-16T23:10:00+01:00
 ---
 
 # Acentos y teclas muertas en el terminal integrado
@@ -144,8 +144,33 @@ UTF-8 (sin tests de aceptación: necesita una ventana).
 
 ## Verificación
 
-<Se rellena al completar: pruebas, build, comprobación real.>
+Rama `feat/v0.5-equipo-v4` (sin push), 2026-11-16:
+
+- **Tests de aceptación de Sol** (`crates/titan-agent/tests/accents_acceptance.rs`,
+  5 tests, encargo `v05-acentos`, commits `ffc2475` y `0892d9f`): las
+  secuencias reales de GPUI en Linux (`´`+vocal, `´`+espacio, `ñ`, `¨`+`u`) no
+  mandan nada desde el manejador de teclas; el texto normal tampoco; control,
+  alt como meta, AltGr de Windows y las teclas especiales siguen igual. Pasan
+  sin tocarlos. El segundo commit es de Sol: formateó su fichero con la
+  edición 2024, que no había usado.
+- Tests propios en `keys.rs` (texto y tecla muerta, alt y AltGr).
+- fmt, clippy y `cargo test --workspace` en verde; gitleaks en cada commit.
+- **Pendiente: la prueba a mano del usuario** con teclado español (no hay
+  simulación de teclado). Preparado: `.previa/v05-equipo-v4/acentos/probar-acentos.sh`
+  (ignorado por git) abre la ventana de esta rama contra un daemon propio
+  con una sesión falsa cuyo terminal muestra el texto y los bytes que
+  recibe: «sí» debe llegar como `73 c3 ad`.
 
 ## Resultado
 
-<Se rellena al completar: qué se hizo finalmente.>
+- Causa: en Linux GPUI compone las teclas muertas con xkb. La tecla muerta
+  llega como `KeyDownEvent` con `key = "'"` (la tecla del teclado
+  estadounidense) y sin `key_char`, y `keystroke_bytes` mandaba esa `'`; la
+  vocal llegaba luego ya compuesta (`í`).
+- `keystroke_bytes` (ahora en la biblioteca `titan_agent::keys`, para poder
+  probarlo desde `tests/`) devuelve `None` para el texto escrito, tenga
+  `key_char` o no, y para AltGr de Windows (control+alt con otro carácter).
+- El terminal implementa `EntityInputHandler` (`terminal/input.rs`): el texto
+  confirmado va al PTY tal cual en UTF-8 y la composición en curso (el `´`
+  de la tecla muerta o un IME) se dibuja subrayada en el cursor hasta que se
+  confirma. `´` + consonante da `´s` (GPUI confirma el acento al cancelar).

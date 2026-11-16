@@ -2,10 +2,10 @@
 Nombre: Abrir los hilos del equipo en solo lectura desde la app
 Estado: En curso
 Resumen: 'En la app, el clic en un rol del equipo abre su hilo en solo lectura (el daemon sirve la transcripción) y solo un «tomar el control» explícito y avisado lanza codex resume; mientras el hilo esté abierto así, el monitor marca el rol. Es la otra mitad del hilo ocupado de titan-team (salida 4), para la fase 4.'
-Decisiones: 'Acordado al cerrar la fase 3 (2026-11-16): titan-team ya conserva el hilo y sale con 4 si está abierto en otro sitio; esta tarea evita que la app lo abra como escritor sin querer. Sin cola en titan-team.'
+Decisiones: 'Acordado al cerrar la fase 3 (2026-11-16): titan-team ya conserva el hilo y sale con 4 si está abierto en otro sitio; esta tarea evita que la app lo abra como escritor sin querer. Sin cola en titan-team. Ronda 0.5.0: el usuario eligió leer la transcripción por el app-server de Codex (thread/read y thread/items/list); petición transcript como ampliación compatible de ADR-0007. Falta la prueba a mano y la PR.'
 Bloqueada: []
 Fecha de creación: 2026-11-16T21:40:00+01:00
-Última modificación: 2026-11-16T22:50:00+01:00
+Última modificación: 2026-11-16T23:15:00+01:00
 ---
 
 # Abrir los hilos del equipo en solo lectura desde la app
@@ -280,8 +280,86 @@ siendo `unknown_session`.
 
 ## Verificación
 
-<Se rellena al completar: pruebas, build, comprobación real.>
+Rama `feat/v0.5-equipo-v4` (sin push), 2026-11-16:
+
+- **Tests de aceptación de Sol** (encargo `v05-hilos`, sin tocar desde sus
+  commits): `crates/titan-agent-core/tests/transcript_acceptance.rs` (4:
+  conversión, corte y orden en las dos funciones, protocolo, `busy`),
+  `crates/titan-agentd/tests/transcript_acceptance.rs` (2: hilo no listado
+  leído sin ninguna llamada que escriba, con y sin respaldo, y los cuatro
+  errores) y `crates/titan-agent-core/tests/monitor_transcript_acceptance.rs`
+  (1: `thread`, `mark_writers` y `busy`; segundo turno de Sol, porque en el
+  primero no tenía las firmas del monitor). Los 7 pasan.
+- **Tests propios**: 3 de `transcript.rs` y `crates/titan-agentd/tests/attach_unlisted.rs`
+  (adjuntar un hilo no listado abre `codex resume`; Codex que no lo conoce da
+  `unknown_session`; una lectura cortada por el app-server da
+  `codex_unavailable`).
+- fmt, clippy y `cargo test --workspace` en verde (130 tests en la rama).
+- **Codex real (0.169), sobre un hilo de prueba de esta ronda**:
+  `thread/read` y `thread/items/list` no cargan el hilo (`notLoaded` antes y
+  después) y devuelven los elementos del turno; un hilo inexistente da
+  «thread not loaded».
+- **Ventana real con datos inventados** (daemon en un socket propio, CLI
+  falsos y un app-server falso; ninguna sesión real): el hilo de un rol que
+  el daemon no lista se lee en solo lectura; la confirmación de «tomar el
+  control»; las tres vistas con «abierto en la app» (un terminal del daemon
+  para `cx:<hilo>` de un hilo no listado, abierto por la resolución nueva) y
+  «hilo ocupado». Capturas en `.previa/v05-equipo-v4/capturas/` (ignorada por
+  git). El PID de la ventana activa se comprobó antes y después de cada
+  captura.
+- **Pendiente del usuario**: probar los clics (no hay inyección de ratón) y
+  un `titan-team ask` con el hilo abierto en solo lectura (debe funcionar) y
+  tras «tomar el control» (debe salir con 4). Preparado:
+  `.previa/v05-equipo-v4/probar-ventana.sh` (CLI reales, socket propio).
 
 ## Resultado
 
-<Se rellena al completar: qué se hizo finalmente.>
+- **Núcleo**: `transcript` (tipos y conversión de los elementos de Codex),
+  `TranscriptResult` y `Request::Transcript` en el protocolo; `Member.busy`;
+  `Agent.thread`, `writer_open`, `busy` y `Board::mark_writers`.
+- **Daemon**: `hub/threads.rs` responde `transcript` en su propio hilo y
+  resuelve los hilos no listados para `attach`; `codex.rs` separa los errores
+  de transporte (`codex_unavailable`) de las respuestas de error de Codex.
+- **Interfaz**: `app/thread_view.rs` (vista de solo lectura, refresco cada
+  3 s mientras se ve, confirmación de «tomar el control», sesión provisional
+  del hilo hasta que el daemon lo lista); el clic de las tres vistas usa un
+  destino común (`monitor::target`): hilo de un rol de Codex o sesión del
+  director, y sin mano donde no hay acción; marcas `[w] abierto en la app`
+  (borde ámbar) y `[!] hilo ocupado`.
+
+### Revisión de Sol (una ronda, contexto limpio)
+
+`v05-revision`, gpt-6.1-sol high, hilo nuevo con la especificación de las
+tres tareas, §7 y el diff `41a2821..HEAD`: `changes_requested`, **2 mayores
+y 3 menores**. Decisiones:
+
+- **Aceptado (mayor)**: con la conexión perdida, una petición `transcript`
+  pendiente dejaba la vista esperando para siempre. Ahora se descarta al
+  desconectar (el error sale en el cuerpo) y se pide otra al reconectar. Sin
+  test: es estado de GPUI y la interfaz no tiene tests de ventana.
+- **Aceptado (mayor)**: un corte del app-server tras `initialize` salía como
+  `codex_error`; el contrato pide `codex_unavailable`. Test nuevo.
+- **Aceptado (menor)**: con el hilo abierto y un turno rechazado a la vez
+  solo se veía «abierto en la app»; ahora «abierto en la app · hilo ocupado».
+- **Aceptado (menor)**: carriles no tenía borde de aviso; ahora una barra
+  ámbar de 2 px a la izquierda, como la selección del árbol.
+- **Aceptado en parte (menor)**: el color de la orden. El `$` toma el color
+  del resultado (verde si `código 0`, rojo si no); el texto de la orden
+  sigue en `body` para que se lea.
+
+### Evaluación visual (subagente de Opus nuevo en cada ronda)
+
+- Ronda 1: **7,5/10** (barra 8, transcripción 7,5, confirmación 7, monitor
+  7,5, acabado 7,5). Corregido: botón de 30 px y marcado mientras la franja
+  está abierta; miga `[#] proyecto ›` y el proyecto marcado en el árbol;
+  franja con margen inferior, orden en `ink` y «cancelar» legible; párrafos
+  y elementos separados; aire bajo «hay elementos anteriores»; leyendas del
+  grafo y de carriles. Descartado: «disenador» sin ñ (es el id del rol en
+  `team.toml`) y «[busy]» (es el estado del contrato de ADR-0010).
+- Ronda 2: **8/10** (barra 8, transcripción 8, confirmación 9, monitor 8,
+  acabado 8,5). Corregido (última ronda): ritmo vertical, marcas propias
+  `[w]`/`[!]` para no confundirse con `[?] te necesita`, texto del agente
+  en `body` y del director en `mute`, «pensando» para el razonamiento y «al
+  rol revisor». Aplazado: el estado del rol en la barra de solo lectura.
+  Descartado: el alto de las tarjetas de la mesa y la flecha del feed (no
+  son de esta rama).
