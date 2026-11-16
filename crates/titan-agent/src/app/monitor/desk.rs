@@ -14,7 +14,7 @@ use titan_agent_core::team::USER;
 use crate::theme::{self, color, hairline, hsla};
 
 use super::super::MainView;
-use super::{agent_hex, in_state, look, spinner, with_alpha};
+use super::{agent_hex, in_state, look, spinner, target, with_alpha};
 
 /// Bars of the activity histogram and the time each one covers.
 const BARS: usize = 24;
@@ -273,7 +273,7 @@ impl MainView {
                 };
                 div().flex_1().h(px(height)).bg(color(tone))
             });
-        let session = agent.session.clone();
+        let target = target(board, agent);
         div()
             .id(SharedString::from(format!("card-{}", agent.id)))
             .flex_1()
@@ -286,10 +286,10 @@ impl MainView {
             .border_1()
             .border_color(l.border)
             .rounded(px(4.))
-            .when(session.is_some(), |d| d.cursor_pointer())
+            .when(target.is_some(), |d| d.cursor_pointer())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                if session.is_some() {
-                    this.open_agent(session.clone(), window, cx);
+                if let Some(target) = target.clone() {
+                    this.open_agent(target, window, cx);
                 }
             }))
             .child(

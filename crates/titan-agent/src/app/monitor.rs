@@ -11,12 +11,36 @@ use titan_agent_core::team::USER;
 
 use crate::theme::{self, color, hairline, hsla};
 
+use super::thread_view::ThreadRef;
 use super::widgets::placeholder;
 use super::{MainView, Selection};
 
 mod desk;
 mod graph;
 mod lanes;
+
+/// What a click on an agent opens: a Codex role's thread read-only (listed
+/// by the daemon or not), or the director's session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Target {
+    Thread(ThreadRef),
+    Session(String),
+}
+
+/// The target of an agent; `None` when a click does nothing (and the
+/// pointer must not suggest it does).
+pub(super) fn target(board: &Board, agent: &Agent) -> Option<Target> {
+    if let Some(thread) = &agent.thread {
+        return Some(Target::Thread(ThreadRef {
+            key: format!("cx:{thread}"),
+            title: agent.title.clone(),
+            role: agent.role.clone(),
+            model: agent.model.clone(),
+            task: board.task.clone(),
+        }));
+    }
+    agent.session.clone().map(Target::Session)
+}
 
 /// View shown in the monitor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,6 +153,18 @@ pub(super) fn look(board: &Board, agent: &Agent, now_ms: i64) -> Look {
         l.border = with_alpha(theme::WARNING, 0.45 + 0.55 * pulse(now_ms, 1400));
         l.dim = false;
     }
+    // Why the director may be waiting on a role: the app holds its thread,
+    // or its last turn was refused because the thread was open elsewhere.
+    if agent.writer_open {
+        l.action = "abierto en la app".into();
+        l.action_hex = theme::WARNING;
+        l.border = hsla(theme::WARNING);
+        l.dim = false;
+    } else if agent.busy && agent.state != SessionState::Working {
+        l.action = "hilo ocupado".into();
+        l.action_hex = theme::WARNING;
+        l.dim = false;
+    }
     l
 }
 
@@ -151,7 +187,9 @@ impl MainView {
     /// The board of the project's newest open task, if it has one.
     pub(super) fn board_for(&self, root: &str) -> Option<Board> {
         let (task, run) = latest_team(&self.teams, root)?;
-        Some(board(&task, &run, &self.sessions, self.now_ms))
+        let mut board = board(&task, &run, &self.sessions, self.now_ms);
+        board.mark_writers(&self.daemon_terminals);
+        Some(board)
     }
 
     /// Whether the centre shows a live monitor (it then redraws often).
@@ -162,19 +200,16 @@ impl MainView {
         }
     }
 
-    /// Opens the session of an agent clicked in the monitor.
+    /// Opens what a click on an agent of the monitor targets.
     pub(super) fn open_agent(
         &mut self,
-        session: Option<String>,
+        target: Target,
         window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) {
-        match session {
-            Some(key) => self.select_session(key, Some(window), cx),
-            None => {
-                self.notice = Some(("ese agente no tiene una sesión a la vista".into(), true));
-                cx.notify();
-            }
+        match target {
+            Target::Thread(r) => self.open_thread(r, cx),
+            Target::Session(key) => self.select_session(key, Some(window), cx),
         }
     }
 

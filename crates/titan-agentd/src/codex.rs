@@ -299,10 +299,14 @@ impl CodexClient {
     }
 
     pub fn thread(&mut self, _thread: &str) -> Result<Value, ReadError> {
-        Err(ReadError::Codex("el daemon de Codex aún no se lee en Windows".into()))
+        Err(ReadError::Codex(
+            "el daemon de Codex aún no se lee en Windows".into(),
+        ))
     }
 
     pub fn transcript(&mut self, _thread: &str) -> Result<Transcript, ReadError> {
-        Err(ReadError::Codex("el daemon de Codex aún no se lee en Windows".into()))
+        Err(ReadError::Codex(
+            "el daemon de Codex aún no se lee en Windows".into(),
+        ))
     }
 }

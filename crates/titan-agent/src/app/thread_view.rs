@@ -217,16 +217,24 @@ impl MainView {
             )
             .child(div().flex_grow_1())
             .child(
-                button("take-control", "[>] tomar el control", theme::HAIRLINE_STRONG, theme::BODY)
-                    .flex_none()
-                    .min_h(px(28.))
-                    .hover(|d| d.border_color(color(theme::ACCENT)).text_color(color(theme::INK)))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        if let Some(state) = this.thread.as_mut() {
-                            state.confirm = true;
-                        }
-                        cx.notify();
-                    })),
+                button(
+                    "take-control",
+                    "[>] tomar el control",
+                    theme::HAIRLINE_STRONG,
+                    theme::BODY,
+                )
+                .flex_none()
+                .min_h(px(28.))
+                .hover(|d| {
+                    d.border_color(color(theme::ACCENT))
+                        .text_color(color(theme::INK))
+                })
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    if let Some(state) = this.thread.as_mut() {
+                        state.confirm = true;
+                    }
+                    cx.notify();
+                })),
             );
         let confirm = state.confirm.then(|| confirm_strip(&r, cx));
         let body = body(state, &r);

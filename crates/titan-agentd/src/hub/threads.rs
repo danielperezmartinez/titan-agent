@@ -45,10 +45,11 @@ impl Hub {
             "not_codex",
             "solo se leen hilos de Codex (cx:<id>)".to_string(),
         ))?;
-        let mut client =
-            connect(&self.config.codex).map_err(|text| ("codex_unavailable", text))?;
+        let mut client = connect(&self.config.codex).map_err(|text| ("codex_unavailable", text))?;
         let transcript = client.transcript(thread).map_err(|error| match error {
-            ReadError::NotFound(text) => ("not_found", format!("Codex no encuentra el hilo: {text}")),
+            ReadError::NotFound(text) => {
+                ("not_found", format!("Codex no encuentra el hilo: {text}"))
+            }
             ReadError::Codex(text) => ("codex_error", text),
         })?;
         Ok(TranscriptResult {

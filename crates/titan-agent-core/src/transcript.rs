@@ -47,7 +47,9 @@ pub fn transcript_from_items_page(page: &Value) -> (Vec<TranscriptItem>, bool) {
         })
         .collect();
     items.reverse();
-    let more = page.get("nextCursor").is_some_and(|cursor| !cursor.is_null());
+    let more = page
+        .get("nextCursor")
+        .is_some_and(|cursor| !cursor.is_null());
     (items, more)
 }
 

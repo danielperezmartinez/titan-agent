@@ -11,7 +11,7 @@ use titan_agent_core::time::ago;
 use crate::theme::{self, color, hairline, hsla};
 
 use super::super::MainView;
-use super::{agent_hex, look};
+use super::{agent_hex, look, target};
 
 const WIDTH: f32 = 960.;
 const HEIGHT: f32 = 560.;
@@ -400,7 +400,7 @@ impl MainView {
         } else {
             l.action.clone()
         };
-        let session = agent.session.clone();
+        let target = target(board, agent);
         div()
             .id(SharedString::from(format!("node-{}", agent.id)))
             .absolute()
@@ -418,10 +418,10 @@ impl MainView {
             .border_color(l.border)
             .rounded(px(4.))
             .opacity(if l.dim { 0.75 } else { 1. })
-            .when(agent.cli.is_some(), |d| d.cursor_pointer())
+            .when(target.is_some(), |d| d.cursor_pointer())
             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                if session.is_some() {
-                    this.open_agent(session.clone(), window, cx);
+                if let Some(target) = target.clone() {
+                    this.open_agent(target, window, cx);
                 }
             }))
             .child(
