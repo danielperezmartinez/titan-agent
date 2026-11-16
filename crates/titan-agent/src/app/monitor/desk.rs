@@ -97,8 +97,8 @@ impl MainView {
                 let receiver = agent_hex(board.agent(&m.to).and_then(|a| a.cli));
                 (
                     if needs { "TE NECESITAN" } else { "HABLANDO" },
-                    board.title(&m.from),
-                    board.title(&m.to),
+                    board.label(&m.from),
+                    board.label(&m.to),
                     ascii,
                     sender,
                     sender,
@@ -337,9 +337,7 @@ impl MainView {
                         div()
                             .flex_grow_1()
                             .min_w(px(0.))
-                            .whitespace_nowrap()
-                            .overflow_hidden()
-                            .text_ellipsis()
+                            .line_clamp(2)
                             .text_size(px(14.))
                             .text_color(color(l.action_hex))
                             .child(l.action.clone()),

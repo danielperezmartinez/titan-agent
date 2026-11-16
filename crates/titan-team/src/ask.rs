@@ -276,7 +276,10 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         .and_then(Value::as_str)
         .map(str::to_string);
     let summary = match (&verdict, findings) {
-        (Some(verdict), Some(findings)) => format!("{verdict} · {} hallazgos", findings.total()),
+        (Some(verdict), Some(findings)) => match findings.total() {
+            1 => format!("{verdict} · 1 hallazgo"),
+            n => format!("{verdict} · {n} hallazgos"),
+        },
         _ => first_line(&text).unwrap_or(out.status).to_string(),
     };
     log.append(EventKind::TurnFinished {

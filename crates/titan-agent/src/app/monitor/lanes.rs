@@ -188,7 +188,9 @@ impl MainView {
                                 .text_ellipsis()
                                 .text_size(px(11.))
                                 .text_color(tone)
-                                .child(m.text.clone()),
+                                // The colour and the dot already say it arrived; the
+                                // label keeps the words that matter.
+                                .child(m.text.trim_start_matches("[ok] ").to_string()),
                         )
                     })
                     .into_any_element(),

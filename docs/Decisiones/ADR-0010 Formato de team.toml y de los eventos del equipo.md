@@ -147,7 +147,7 @@ Campos comunes de cada línea: `v` (entero, `1`), `ts_ms` (entero, milisegundos 
 Textos:
 
 - `brief_sent.text`: la primera línea no vacía del mensaje del director; sin mensaje, `encargo inicial`.
-- `turn_finished.text`: con informe, `<verdict> · <n> hallazgos` (n = total de findings); si no, la primera línea no vacía de la respuesta; si no hay respuesta, el estado.
+- `turn_finished.text`: con informe, `<verdict> · <n> hallazgos` (n = total de findings; `1 hallazgo` en singular, ajuste del 2026-11-16 tras la evaluación visual); si no, la primera línea no vacía de la respuesta; si no hay respuesta, el estado.
 - Límites: `text` de `brief_sent`, `activity` y `turn_finished` como mucho **200 caracteres** (no bytes); `decision.text` **500**. Lo que pase se corta y termina en `…` (contando dentro del límite).
 
 Orden de un turno: `brief_sent`, `turn_started`, `activity`*, `turn_finished`, `report`?
