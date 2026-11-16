@@ -215,7 +215,7 @@ así, con la separación de la interfaz en módulos como condición para la PR.
   provisional y en la real una vez resuelta, y el detalle muestra «lanzada por:
   tú (titan-agent)».
 - **Interfaz en módulos, sin cambios de comportamiento.** `app.rs` pasó de
-  2401 a 463 líneas (arranque, estado compartido y enrutado) y cada vista va en
+  2401 a 469 líneas (arranque, estado compartido y enrutado) y cada vista va en
   `crates/titan-agent/src/app/`: `header`, `nav` (árbol y filtro),
   `session_view` (terminal), `detail` (detalle de sesión y de proyecto),
   `new_session`, `settings`, más `menu` (botones de ajuste y listas, que
