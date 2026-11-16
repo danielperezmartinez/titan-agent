@@ -329,6 +329,29 @@ los agentes:
 Ver [[#Publicación]]. La distribución concreta (formatos, canales,
 autoactualización) se decide en una ADR antes de la primera versión.
 
+### 7. Estructura del código
+
+Decisión del usuario del 2026-11-16, al cerrar la fase 2 (`app.rs` había
+llegado a unas 2400 líneas).
+
+- **Un módulo por vista en la interfaz.** Cada vista de la ventana vive en su
+  propio fichero bajo `crates/titan-agent/src/app/` (cabecera, árbol,
+  terminal, detalle, nueva sesión, configuración…). `app.rs` solo tiene el
+  arranque, el estado compartido y el enrutado (mensajes del daemon,
+  selección, teclas y qué vista va en el centro). Lo que comparten varias
+  vistas va en su propio módulo (`menu`, `widgets`), no en una de ellas.
+- **Un módulo por responsabilidad en el daemon y el núcleo** (descubrimiento,
+  lanzamiento, terminales, protocolo…), no un fichero que lo acumula todo.
+- **Umbral de tamaño: 800 líneas por fichero `.rs`**, tests incluidos (lo que
+  da `wc -l`). Un fichero que lo supere se divide; si dividirlo empeora el
+  código, la cabecera del módulo (`//!`) lo justifica en una o dos frases y la
+  revisión valora esa justificación. A un fichero que ya lo supera no se le
+  añade código sin dividirlo o justificarlo en el mismo cambio.
+- Los ficheros que ya lo superaban al fijar la regla están en
+  [[Tareas/Llevar hub.rs y brief.rs bajo el umbral de tamaño]].
+- La revisión de Sol lo comprueba: es uno de sus criterios en
+  `.agents/prompts/revisor.md` (que no ve la bóveda y por eso lo resume).
+
 ## Propósito del proyecto
 
 **titan-agent** es una aplicación hermana de **titan-ssh** (cliente SSH en
