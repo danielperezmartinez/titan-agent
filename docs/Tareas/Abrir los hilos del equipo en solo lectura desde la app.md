@@ -5,7 +5,7 @@ Resumen: 'En la app, el clic en un rol del equipo abre su hilo en solo lectura (
 Decisiones: 'Acordado al cerrar la fase 3 (2026-11-16): titan-team ya conserva el hilo y sale con 4 si está abierto en otro sitio; esta tarea evita que la app lo abra como escritor sin querer. Sin cola en titan-team.'
 Bloqueada: []
 Fecha de creación: 2026-11-16T21:40:00+01:00
-Última modificación: 2026-11-16T21:40:00+01:00
+Última modificación: 2026-11-16T21:50:00+01:00
 ---
 
 # Abrir los hilos del equipo en solo lectura desde la app
@@ -41,6 +41,27 @@ Se decide en una ADR o en una ampliación de
 [[Decisiones/ADR-0007 Protocolo local de titan-agentd en NDJSON versionado]]
 antes de implementar: cómo lee el daemon la transcripción por una vía oficial,
 sin leer credenciales ([[Decisiones/ADR-0001 Torre de control y no orquestador]]).
+
+## Observado en la prueba manual del cierre de la fase 3 (2026-11-16)
+
+El usuario probó la ventana de la versión 0.4.0 con un encargo real
+(`fase-3-cierre-revision`, revisor de Codex con su hilo ya terminado):
+
+- En el **grafo**, el cursor cambia a mano sobre el revisor, pero el clic no
+  hace nada.
+- En **carriles** y **mesa de control**, la tarjeta del revisor sale
+  deshabilitada.
+- Aparece un **error abajo a la izquierda** de la ventana (texto por
+  apuntar en la siguiente prueba). Lo más probable: el hilo de `codex exec`
+  no está en la lista de sesiones del daemon (los hilos de `codex exec` no se
+  cargan en el app-server compartido), así que no hay sesión `cx:<thread_id>`
+  que abrir.
+- El director sí abre su sesión (la de Claude Code, unida por
+  `director_session`).
+
+Esta tarea debe resolverlo: el clic en cualquier rol del equipo abre su hilo
+en solo lectura aunque el daemon no lo liste, y el grafo no muestra el cursor
+de clic donde no hay acción.
 
 ## Criterios de finalización
 
