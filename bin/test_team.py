@@ -45,19 +45,21 @@ class RepoConfigTest(unittest.TestCase):
 
     def test_flow_and_roles(self):
         flow = self.cfg["flow"]
-        self.assertEqual(flow["steps"], ["disenador_tests", "implementador", "revisor"])
+        self.assertEqual(flow["steps"], ["disenador_tests", "revisor"])
+        self.assertEqual(flow["fix_role"], "director")
+        self.assertEqual(flow["max_review_rounds"], 1)
         for step in flow["steps"]:
             role = team.require_role(self.cfg, step)
             self.assertEqual(role["cli"], "codex")
             self.assertTrue((ROOT / role["prompt_file"]).is_file())
-        self.assertEqual(self.cfg["roles"]["implementador"]["model"], "gpt-6-luna")
+        self.assertEqual(self.cfg["roles"]["mecanico"]["model"], "gpt-6-luna")
         self.assertEqual(self.cfg["roles"]["disenador_tests"]["model"], "gpt-6.1-sol")
         self.assertEqual(self.cfg["roles"]["revisor"]["model"], "gpt-6.1-sol")
         self.assertEqual(self.cfg["roles"]["revisor"]["sandbox"], "read-only")
         self.assertTrue((ROOT / self.cfg["roles"]["revisor"]["output_schema"]).is_file())
 
     def test_roles_are_isolated_from_the_repo_instructions(self):
-        overrides = team.codex_overrides(self.cfg, self.cfg["roles"]["implementador"])
+        overrides = team.codex_overrides(self.cfg, self.cfg["roles"]["mecanico"])
         self.assertIn("project_doc_max_bytes=0", overrides)
         self.assertIn("skills.include_instructions=false", overrides)
         hidden = self.cfg["project"]["hidden_paths"]
@@ -127,7 +129,7 @@ class DryRunTest(unittest.TestCase):
         self.base.mkdir()
         (self.base / ".agents").mkdir()
         for rel in (".agents/team.toml", ".agents/prompts/disenador_tests.md",
-                    ".agents/prompts/implementador.md", ".agents/prompts/revisor.md",
+                    ".agents/prompts/mecanico.md", ".agents/prompts/revisor.md",
                     ".agents/schemas/review.json"):
             dest = self.base / rel
             dest.parent.mkdir(parents=True, exist_ok=True)

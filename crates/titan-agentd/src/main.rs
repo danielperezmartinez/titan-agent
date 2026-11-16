@@ -193,17 +193,18 @@ mod server {
             match decode_line::<ClientMessage>(&line) {
                 Ok(message) => hub.handle(id, message, &mut hello_done),
                 Err(error) => {
-                    // Answer malformed requests when they carry an id.
+                    // Answer malformed requests with their id when it can be
+                    // recovered, and with a null id otherwise.
                     let request_id = serde_json::from_str::<serde_json::Value>(&line)
                         .ok()
                         .and_then(|v| v.get("id").and_then(serde_json::Value::as_u64));
-                    if let Some(request_id) = request_id {
-                        let _ = tx.send(encode_line(&ServerMessage::error(
-                            request_id,
-                            "bad_request",
-                            error.to_string(),
-                        )));
-                    }
+                    let answer = match request_id {
+                        Some(request_id) => {
+                            ServerMessage::error(request_id, "bad_request", error.to_string())
+                        }
+                        None => ServerMessage::bad_line(error.to_string()),
+                    };
+                    let _ = tx.send(encode_line(&answer));
                 }
             }
         }

@@ -65,6 +65,7 @@ fn server_messages_round_trip() {
                 detail: Some("sin daemon".into()),
             }],
             terminals: vec![],
+            launches: vec![],
         }),
         ServerMessage::Event(Event::TerminalClosed {
             terminal: "t3".into(),
@@ -79,7 +80,7 @@ fn server_messages_round_trip() {
     }
     let error: ServerMessage =
         decode_line(r#"{"id":4,"error":{"code":"x","message":"y"}}"#).unwrap();
-    assert!(matches!(error, ServerMessage::Error { id: 4, .. }));
+    assert!(matches!(error, ServerMessage::Error { id: Some(4), .. }));
 }
 
 #[test]

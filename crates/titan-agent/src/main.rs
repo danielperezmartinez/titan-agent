@@ -1,7 +1,9 @@
 //! titan-agent: GPUI desktop interface, a client of titan-agentd (ADR-0004).
 
 mod app;
+mod brief;
 mod client;
+mod config;
 mod keys;
 mod terminal;
 mod theme;

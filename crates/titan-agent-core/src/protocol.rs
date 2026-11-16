@@ -11,18 +11,51 @@ use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
+use crate::launch::LaunchSpec;
 use crate::session::{AgentCli, Session};
 
 /// Version of this protocol. A daemon refuses a `hello` with another version.
 pub const PROTOCOL_VERSION: u32 = 1;
 
 /// A message from a client to the daemon.
+///
+/// Decoding refuses unknown fields in the `params` of a `launch`, so a
+/// client cannot ask for anything the user did not see (a repeat, a delay…).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "Value")]
 pub struct ClientMessage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<u64>,
     #[serde(flatten)]
     pub request: Request,
+}
+
+/// Fields of the `launch` params; anything else is refused.
+const LAUNCH_FIELDS: [&str; 3] = ["token", "spec", "command"];
+
+impl TryFrom<Value> for ClientMessage {
+    type Error = String;
+
+    fn try_from(value: Value) -> Result<ClientMessage, String> {
+        #[derive(Deserialize)]
+        struct Wire {
+            #[serde(default)]
+            id: Option<u64>,
+            #[serde(flatten)]
+            request: Request,
+        }
+        if value.get("method").and_then(Value::as_str) == Some("launch")
+            && let Some(params) = value.get("params").and_then(Value::as_object)
+            && let Some(unknown) = params.keys().find(|k| !LAUNCH_FIELDS.contains(&k.as_str()))
+        {
+            return Err(format!("unknown field `{unknown}` in launch"));
+        }
+        let wire: Wire = serde_json::from_value(value).map_err(|error| error.to_string())?;
+        Ok(ClientMessage {
+            id: wire.id,
+            request: wire.request,
+        })
+    }
 }
 
 /// Requests understood by the daemon.
@@ -56,6 +89,14 @@ pub enum Request {
     Stop { session: String },
     /// Open the session's working folder in the file manager.
     OpenFolder { session: String },
+    /// Launch a new session with the official CLI (ADR-0002). `token` is
+    /// unique per click of the user; `command` is the line the user saw and
+    /// must equal `spec.command_line()`. Answered with [`LaunchResult`].
+    Launch {
+        token: String,
+        spec: LaunchSpec,
+        command: String,
+    },
 }
 
 /// Answer to [`Request::Hello`].
@@ -72,6 +113,27 @@ pub struct AttachResult {
     /// False when the terminal already existed (for example after the window
     /// was closed and opened again).
     pub created: bool,
+}
+
+/// Answer to [`Request::Launch`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchResult {
+    /// Provisional session key (`launch:<n>`) used until the CLI reports the
+    /// real session; see [`LaunchRef`].
+    pub launch: String,
+    pub agent: AgentCli,
+    /// Terminal of the launched TUI (Codex); `None` for Claude Code, which
+    /// runs in the background and is attached like any other session.
+    pub terminal: Option<String>,
+    /// Id printed by `claude --bg`.
+    pub cli_id: Option<String>,
+}
+
+/// A launch and, once known, the real session it became.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchRef {
+    pub launch: String,
+    pub session: Option<String>,
 }
 
 /// An error answer.
@@ -100,6 +162,10 @@ pub enum Event {
         sources: Vec<SourceStatus>,
         /// Terminals alive in the daemon, as `(session key, terminal id)`.
         terminals: Vec<TerminalRef>,
+        /// Sessions launched by this daemon and the real session each one
+        /// became, once the CLI reports it.
+        #[serde(default)]
+        launches: Vec<LaunchRef>,
     },
     /// Output of a terminal, in base64.
     Output { terminal: String, data: String },
@@ -123,8 +189,16 @@ pub struct TerminalRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ServerMessage {
-    Result { id: u64, result: Value },
-    Error { id: u64, error: ErrorBody },
+    Result {
+        id: u64,
+        result: Value,
+    },
+    /// `id` is `null` when the request line could not be parsed at all
+    /// (the JSON-RPC convention).
+    Error {
+        id: Option<u64>,
+        error: ErrorBody,
+    },
     Event(Event),
 }
 
@@ -136,9 +210,20 @@ impl ServerMessage {
         }
     }
 
+    /// Error for a line that could not be parsed, so its id is unknown.
+    pub fn bad_line(message: impl Into<String>) -> ServerMessage {
+        ServerMessage::Error {
+            id: None,
+            error: ErrorBody {
+                code: "bad_request".to_string(),
+                message: message.into(),
+            },
+        }
+    }
+
     pub fn error(id: u64, code: &str, message: impl Into<String>) -> ServerMessage {
         ServerMessage::Error {
-            id,
+            id: Some(id),
             error: ErrorBody {
                 code: code.to_string(),
                 message: message.into(),

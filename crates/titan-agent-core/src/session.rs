@@ -182,6 +182,9 @@ pub struct Session {
     /// Whether the daemon can stop it with an official command.
     #[serde(default)]
     pub stoppable: bool,
+    /// Whether this daemon launched it from «Nueva sesión» (ADR-0002).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub launched_here: bool,
 }
 
 impl Session {

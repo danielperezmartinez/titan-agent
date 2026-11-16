@@ -1,67 +1,55 @@
 ---
 name: equipo
-description: Dirige el equipo multiagente definido en .agents/team.toml (Opus dirige; Codex Luna escribe los tests y, en otro hilo, implementa; Codex Sol revisa). Úsala cuando el usuario pida "encargar al equipo", "que lo haga Luna", "pásalo por el equipo" o un desarrollo con el bucle diseño de tests → implementación → revisión → correcciones.
+description: Dirige el equipo multiagente v3 definido en .agents/team.toml (Opus implementa cada parte con sus tests; antes, Codex Sol escribe pocos tests de aceptación desde la especificación; al final, una revisión de Sol con contexto limpio y un evaluador visual de Opus nuevo; Luna solo para trabajo mecánico). Úsala cuando el usuario pida "encargar al equipo", "pásalo por el equipo" o un desarrollo con tests de aceptación, revisión independiente y evaluación visual.
 ---
 
-# Equipo multiagente: bucle del director
+# Equipo multiagente v3: bucle del director
 
-Tú eres el **director** (rol `director` de `.agents/team.toml`). Tu valor está en el diseño y las decisiones; el código y lo mecánico lo escriben los otros roles. **No escribas tú el código del encargo**, aunque sea corto: redacta el encargo y deja que lo hagan ellos. Tu cuota es la cara; la de Codex (Plus) también es limitada: **cada `team ask` es una llamada**, no repitas llamadas para nada.
+Tú eres el **director** (rol `director` de `.agents/team.toml`) y **también implementas**. La v3 reparte el trabajo por **contexto**, no por rol: quien hace una parte hace también sus tests, y los demás roles aportan lo que solo da un contexto distinto (tests desde la especificación y una revisión limpia). Origen: experimento de la fase 1 (la variante con Luna implementando gastó más Claude, tardó más y quedó peor) y la valoración de la nota «Equipo multiagente con mis suscripciones» de la bóveda de control.
 
-Herramienta: `bin/team` (en la carpeta que contiene `.agents/`). Lee `team roles` al empezar para saber quién hace cada paso: el TOML manda, no esta skill.
+Herramienta: `bin/team` (en la carpeta que contiene `.agents/`). Lee `bin/team roles` al empezar: el TOML manda, no esta skill. Cada `team ask` es una llamada a la cuota de ChatGPT Plus: **no repitas llamadas**. Si la cuota se agota, para y avisa al usuario con la hora de reinicio.
 
-## 0. Antes de empezar
-- `bin/team roles` → roles, modelos, `flow.steps`, `max_review_rounds`.
-- Si el encargo no está claro, **debate con el usuario** antes de gastar llamadas. Pregunta solo lo que cambie el diseño.
+## 0. Especificación (tú, antes de nada)
+Escribe la especificación en un fichero fuera del repo (`$CLAUDE_JOB_DIR/tmp/<id>.md`). Debe bastar por sí sola, porque los roles de Codex no ven esta conversación **ni la bóveda** (`project.hidden_paths`, `[codex].config`). Contiene:
+- Objetivo y comportamiento visible, copiando lo necesario de la tarea, sus ADR y reglas.
+- El **contrato público** que tocarán los tests: crate y módulo, nombres, firmas, mensajes de protocolo, códigos de error y cuándo salen, y en qué `crates/<crate>/tests/` van.
+- **Nada de tu diseño interno** (estructuras privadas, cómo lo vas a resolver): los tests deben salir de la especificación, no de tu plan.
 
-## 1. Diseño y encargo (tú)
-Escribe el encargo en un fichero fuera del repo (p. ej. `$CLAUDE_JOB_DIR/tmp/<id>.md`); `team new` guarda su copia en `.agents/state/<id>/` (no versionado). Debe bastar por sí solo, porque los otros roles no ven esta conversación **ni la bóveda**: su worktree no trae `docs/`, `AGENTS.md`, `CLAUDE.md` ni `GEMINI.md` (`project.hidden_paths`) y Codex no carga instrucciones de proyecto ni skills (`[codex].config`). Lo que necesiten de una ADR, una decisión visual o una regla del proyecto, cópialo en el encargo:
-- Objetivo en una frase.
-- **Interfaz exacta**: crate y módulo, nombres, firmas, tipos, errores (tipo y cuándo), y en qué `crates/<crate>/tests/` van los tests de aceptación.
-- Comportamiento: casos normales, bordes, errores, ejemplos entrada → salida.
-- Fuera de alcance, y las dependencias nuevas que se autorizan (los roles trabajan sin red: hay que descargarlas antes con `cargo fetch` en el worktree).
-- Cómo se ejecutan los tests (`project.test_cmd`).
+Si hay decisiones de producto abiertas, pregúntalas al usuario antes de gastar llamadas.
 
-Enséñale al usuario el diseño en pocas líneas y **pide su visto bueno** si hay decisiones abiertas. Luego:
-
+## 1. Tests de aceptación (Sol, medium)
 ```
-bin/team new <id> --brief <fichero> [--base <rama>]
-```
-
-`--base` hace salir el encargo de otra rama que `project.base` (p. ej. la rama de la fase en curso, que aún no está en `main`). Para no recompilar GPUI desde cero en el worktree nuevo, puedes copiar antes el `target/` de la rama base con `cp -a --reflink=auto`.
-
-## 2. Pasos del flujo (en el orden de `flow.steps`)
-Por defecto: `disenador_tests` → `implementador` → `revisor`. Lanza cada `team ask` con Bash en **segundo plano** (`run_in_background`, timeout ≥ el `timeout_s` del rol) y espera la notificación; no hagas polling.
-
-```
+bin/team new <id> --brief <fichero> --base <tu rama>
 bin/team ask disenador_tests <id>
-bin/team ask implementador <id> -m "Los tests ya están en tests/. Implementa hasta que pasen."
-bin/team ask revisor <id> --diff --test
 ```
+Lanza el `ask` en segundo plano (`run_in_background`, timeout ≥ `timeout_s`) y, mientras, escribe los criterios visuales (paso 2) o empieza por partes que los tests no tocan. Al terminar, trae su commit a tu rama (`git cherry-pick <commit>`) y anota el commit: **esos ficheros no los tocas tú**. Si crees que un test está mal, se lo devuelves con tu argumento (`bin/team ask disenador_tests <id> -m "…"`, mismo hilo) o lo consultas con el usuario. Al cerrar, `git diff <commit>..HEAD -- <ficheros de los tests>` debe salir vacío salvo correcciones hechas por Sol.
 
-Tras cada paso lee el informe que imprime `team` (estado, commit, **avisos**, respuesta):
-- Aviso de rutas (p. ej. el implementador tocó `crates/*/tests/`): decide tú si se acepta o se revierte (`git -C <worktree> revert`/`checkout`) y díselo al rol en el siguiente mensaje.
-- Si un rol hace preguntas de diseño, respóndelas tú si son tuyas; si son del usuario, pregúntale.
-- Si el diseñador de tests se ha desviado del encargo, corrígelo con `bin/team ask disenador_tests <id> -m "…"` (continúa su hilo) antes de implementar.
+## 2. Criterios visuales (tú, antes de implementar)
+Si la tarea tiene interfaz, escribe **4–5 criterios** concretos y comprobables frente a `design/preview/` y las decisiones visuales (p. ej. jerarquía y espaciado, tipografía, color y disciplina de color, estados e interacción, acabado). Guárdalos en la nota de la tarea antes de implementar: no se cambian para que el resultado pase.
 
-## 3. Revisión → correcciones (tope de rondas)
-El revisor devuelve `veredicto` + hallazgos. Tú **decides** cada hallazgo; el revisor informa, no manda:
-- `ok` → paso 4.
-- `changes_requested` → elige qué se corrige (descarta nits o lo que contradiga el diseño) y manda **un único** mensaje al `fix_role` con la lista concreta:
-  `bin/team ask implementador <id> -m "Corrige: 1) … 2) … No toques crates/*/tests/."`
-  Después, nueva revisión **en el mismo hilo del revisor**: `bin/team ask revisor <id> --diff --test -m "Ronda N: he pedido corregir X e Y. Comprueba solo eso y lo que haya podido romper."`
-- `blocked` o `questions_for_director` con decisiones de producto → **para y pregunta al usuario**.
-- Si un hallazgo afecta a los tests, el que corrige es `disenador_tests`, no el implementador.
+## 3. Implementación (tú)
+Implementa cada parte con **sus propios tests** (unitarios o de integración propios, en ficheros distintos de los de aceptación). Compuerta: `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` en verde, y los tests de aceptación pasando sin tocarlos.
 
-`bin/team` cuenta las rondas del revisor y se niega a pasar de `max_review_rounds` (exit 3). Al llegar al tope **no uses `--force` por tu cuenta**: resume al usuario lo pendiente y que decida (otra ronda, aceptarlo así o rediseñar).
+**Luna (`mecanico`) solo para trabajo mecánico sin criterio**: código repetitivo con un patrón ya fijado, o investigar una API en paralelo mientras implementas. **Nunca la interfaz** ni nada que exija decidir. Si no hay trabajo así, no se usa.
 
-## 4. Cierre (con el usuario)
-- `bin/team test <id>` y `bin/team diff <id> --stat` para comprobarlo tú (no confíes solo en los informes).
-- `bin/team show <id>` → llamadas hechas y tokens.
-- Resume al usuario: qué se hizo, rondas usadas, hallazgos aceptados/descartados y por qué, y dónde está (rama `encargo/<id>`, worktree).
-- La rama `encargo/<id>` se publica según `docs/README.md` → Publicación (rama corta y PR contra `main`). **Hacer push, abrir o integrar la PR y borrar el worktree lo decide el usuario.** Al terminar: `bin/team close <id> [--delete-branch]`.
+## 4. Revisión única (Sol, high, contexto limpio)
+Una sola ronda (`max_review_rounds = 1`), en un **hilo nuevo** que solo ve la especificación y el diff:
+```
+bin/team new <id>-revision --brief <especificación> --base <commit base de la fase>
+git -C .agents/worktrees/<id>-revision merge --ff-only <tu rama>
+bin/team ask revisor <id>-revision -m "El diff a revisar es git diff <base>..HEAD -- crates bin .agents (léelo con git; puede ser largo)."
+```
+(`--diff` trunca a 60 000 caracteres: para una fase entera, que el revisor lo lea con git.) Tú **decides** cada hallazgo — aceptado, descartado o aplazado — y **anotas por qué** en la nota de la tarea. Corriges tú. Otra ronda solo con permiso del usuario.
+
+## 5. Evaluador visual (subagente de Opus nuevo)
+Con la interfaz terminada, captura la ventana real (p. ej. `spectacle -a -b -n -o <png>`, con datos de prueba, nunca sesiones reales del usuario) y lanza un subagente **nuevo** con la herramienta `Agent`, sin el contexto de la implementación: recibe las capturas, `design/preview/` (o capturas de la previa) y los criterios del paso 2, y puntúa cada criterio con lo que falla. Corriges y repites **como mucho 2 veces**.
+
+## 6. Cierre
+- Métricas para la nota de la tarea: tiempo, uso de Claude, `bin/team show <id>` (llamadas y tokens de Codex), número de tests (de aceptación y propios), hallazgos de revisión aceptados/descartados y resultado del evaluador visual.
+- La rama se publica según `docs/README.md` → Publicación. **Push, PR, integrar y borrar worktrees los decide el usuario.** `bin/team close <id> [--delete-branch]` para los encargos de Codex.
 
 ## Reglas
+- Los roles de Codex mantienen su sandbox (`workspace-write` o `read-only`); nunca `danger-full-access`.
 - Una llamada por paso; no relances un paso que ha ido bien "por si acaso".
 - Si un `team ask` falla (exit 1), lee el `.stderr` del turno en `.agents/state/<id>/` antes de reintentar; un reintento como mucho y luego al usuario.
-- No edites el código del worktree tú mismo salvo un arreglo trivial que el usuario apruebe; lo normal es pedírselo al rol.
-- Variantes: si el usuario quiere otro reparto (p. ej. sin diseñador de tests, otro modelo de revisor), se cambia en `.agents/team.toml`, no aquí.
+- Variantes: si el usuario quiere otro reparto, se cambia en `.agents/team.toml` y aquí.
