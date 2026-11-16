@@ -2,10 +2,10 @@
 Nombre: Llevar hub.rs y brief.rs bajo el umbral de tamaño
 Estado: Pendiente
 Resumen: Dos ficheros superaban las 800 líneas al fijar la regla de estructura del código (2026-11-16) — crates/titan-agentd/src/hub.rs (unas 1330) y crates/titan-agent/src/brief.rs (unas 920) — y hay que dividirlos o justificar su tamaño en su cabecera, sin cambios de comportamiento.
-Decisiones: ''
+Decisiones: 'hub.rs se dividió en la fase 3 (variante equipo v4), sin cambios de comportamiento; queda brief.rs.'
 Bloqueada: []
 Fecha de creación: 2026-11-16T18:05:00+01:00
-Última modificación: 2026-11-16T18:05:00+01:00
+Última modificación: 2026-11-16T20:42:00+01:00
 ---
 
 # Llevar hub.rs y brief.rs bajo el umbral de tamaño
@@ -35,7 +35,14 @@ interfaz (`app.rs`).
 
 ## Verificación
 
-<Se rellena al completar.>
+- **hub.rs (hecho en la fase 3, rama `feat/fase-3-equipo-v4`)**: Luna
+  (`mecanico`, gpt-6-luna) movió el código tal cual a `hub.rs` (469 líneas,
+  estado y enrutado), `hub/launch.rs` (607, lanzamientos) y
+  `hub/terminals.rs` (274, terminales); solo cambian visibilidad e imports
+  (comprobado comparando las líneas ordenadas antes y después). Los tests
+  del daemon siguen en verde. Era necesario antes de que la fase 3 añadiera
+  al daemon la lectura de eventos y la cuota.
+- **brief.rs**: pendiente.
 
 ## Resultado
 
