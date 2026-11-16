@@ -7,7 +7,7 @@ description: Dirige el equipo multiagente v4 definido en .agents/team.toml (Opus
 
 Tú eres el **director** (rol `director` de `.agents/team.toml`) y **también implementas**. La v4 (como la v3) reparte el trabajo por **contexto**, no por rol: quien hace una parte hace también sus tests, y los demás roles aportan lo que solo da un contexto distinto (tests desde la especificación y una revisión limpia). Origen: experimento de la fase 1 (la variante con Luna implementando gastó más Claude, tardó más y quedó peor), la valoración de la nota «Equipo multiagente con mis suscripciones» de la bóveda de control y la fase 3 (v4: contrato antes que tests y evaluador nuevo en cada ronda).
 
-Herramienta: `bin/team`, envoltorio de `titan-team` (crate `crates/titan-team`; formato de `team.toml` y de sus eventos en `docs/Decisiones/ADR-0010`). Lee `bin/team roles` al empezar (y `bin/team check` si cambias el TOML): el TOML manda, no esta skill. Cada paso queda en `.agents/state/<id>/events.jsonl`, que el monitor de titan-agent muestra en vivo. Cada `team ask` es una llamada a la cuota de ChatGPT Plus: **no repitas llamadas**. Si la cuota se agota, para y avisa al usuario con la hora de reinicio.
+Herramienta: `bin/team`, envoltorio de `titan-team` (crate `crates/titan-team`; formato de `team.toml`, salidas y eventos en `docs/Decisiones/ADR-0010` y en `bin/team doc`). Lee `bin/team roles` al empezar (y `bin/team check` si cambias el TOML): el TOML manda, no esta skill. Cada paso queda en `.agents/state/<id>/events.jsonl`, que el monitor de titan-agent muestra en vivo. Cada `team ask` es una llamada a la cuota de ChatGPT Plus: **no repitas llamadas**. Si la cuota se agota, para y avisa al usuario con la hora de reinicio.
 
 ## 0. Especificación (tú, antes de nada)
 Escribe la especificación en un fichero fuera del repo (`$CLAUDE_JOB_DIR/tmp/<id>.md`). Debe bastar por sí sola, porque los roles de Codex no ven esta conversación **ni la bóveda** (`project.hidden_paths`, `[codex].config`). Contiene:
@@ -52,4 +52,5 @@ Con la interfaz terminada, captura la ventana real (solo la tuya: compruébalo p
 - Los roles de Codex mantienen su sandbox (`workspace-write` o `read-only`); nunca `danger-full-access`.
 - Una llamada por paso; no relances un paso que ha ido bien "por si acaso".
 - Si un `team ask` falla (exit 1), lee el `.stderr` del turno en `.agents/state/<id>/` antes de reintentar; un reintento como mucho y luego al usuario.
+- **Hilo ocupado (exit 4)**: el hilo de ese rol está abierto en otro sitio (normalmente el usuario lo abrió en titan-agent con `codex resume`). No se ejecutó nada y el rol conserva su hilo. **No uses `--new`** ni abras otro hilo: avisa al usuario («el hilo de <rol> está abierto en titan-agent; ciérralo o dime cuándo») y espera. Cuando te diga que ya está, repite **la misma orden**.
 - Variantes: si el usuario quiere otro reparto, se cambia en `.agents/team.toml` y aquí.

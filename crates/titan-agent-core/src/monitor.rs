@@ -120,21 +120,30 @@ fn role_label(role: &str) -> String {
 
 /// Builds the board of a task.
 pub fn board(task: &TeamTask, run: &TeamRun, sessions: &[Session], now_ms: i64) -> Board {
-    // Several Claude Code sessions can share the team folder: the busiest
-    // live one is taken as the director (it is the one running the tool).
+    // The events name the director's Claude Code session when titan-team
+    // ran inside one: that exact session is the director. Without it (or if
+    // the daemon does not list it), several sessions can share the team
+    // folder and the busiest live one is taken (it is the one running the tool).
+    let exact = run
+        .director_session
+        .as_ref()
+        .map(|id| format!("cl:{id}"))
+        .and_then(|key| sessions.iter().find(|s| s.key == key));
     let director_session = run.director.as_ref().and_then(|_| {
-        sessions
-            .iter()
-            .filter(|s| s.agent == AgentCli::ClaudeCode && same_folder(&s.cwd, &task.folder))
-            .min_by_key(|s| {
-                let rank = match s.state {
-                    SessionState::NeedsYou => 0,
-                    SessionState::Working => 1,
-                    SessionState::Waiting => 2,
-                    SessionState::Finished { .. } => 3,
-                };
-                (rank, -s.state_since_ms.unwrap_or(0))
-            })
+        exact.or_else(|| {
+            sessions
+                .iter()
+                .filter(|s| s.agent == AgentCli::ClaudeCode && same_folder(&s.cwd, &task.folder))
+                .min_by_key(|s| {
+                    let rank = match s.state {
+                        SessionState::NeedsYou => 0,
+                        SessionState::Working => 1,
+                        SessionState::Waiting => 2,
+                        SessionState::Finished { .. } => 3,
+                    };
+                    (rank, -s.state_since_ms.unwrap_or(0))
+                })
+        })
     });
     let director_state = director_session.map_or(SessionState::Waiting, |s| s.state);
     let mut agents = vec![Agent {
@@ -602,5 +611,28 @@ mod tests {
         assert_eq!(run.last_ts_ms, 9_000);
         let member = run.find("disenador_tests").unwrap();
         assert_eq!((member.turns, member.tokens), (7, 900));
+    }
+
+    #[test]
+    fn the_session_named_by_the_events_is_the_director() {
+        let (t, mut run) = sample();
+        // Idle and in another folder, but it is the one titan-team named.
+        let mut named = director(SessionState::Waiting, 100);
+        named.key = "cl:named".into();
+        named.cwd = "/elsewhere".into();
+        run.director_session = Some("named".into());
+        let busiest = director(SessionState::Working, 1_500);
+        let b = board(&t, &run, &[busiest.clone(), named], 3_000);
+        assert_eq!(
+            b.agent("director").unwrap().session.as_deref(),
+            Some("cl:named")
+        );
+        // A named session the daemon does not list falls back to the folder.
+        run.director_session = Some("gone".into());
+        let b = board(&t, &run, &[busiest], 3_000);
+        assert_eq!(
+            b.agent("director").unwrap().session.as_deref(),
+            Some("cl:d")
+        );
     }
 }

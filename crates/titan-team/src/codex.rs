@@ -9,7 +9,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
-use titan_agent_core::team::{TEXT_LIMIT, Usage, clip};
+use titan_agent_core::team::{STATUS_BUSY, TEXT_LIMIT, Usage, clip};
 
 use crate::config::{Role, TeamConfig};
 use crate::process::{kill_tree, own_group};
@@ -199,10 +199,23 @@ pub fn run(
     out.stderr = String::from_utf8_lossy(&errors_reader.join().unwrap_or_default()).into_owned();
     if timed_out {
         out.status = "timeout";
+    } else if is_busy(&out) {
+        out.status = STATUS_BUSY;
     } else if code != Some(0) || !out.errors.is_empty() {
         out.status = "error";
     }
     Ok(out)
+}
+
+/// Whether Codex refused the turn because its thread already has another
+/// writer (it is open elsewhere, e.g. `codex resume` from titan-agent).
+/// Then nothing ran and the thread must be kept as it is.
+pub fn is_busy(out: &TurnOutput) -> bool {
+    const BUSY: &str = "already has an active writer";
+    out.errors
+        .iter()
+        .chain(std::iter::once(&out.stderr))
+        .any(|text| text.to_lowercase().contains(BUSY))
 }
 
 /// Reads one JSONL line into `out`; returns the activity text it carries.
@@ -404,6 +417,35 @@ mod tests {
             started.elapsed() < Duration::from_secs(3),
             "endless output must not beat the limit"
         );
+        let args = vec![
+            "-c".to_string(),
+            "cat >/dev/null; echo '{\"type\":\"error\",\"message\":\"thread t-1 already has an active writer\"}'; exit 1".to_string(),
+        ];
+        let out = run(
+            "sh",
+            &args,
+            "hi",
+            Path::new("."),
+            Duration::from_secs(5),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(out.status, STATUS_BUSY);
+        let args = vec![
+            "-c".to_string(),
+            "cat >/dev/null; echo 'Error: Thread Already Has An Active Writer' >&2; exit 1"
+                .to_string(),
+        ];
+        let out = run(
+            "sh",
+            &args,
+            "hi",
+            Path::new("."),
+            Duration::from_secs(5),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(out.status, STATUS_BUSY, "stderr counts too");
         let args = vec!["-c".to_string(), "cat >/dev/null; exit 4".to_string()];
         let out = run(
             "sh",

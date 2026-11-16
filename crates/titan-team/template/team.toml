@@ -1,0 +1,49 @@
+# Equipo de este proyecto para titan-team. Formato completo: titan-team doc.
+# Compruébalo con `titan-team check` tras cada cambio. Para cambiar quién hace
+# qué, edita este fichero: no hay nada fijo en la herramienta.
+version = 1
+name = "mi-proyecto"
+
+[project]
+repo = "."
+base = "main"
+worktrees_dir = ".agents/worktrees"  # no se versiona: añádelo a .gitignore
+branch_prefix = "encargo/"
+# test_cmd = "cargo test"            # la orden de tests del proyecto
+test_timeout_s = 600
+autocommit = true                    # commit tras cada turno de un rol que escribe
+# Lo que los roles no deben leer (sparse checkout; sigue en la rama).
+hidden_paths = ["/AGENTS.md", "/CLAUDE.md", "/GEMINI.md"]
+
+[codex]
+config = ["project_doc_max_bytes=0"] # los roles no cargan AGENTS.md
+
+[flow]
+steps = ["tests", "revisor"]
+review_role = "revisor"
+fix_role = "director"
+max_review_rounds = 1
+
+[roles.director]
+cli = "claude"                       # la sesión de Claude Code que usa titan-team
+model = "opus"
+launch = false
+purpose = "Fija el contrato, implementa y decide qué hallazgos acepta."
+
+[roles.tests]
+cli = "codex"
+model = "gpt-6.1-sol"
+effort = "medium"
+sandbox = "workspace-write"
+prompt_file = ".agents/prompts/tests.md"
+allowed_paths = ["tests/"]           # aviso si escribe fuera de aquí
+purpose = "Antes de implementar, escribe pocos tests de aceptación desde la especificación."
+
+[roles.revisor]
+cli = "codex"
+model = "gpt-6.1-sol"
+effort = "high"
+sandbox = "read-only"
+prompt_file = ".agents/prompts/revisor.md"
+output_schema = ".agents/schemas/review.json"
+purpose = "Una revisión al final con contexto limpio: la especificación y el diff."

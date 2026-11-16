@@ -5,13 +5,16 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use titan_agent_core::team::{EventKind, Findings, TEXT_LIMIT, clip, first_line};
+use titan_agent_core::team::{EventKind, Findings, STATUS_BUSY, TEXT_LIMIT, clip, first_line};
 
 use crate::commands::{run_tests, worktree};
 use crate::config::{Role, TeamConfig, resolve};
 use crate::process::{git, git_ok, last_lines, path_warnings};
 use crate::state::{self, EventLog, HistoryEntry, RoleState, now_iso, relative, task_dir};
 use crate::{Args, Failure, codex};
+
+/// Exit code of a turn refused because the role's thread is open elsewhere.
+pub const BUSY_EXIT: i32 = 4;
 
 /// Largest diff added to a prompt by `--diff`, in chars.
 const DIFF_LIMIT: usize = 60_000;
@@ -67,6 +70,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         )));
     }
     let known = state.roles.get(role_name);
+    let previous_thread = known.and_then(|r| r.thread_id.clone());
     let thread_id = if args.flag("--new") {
         None
     } else {
@@ -219,6 +223,9 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         },
     };
     let duration = started.elapsed();
+    // The thread is open elsewhere (another writer): nothing ran. The role
+    // keeps its thread and its turn count, and no new thread is opened.
+    let busy = out.status == STATUS_BUSY;
     // From here on the turn has run: every step is recorded even if an
     // earlier one fails, and the failures are reported at the end.
     let mut failures: Vec<String> = Vec::new();
@@ -249,7 +256,12 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         ));
     }
 
-    let (commit, changed) = match commit_turn(team, role, &wt, role_name, turn, &mut warnings) {
+    let committed = if busy {
+        Ok((None, Vec::new()))
+    } else {
+        commit_turn(team, role, &wt, role_name, turn, &mut warnings)
+    };
+    let (commit, changed) = match committed {
         Ok(done) => done,
         Err(error) => {
             warnings.push(format!(
@@ -268,7 +280,11 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         &role.forbidden_paths,
         &changed,
     ));
-    let thread = out.thread_id.clone().or(thread_id.clone());
+    let thread = if busy {
+        thread_id.clone().or(previous_thread)
+    } else {
+        out.thread_id.clone().or(thread_id.clone())
+    };
     let findings = report.as_ref().map(count_findings);
     let verdict = report
         .as_ref()
@@ -276,6 +292,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         .and_then(Value::as_str)
         .map(str::to_string);
     let summary = match (&verdict, findings) {
+        _ if busy => format!("hilo de {role_name} abierto en titan-agent"),
         (Some(verdict), Some(findings)) => match findings.total() {
             1 => format!("{verdict} · 1 hallazgo"),
             n => format!("{verdict} · {n} hallazgos"),
@@ -332,11 +349,11 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         RoleState {
             cli: role.cli.clone(),
             model: role.model.clone(),
-            thread_id: thread,
-            turns: turn,
+            thread_id: thread.clone(),
+            turns: if busy { turn - 1 } else { turn },
         },
     );
-    if is_reviewer {
+    if is_reviewer && !busy {
         state.review_rounds = round;
     }
     state::save(team, &state)?;
@@ -360,7 +377,19 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         for failure in &failures {
             eprintln!("{failure}");
         }
-        return Ok(2);
+        if !busy {
+            return Ok(2);
+        }
+    }
+    if busy {
+        eprintln!(
+            "El hilo de {role_name} está abierto en titan-agent; ciérralo o espera y repite la orden.{}",
+            thread
+                .as_deref()
+                .map(|t| format!(" Su hilo se conserva ({t})."))
+                .unwrap_or_default()
+        );
+        return Ok(BUSY_EXIT);
     }
     Ok(if out.status == "ok" { 0 } else { 1 })
 }

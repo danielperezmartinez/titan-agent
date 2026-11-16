@@ -179,7 +179,8 @@ impl EventLog {
 
     /// Appends an event, as one line written at once.
     pub fn append(&self, kind: EventKind) -> Result<(), Failure> {
-        let event = TeamEvent::new(now_ms(), &self.task, kind);
+        let mut event = TeamEvent::new(now_ms(), &self.task, kind);
+        event.director_session = director_session();
         let mut line = serde_json::to_string(&event)
             .map_err(|e| Failure::usage(format!("No se pudo escribir un evento: {e}")))?;
         line.push('\n');
@@ -195,6 +196,15 @@ impl EventLog {
                 ))
             })
     }
+}
+
+/// The Claude Code session that runs the tool (the director), if any: it
+/// lets the monitor tie the team to that exact session.
+fn director_session() -> Option<String> {
+    std::env::var("CLAUDE_CODE_SESSION_ID")
+        .ok()
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
 }
 
 /// Exclusive hold on one task while a command changes it. Dropping it

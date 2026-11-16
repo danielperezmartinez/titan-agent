@@ -41,6 +41,8 @@ const HELP: &str = "titan-team: encargos del equipo definido en .agents/team.tom
 Uso: titan-team [--config RUTA] <orden> [opciones]
 
 Órdenes:
+  init [--force]                         crea .agents/team.toml de partida aquí
+  doc                                    formato de team.toml, salidas y eventos
   check [--json]                         valida team.toml
   roles [--json]                         lista los roles y el flujo
   new <encargo> --brief FICHERO [--base REV]
@@ -52,8 +54,9 @@ Uso: titan-team [--config RUTA] <orden> [opciones]
   decide <encargo> -m TEXTO
   close <encargo> [--delete-branch]
 
-Salida: 0 bien · 1 turno o test fallido · 2 uso, configuración o estado · 3 tope de rondas.
-Formato de team.toml y de los eventos: docs/Decisiones/ADR-0010.";
+Salida: 0 bien · 1 turno o test fallido · 2 uso, configuración o estado · 3 tope de rondas
+        · 4 hilo del rol abierto en otro sitio (ciérralo y repite; el hilo se conserva).
+Formato de team.toml y de los eventos: titan-team doc.";
 
 /// Parsed command line: positional words, flags and `-x VALUE` options.
 #[derive(Debug)]
@@ -102,6 +105,8 @@ const FLAGS: [&str; 9] = [
 /// (`--config` and `--help` go with every command).
 fn accepted(command: &str) -> Option<(usize, &'static [&'static str])> {
     Some(match command {
+        "init" => (0, &["--force"]),
+        "doc" => (0, &[]),
         "check" | "roles" => (0, &["--json"]),
         "new" => (1, &["--brief", "--base"]),
         "ask" => (
@@ -198,6 +203,15 @@ fn run(raw: Vec<String>) -> Result<i32, Failure> {
     }
     check_args(&args)?;
     let cwd: PathBuf = std::env::current_dir().map_err(Failure::io)?;
+    // These two work without a team.toml: they are how a project gets one.
+    match args.words[0].as_str() {
+        "doc" => {
+            print!("{}", include_str!("../FORMAT.md"));
+            return Ok(0);
+        }
+        "init" => return commands::init(&cwd, &args),
+        _ => {}
+    }
     let path = config::find(args.option(&["--config"]), &cwd).map_err(Failure::usage)?;
     let command = args.words[0].as_str();
     let team = match config::load(&path) {

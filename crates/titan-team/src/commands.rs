@@ -1,5 +1,5 @@
-//! Every command except `ask`: `check`, `roles`, `new`, `show`, `diff`,
-//! `test`, `decide` and `close`.
+//! Every command except `ask` and `doc`: `init`, `check`, `roles`, `new`,
+//! `show`, `diff`, `test`, `decide` and `close`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -11,6 +11,60 @@ use crate::config::{ConfigError, TeamConfig, resolve};
 use crate::process::{git, run_shell};
 use crate::state::{self, EventLog, TaskState, check_task_name, now_iso, relative, task_dir};
 use crate::{Args, Failure};
+
+/// What `init` writes under `<cwd>/.agents/`: a starting team and the
+/// files it names, so `check` passes right away.
+const STARTER: [(&str, &str); 4] = [
+    ("team.toml", include_str!("../template/team.toml")),
+    (
+        "prompts/tests.md",
+        include_str!("../template/prompts/tests.md"),
+    ),
+    (
+        "prompts/revisor.md",
+        include_str!("../template/prompts/revisor.md"),
+    ),
+    (
+        "schemas/review.json",
+        include_str!("../template/schemas/review.json"),
+    ),
+];
+
+/// `titan-team init [--force]`: a starting team in `<cwd>/.agents/`. An
+/// existing `team.toml` is only replaced with `--force`; the prompts and the
+/// schema are never overwritten (they may already be the project's own).
+pub fn init(cwd: &Path, args: &Args) -> Result<i32, Failure> {
+    if args.option(&["--config"]).is_some() {
+        return Err(Failure::usage(
+            "init crea .agents/ en la carpeta actual; no admite --config",
+        ));
+    }
+    let agents = cwd.join(".agents");
+    let team = agents.join("team.toml");
+    if team.exists() && !args.flag("--force") {
+        return Err(Failure::usage(format!(
+            "Ya existe {}; usa --force para reemplazarlo",
+            team.display()
+        )));
+    }
+    for (name, content) in STARTER {
+        let path = agents.join(name);
+        if path.exists() && name != "team.toml" {
+            println!("Se conserva {}", path.display());
+            continue;
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(Failure::io)?;
+        }
+        std::fs::write(&path, content)
+            .map_err(|e| Failure::usage(format!("No se pudo escribir {}: {e}", path.display())))?;
+        println!("Creado {}", path.display());
+    }
+    println!(
+        "Siguiente paso: ajusta team.toml y los prompts, añade .agents/state/ y .agents/worktrees/ a .gitignore y comprueba con titan-team check (formato: titan-team doc)."
+    );
+    Ok(0)
+}
 
 /// Prints the errors of an invalid `team.toml` and returns exit code 2.
 pub fn report_invalid(command: &str, args: &Args, errors: &[ConfigError]) -> i32 {

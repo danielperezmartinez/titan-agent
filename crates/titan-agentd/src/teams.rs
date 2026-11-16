@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use titan_agent_core::project::project_root;
 use titan_agent_core::protocol::{RoleTotals, TEAM_EVENTS_SENT, TeamTask};
-use titan_agent_core::team::{EventKind, parse_event};
+use titan_agent_core::team::{EventKind, STATUS_BUSY, parse_event};
 
 /// A task whose last event is older than this is no longer shown.
 pub const ACTIVE_WINDOW_MS: i64 = 12 * 60 * 60 * 1000;
@@ -168,9 +168,17 @@ fn follow(path: &Path, state: &mut FileState) {
             match &event.kind {
                 EventKind::TaskClosed { .. } => state.closed = true,
                 EventKind::TaskCreated { .. } => state.created = Some(value.clone()),
-                EventKind::TurnFinished { role, usage, .. } => {
+                EventKind::TurnFinished {
+                    role,
+                    usage,
+                    status,
+                    ..
+                } => {
                     let totals = state.totals.entry(role.clone()).or_default();
-                    totals.turns += 1;
+                    // A busy thread did not run the turn (as in TeamRun).
+                    if status != STATUS_BUSY {
+                        totals.turns += 1;
+                    }
                     totals.tokens += usage.input_tokens + usage.output_tokens;
                 }
                 _ => {}

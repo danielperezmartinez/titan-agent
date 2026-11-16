@@ -17,6 +17,9 @@ pub const TEXT_LIMIT: usize = 200;
 pub const DECISION_LIMIT: usize = 500;
 /// Who a message goes to when there is no director: the user.
 pub const USER: &str = "tú";
+/// `status` of a `turn_finished` whose thread was open elsewhere (another
+/// writer, such as `codex resume` from titan-agent): the turn did not run.
+pub const STATUS_BUSY: &str = "busy";
 
 /// One line of `events.jsonl`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -24,6 +27,11 @@ pub struct TeamEvent {
     pub v: u32,
     pub ts_ms: i64,
     pub task: String,
+    /// `CLAUDE_CODE_SESSION_ID` of the director that ran the command, when
+    /// titan-team runs inside Claude Code: it ties the team to that exact
+    /// session. Optional (added after v1 without changing `v`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_session: Option<String>,
     #[serde(flatten)]
     pub kind: EventKind,
 }
@@ -168,6 +176,7 @@ impl TeamEvent {
             v: EVENTS_VERSION,
             ts_ms,
             task: task.to_string(),
+            director_session: None,
             kind,
         }
     }
@@ -210,6 +219,9 @@ pub fn first_line(text: &str) -> Option<&str> {
 pub struct TeamRun {
     pub task: String,
     pub director: Option<String>,
+    /// Claude Code session id of the director, from the last event that
+    /// carried one (`director_session`).
+    pub director_session: Option<String>,
     /// `flow.review_role` of the team, if any.
     pub review_role: Option<String>,
     pub review_round: u32,
@@ -279,6 +291,7 @@ impl TeamRun {
         let mut run = TeamRun {
             task,
             director: info.director.clone(),
+            director_session: None,
             review_role: info.review_role.clone(),
             review_round: 0,
             max_review_rounds: info.max_review_rounds,
@@ -309,6 +322,9 @@ impl TeamRun {
         for event in events {
             // The time of the last event in file order, as the contract says.
             run.last_ts_ms = event.ts_ms;
+            if event.director_session.is_some() {
+                run.director_session = event.director_session.clone();
+            }
             let at = event.ts_ms;
             match &event.kind {
                 EventKind::TaskCreated { .. } => {}
@@ -362,7 +378,10 @@ impl TeamRun {
                     let member = run.member(role);
                     member.working = false;
                     member.activity = None;
-                    member.turns += 1;
+                    // A busy thread did not run the turn: it is not counted.
+                    if status != STATUS_BUSY {
+                        member.turns += 1;
+                    }
                     member.tokens += usage.input_tokens + usage.output_tokens;
                     member.since_ms = Some(at);
                     member.thread_id = thread_id.clone();
@@ -535,5 +554,36 @@ mod tests {
         assert_eq!(run.find("revisor").unwrap().thread_id, None);
         assert_eq!(run.last_ts_ms, 4000);
         assert_eq!(run.find("revisor").unwrap().tokens, 12);
+    }
+
+    #[test]
+    fn a_busy_turn_keeps_its_thread_and_is_not_counted() {
+        let mut events = vec![parse_event(&created()).unwrap()];
+        for line in [
+            json!({"v":1,"ts_ms":2000,"task":"demo","director_session":"s-1","type":"brief_sent",
+                "from":"director","to":"revisor","turn":2,"resumed":true,"text":"otra vuelta"}),
+            json!({"v":1,"ts_ms":2100,"task":"demo","type":"turn_finished","role":"revisor","turn":2,
+                "status":"busy","thread_id":"t-1","text":"hilo abierto en titan-agent"}),
+            json!({"v":1,"ts_ms":2200,"task":"demo","type":"decision","by":"director","text":"espero"}),
+        ] {
+            events.push(parse_event(&line).unwrap());
+        }
+        let run = TeamRun::from_events(&events).unwrap();
+        let revisor = run.find("revisor").unwrap();
+        assert_eq!(
+            (revisor.turns, revisor.thread_id.as_deref()),
+            (0, Some("t-1"))
+        );
+        assert_eq!(run.feed[1].text, "[busy] hilo abierto en titan-agent");
+        // The last event without a session does not forget the one seen.
+        assert_eq!(run.director_session.as_deref(), Some("s-1"));
+        let back = serde_json::to_value(&events[1]).unwrap();
+        assert_eq!(back["director_session"], "s-1");
+        assert!(
+            serde_json::to_value(&events[3])
+                .unwrap()
+                .get("director_session")
+                .is_none()
+        );
     }
 }

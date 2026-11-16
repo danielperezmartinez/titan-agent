@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-16T21:00:00+01:00
+Última modificación: 2026-11-16T21:35:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -139,7 +139,7 @@ Campos comunes de cada línea: `v` (entero, `1`), `ts_ms` (entero, milisegundos 
 | `brief_sent` | `from` (el director o `null`), `to` (rol), `turn`, `resumed` (bool), `text` | al empezar `ask`, antes del turno |
 | `turn_started` | `role`, `turn`, `cli`, `model`, `effort`, `sandbox`, `thread_id` (o `null` si es nuevo), `review_round` (entero si el rol es `review_role`; si no, `null`) | justo antes de lanzar Codex |
 | `activity` | `role`, `turn`, `text` | por cada `item.started` de Codex de tipo `command_execution` (`text` = `$ <command>`), `file_change` (`text` = `edita <rutas separadas por coma>`), `mcp_tool_call` o `web_search` (`text` = el tipo); como mucho 200 por turno |
-| `turn_finished` | `role`, `turn`, `status` (`ok`/`error`/`timeout`), `duration_ms`, `thread_id`, `usage` `{input_tokens, cached_input_tokens, output_tokens}`, `commit` (o `null`), `changed_files`, `warnings`, `text` | al terminar el turno |
+| `turn_finished` | `role`, `turn`, `status` (`ok`/`error`/`timeout`; `busy` desde el cierre, ver abajo), `duration_ms`, `thread_id`, `usage` `{input_tokens, cached_input_tokens, output_tokens}`, `commit` (o `null`), `changed_files`, `warnings`, `text` | al terminar el turno |
 | `report` | `role`, `review_round`, `verdict`, `findings` `{blocker, major, minor, nit}` (recuentos), `questions` (recuento) | tras `turn_finished` de un rol con `output_schema` cuya respuesta es JSON con `verdict` |
 | `decision` | `by` (el director o `null`), `text` | `decide` |
 | `task_closed` | `delete_branch` (bool) | `close` |
@@ -290,6 +290,48 @@ protocolo:
   pero solo un evento válido de su versión cierra el encargo, suma a
   `totals` o fija su hora; la caducidad de 12 h usa el último evento del
   fichero, no el máximo.
+
+### Ampliaciones compatibles al cerrar la fase (2026-11-16)
+
+Del cierre de la fase 3 (unión con lo mejor de la variante A y el caso del
+hilo ocupado). Tampoco cambian `v` ni la versión del protocolo:
+
+- **`titan-team init [--force]` y `titan-team doc`**, que funcionan sin
+  `team.toml`. `init` crea en la carpeta actual `.agents/team.toml` de
+  partida, `.agents/prompts/tests.md`, `.agents/prompts/revisor.md` y
+  `.agents/schemas/review.json` (con eso, `check` pasa); un `team.toml` que ya
+  existe solo se reemplaza con `--force` (si no, exit 2) y los prompts y el
+  esquema nunca se sobrescriben; no admite `--config`. `doc` imprime
+  `crates/titan-team/FORMAT.md`, embebido en el binario: el formato de este
+  ADR para un proyecto que no tiene esta bóveda.
+- **Campo común opcional `director_session`** en cada evento: el
+  `CLAUDE_CODE_SESSION_ID` del entorno de la orden, si existe. `TeamRun` gana
+  `director_session` (el último visto) y el monitor une el director a la
+  sesión `cl:<id>` exacta; si no viene o el daemon no la lista, sigue la regla
+  de la Parte 5 (la sesión de Claude Code de la carpeta base, la más activa).
+- **Hilo ocupado: `status = "busy"` y exit 4.** Si Codex rechaza el turno
+  porque el hilo ya tiene otro escritor (su error o su stderr contienen
+  «already has an active writer», sin distinguir mayúsculas; pasa cuando el
+  usuario abrió el hilo de ese rol en titan-agent con `codex resume`):
+  - no se ejecutó nada: no hay commit ni avisos de rutas, y `ask` termina
+    con **exit 4** y en stderr «El hilo de `<rol>` está abierto en
+    titan-agent; ciérralo o espera y repite la orden» (más el hilo que se
+    conserva);
+  - el rol **conserva su `thread_id`** y su número de turnos, y la ronda de
+    revisión no se gasta; titan-team **nunca abre un hilo nuevo por su
+    cuenta** ni reintenta, y no hay cola;
+  - se escriben los eventos del turno igual, con `turn_finished.status =
+    "busy"`, el `thread_id` que el rol ya tenía y `text = "hilo de <rol>
+    abierto en titan-agent"`; el historial guarda la entrada con ese estado;
+  - `TeamRun` y los `totals` del daemon no cuentan un turno `busy`.
+  
+  El director (skill `equipo`) avisa al usuario y repite la misma orden
+  cuando este se lo dice. La otra mitad (abrir el hilo en solo lectura desde
+  la app) es de
+  [[Tareas/Abrir los hilos del equipo en solo lectura desde la app]].
+- Códigos de salida, en total: **0** bien · **1** turno o test fallido ·
+  **2** uso, configuración o estado · **3** tope de rondas · **4** hilo
+  ocupado.
 
 ## Alternativas consideradas
 

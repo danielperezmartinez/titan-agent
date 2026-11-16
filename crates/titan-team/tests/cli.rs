@@ -1,6 +1,7 @@
 //! Own end-to-end tests of titan-team (the acceptance tests are in
-//! `phase3_acceptance.rs`): what must not run, the task lock and a turn
-//! that is recorded even when its commit fails. Fake Codex, temporary repo.
+//! `phase3_acceptance.rs`): what must not run, the task lock, a turn that is
+//! recorded even when its commit fails, a thread open elsewhere, the
+//! director's session and `init`/`doc`. Fake Codex, temporary repo.
 #![cfg(unix)]
 
 use std::fs;
@@ -99,11 +100,25 @@ impl Repo {
     }
 
     fn run(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_titan-team"))
+        self.run_as(None, args)
+    }
+
+    /// Runs titan-team as the Claude Code session `session` (or outside one).
+    fn run_as(&self, session: Option<&str>, args: &[&str]) -> Output {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_titan-team"));
+        command
             .current_dir(&self.0)
             .env("TITAN_TEAM_CODEX", self.0.join("codex"))
-            .args(args)
-            .output()
+            .env_remove("CLAUDE_CODE_SESSION_ID")
+            .args(args);
+        if let Some(session) = session {
+            command.env("CLAUDE_CODE_SESSION_ID", session);
+        }
+        command.output().unwrap()
+    }
+
+    fn state(&self) -> Value {
+        serde_json::from_str(&fs::read_to_string(self.0.join(".agents/state/kite.json")).unwrap())
             .unwrap()
     }
 
@@ -182,4 +197,84 @@ fn a_turn_whose_commit_fails_is_still_recorded() {
             .unwrap();
     assert_eq!(state["roles"]["writer"]["thread_id"], "t-1");
     assert_eq!(state["history"].as_array().unwrap().len(), 1);
+}
+
+/// A Codex that refuses to resume: the thread is open in another writer.
+const BUSY: &str = r#"#!/bin/sh
+cat > /dev/null
+echo '{"type":"error","message":"thread t-1 already has an active writer"}'
+exit 1
+"#;
+
+#[test]
+fn a_thread_open_elsewhere_is_kept_and_exits_4() {
+    let repo = Repo::new();
+    let first = repo.run_as(Some("s-director"), &["ask", "writer", "kite"]);
+    assert_eq!(first.status.code(), Some(0), "{first:?}");
+    fs::write(repo.0.join("codex"), BUSY).unwrap();
+    let busy = repo.run(&["ask", "writer", "kite", "-m", "otra vuelta"]);
+    assert_eq!(busy.status.code(), Some(4), "{busy:?}");
+    let stderr = String::from_utf8_lossy(&busy.stderr);
+    assert!(
+        stderr.contains("El hilo de writer está abierto en titan-agent"),
+        "{stderr}"
+    );
+    let state = repo.state();
+    assert_eq!(state["roles"]["writer"]["thread_id"], "t-1");
+    assert_eq!(state["roles"]["writer"]["turns"], 1);
+    let events = repo.events();
+    let last = events.last().unwrap();
+    assert_eq!(
+        (&last["type"], &last["status"], &last["thread_id"]),
+        (&"turn_finished".into(), &"busy".into(), &"t-1".into())
+    );
+    assert_eq!(last["text"], "hilo de writer abierto en titan-agent");
+    // The director's session is on the events it ran, and only on those.
+    let brief = events.iter().find(|e| e["type"] == "brief_sent").unwrap();
+    assert_eq!(brief["director_session"], "s-director");
+    assert!(last.get("director_session").is_none());
+    // A busy reviewer does not spend its only round.
+    fs::write(
+        repo.0.join(".agents/team.toml"),
+        TEAM.replace("max_review_rounds = 0", "max_review_rounds = 1"),
+    )
+    .unwrap();
+    let mut state = repo.state();
+    state["roles"]["checker"] =
+        serde_json::json!({"cli":"codex","model":"check-model","thread_id":"t-1","turns":1});
+    fs::write(repo.0.join(".agents/state/kite.json"), state.to_string()).unwrap();
+    let review = repo.run(&["ask", "checker", "kite", "-m", "revisa"]);
+    assert_eq!(review.status.code(), Some(4), "{review:?}");
+    assert_eq!(repo.state()["review_rounds"], 0);
+}
+
+#[test]
+fn init_gives_a_valid_team_and_doc_needs_none() {
+    let root = std::env::temp_dir().join(format!(
+        "titan-team-init-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).unwrap();
+    let repo = Repo(root);
+    let doc = repo.run(&["doc"]);
+    assert_eq!(doc.status.code(), Some(0));
+    let doc = String::from_utf8_lossy(&doc.stdout);
+    assert!(doc.contains("busy") && doc.contains("director_session") && doc.contains("| 4 |"));
+    assert_eq!(repo.run(&["init"]).status.code(), Some(0));
+    let check = repo.run(&["check"]);
+    assert_eq!(check.status.code(), Some(0), "{check:?}");
+    fs::write(repo.0.join(".agents/prompts/tests.md"), "mine").unwrap();
+    assert_eq!(
+        repo.run(&["init"]).status.code(),
+        Some(2),
+        "team.toml exists"
+    );
+    assert_eq!(repo.run(&["init", "--force"]).status.code(), Some(0));
+    assert_eq!(
+        fs::read_to_string(repo.0.join(".agents/prompts/tests.md")).unwrap(),
+        "mine",
+        "init never overwrites a prompt"
+    );
 }
