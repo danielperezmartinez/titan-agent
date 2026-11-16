@@ -3,6 +3,7 @@
 
 pub mod discovery;
 pub mod launch;
+pub mod monitor;
 pub mod project;
 pub mod protocol;
 pub mod quota;

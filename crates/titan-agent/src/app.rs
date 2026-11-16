@@ -5,8 +5,9 @@
 //! This module holds the start-up, the state shared by every view and the
 //! routing (daemon messages, selection, keys, which view goes in the centre).
 //! Each view lives in its own submodule: `header`, `nav` (tree and filter),
-//! `session_view` (terminal), `detail` (session and project detail),
-//! `new_session`, `settings`; `menu` and `widgets` are pieces they share.
+//! `session_view` (terminal), `detail` (session detail), `monitor` (project
+//! monitor and its three views), `new_session`, `settings`; `menu` and
+//! `widgets` are pieces they share.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -19,8 +20,9 @@ use gpui::{
 };
 use titan_agent_core::launch::LaunchDefaults;
 use titan_agent_core::protocol::{
-    AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, decode_bytes,
+    AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, TeamTask, decode_bytes,
 };
+use titan_agent_core::quota::Quota;
 use titan_agent_core::session::{AgentCli, Session};
 
 use crate::brief::{BriefEvent, BriefInput};
@@ -31,6 +33,7 @@ use crate::theme::{self, color};
 mod detail;
 mod header;
 mod menu;
+mod monitor;
 mod nav;
 mod new_session;
 mod session_view;
@@ -38,6 +41,7 @@ mod settings;
 mod widgets;
 
 use menu::Menu;
+use monitor::MonitorTab;
 use new_session::NewSession;
 use widgets::placeholder;
 
@@ -89,6 +93,12 @@ pub struct MainView {
     /// Real session of each launch, from the last snapshot (it can arrive
     /// before the launch's own answer).
     resolved: HashMap<String, String>,
+    /// Open team tasks and CLI quotas, from the last snapshot.
+    teams: Vec<TeamTask>,
+    quotas: Vec<Quota>,
+    monitor_tab: MonitorTab,
+    /// Time window of the monitor's lanes, in seconds.
+    lane_window_s: i64,
     _brief_events: Subscription,
 }
 
@@ -124,6 +134,27 @@ impl MainView {
                     .update(cx, |view, cx| {
                         view.now_ms = now_ms();
                         cx.notify();
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+        // The monitor moves (dots, lanes, spinner): redraw it often, and
+        // only while it is on screen.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                if this
+                    .update(cx, |view, cx| {
+                        if view.monitor_animating() {
+                            view.now_ms = now_ms();
+                            cx.notify();
+                        }
                     })
                     .is_err()
                 {
@@ -200,6 +231,10 @@ impl MainView {
             folders: Vec::new(),
             focus_brief: true,
             resolved: HashMap::new(),
+            teams: Vec::new(),
+            quotas: Vec::new(),
+            monitor_tab: MonitorTab::from_env(),
+            lane_window_s: monitor::LANE_WINDOWS[0],
             _brief_events: brief_events,
         }
     }
@@ -291,10 +326,14 @@ impl MainView {
                 sessions,
                 sources,
                 launches,
+                teams,
+                quotas,
                 ..
             }) => {
                 self.sessions = sessions;
                 self.sources = sources;
+                self.teams = teams;
+                self.quotas = quotas;
                 self.follow_launches(&launches, cx);
                 if let Some(fragment) = self.preselect.clone()
                     && let Some(key) = self
@@ -404,7 +443,7 @@ impl MainView {
                 )
                 .into_any_element(),
             },
-            Selection::Project(root) => self.project_view(&root).into_any_element(),
+            Selection::Project(root) => self.monitor_view(&root, cx).into_any_element(),
             Selection::New => self.new_session_view(window, cx).into_any_element(),
             Selection::Settings => self.settings_view(cx).into_any_element(),
             Selection::None => placeholder(

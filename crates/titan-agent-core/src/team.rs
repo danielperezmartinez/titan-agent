@@ -210,6 +210,8 @@ pub fn first_line(text: &str) -> Option<&str> {
 pub struct TeamRun {
     pub task: String,
     pub director: Option<String>,
+    /// `flow.review_role` of the team, if any.
+    pub review_role: Option<String>,
     pub review_round: u32,
     pub max_review_rounds: u32,
     pub closed: bool,
@@ -249,9 +251,12 @@ pub struct TeamMessage {
     pub text: String,
 }
 
+/// One line of «ahora»: `from -> to: text`, `from text` or just `text`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeedItem {
     pub at_ms: i64,
+    pub from: Option<String>,
+    pub to: Option<String>,
     pub text: String,
 }
 
@@ -274,6 +279,7 @@ impl TeamRun {
         let mut run = TeamRun {
             task,
             director: info.director.clone(),
+            review_role: info.review_role.clone(),
             review_round: 0,
             max_review_rounds: info.max_review_rounds,
             closed: false,
@@ -309,7 +315,9 @@ impl TeamRun {
                     let from = from.clone().unwrap_or_else(|| USER.to_string());
                     run.feed.push(FeedItem {
                         at_ms: at,
-                        text: format!("{from} -> {to}: {text}"),
+                        from: Some(from.clone()),
+                        to: Some(to.clone()),
+                        text: text.clone(),
                     });
                     run.messages.push(TeamMessage {
                         at_ms: at,
@@ -375,7 +383,9 @@ impl TeamRun {
                     };
                     run.feed.push(FeedItem {
                         at_ms: at,
-                        text: format!("{role} -> {to}: {shown}"),
+                        from: Some(role.clone()),
+                        to: Some(to.clone()),
+                        text: shown,
                     });
                     run.messages.push(TeamMessage {
                         at_ms: at,
@@ -393,13 +403,17 @@ impl TeamRun {
                     let by = by.clone().unwrap_or_else(|| USER.to_string());
                     run.feed.push(FeedItem {
                         at_ms: at,
-                        text: format!("{by} decide: {text}"),
+                        from: Some(by),
+                        to: None,
+                        text: format!("decide: {text}"),
                     });
                 }
                 EventKind::TaskClosed { .. } => {
                     run.closed = true;
                     run.feed.push(FeedItem {
                         at_ms: at,
+                        from: None,
+                        to: None,
                         text: "encargo cerrado".into(),
                     });
                 }
@@ -502,10 +516,11 @@ mod tests {
         }
         let run = TeamRun::from_events(&events).unwrap();
         assert_eq!(run.spans, vec![("revisor".into(), 2000, Some(5000))]);
-        assert_eq!(
-            run.feed.last().unwrap().text,
-            "revisor -> director: [timeout] sin respuesta"
-        );
+        let last = run.feed.last().unwrap();
+        assert_eq!(last.from.as_deref(), Some("revisor"));
+        assert_eq!(last.to.as_deref(), Some("director"));
+        assert_eq!(last.text, "[timeout] sin respuesta");
+        assert_eq!(run.review_role.as_deref(), Some("revisor"));
         assert_eq!(run.workers().count(), 1);
         assert_eq!(run.find("revisor").unwrap().tokens, 12);
     }

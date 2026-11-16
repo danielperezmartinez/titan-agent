@@ -1,13 +1,13 @@
-//! Detail panel of a session and the view of a selected project.
+//! Detail panel of a session.
 
-use gpui::{ClickEvent, Context, FontWeight, div, prelude::*, px};
+use gpui::{ClickEvent, Context, div, prelude::*, px};
 use titan_agent_core::protocol::Request;
 use titan_agent_core::session::{Session, SessionKind};
 use titan_agent_core::time::ago;
 
 use crate::theme::{self, color, hairline};
 
-use super::widgets::{button, marked, placeholder};
+use super::widgets::button;
 use super::{MainView, Pending, Selection};
 
 impl MainView {
@@ -228,91 +228,5 @@ impl MainView {
                         )),
                     ),
             )
-    }
-
-    pub(super) fn project_view(&self, root: &str) -> impl IntoElement + use<> {
-        let sessions: Vec<&Session> = self
-            .sessions
-            .iter()
-            .filter(|s| s.project_root == root)
-            .collect();
-        let name = sessions
-            .first()
-            .map(|s| s.project.clone())
-            .unwrap_or_else(|| titan_agent_core::project::project_name(root));
-        let team = sessions
-            .iter()
-            .any(|s| s.parent.is_some() && s.state.is_live());
-        let subtitle = if team {
-            let members = sessions.iter().filter(|s| s.state.is_live()).count();
-            format!("{members} agentes en vivo")
-        } else {
-            format!(
-                "{} sesión(es), ninguna en equipo ahora",
-                sessions.iter().filter(|s| s.parent.is_none()).count()
-            )
-        };
-        let bar = div()
-            .flex()
-            .items_center()
-            .gap(px(12.))
-            .px(px(16.))
-            .h(px(40.))
-            .flex_none()
-            .border_b_1()
-            .border_color(hairline())
-            .text_size(px(12.))
-            .text_color(color(theme::MUTE))
-            .child(
-                div()
-                    .text_color(color(theme::INK))
-                    .font_weight(FontWeight::BOLD)
-                    .text_size(px(13.))
-                    .child(format!("[#] {name}")),
-            )
-            .child(subtitle)
-            .when(team, |d| {
-                d.child(marked("[*]", theme::SUCCESS, "en vivo").text_color(color(theme::SUCCESS)))
-            });
-        let title = if team {
-            format!("Equipo trabajando en {name}")
-        } else {
-            format!("Sin equipo trabajando en {name}")
-        };
-        let mut lines = vec![if team {
-            "Las vistas grafo, carriles y mesa de control llegan en la fase 3.".to_string()
-        } else {
-            "El monitor se anima cuando las sesiones del proyecto se encargan trabajo entre ellas."
-                .to_string()
-        }];
-        // Top-level sessions by name; threads launched by another one are
-        // only counted, so a long team run does not flood the panel.
-        let top: Vec<String> = sessions
-            .iter()
-            .filter(|s| s.parent.is_none())
-            .map(|s| s.name.clone())
-            .collect();
-        let nested = sessions.len() - top.len();
-        let shown = top.iter().take(6).cloned().collect::<Vec<_>>().join(", ");
-        let more = top.len().saturating_sub(6);
-        let mut list = format!(
-            "{}: {shown}",
-            if team { "Sesiones" } else { "Sesiones sueltas" }
-        );
-        if more > 0 {
-            list.push_str(&format!(" y {more} más"));
-        }
-        lines.push(list);
-        if nested > 0 {
-            lines.push(format!(
-                "{nested} hilo(s) lanzados por otras sesiones en los últimos 20 min."
-            ));
-        }
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .child(bar)
-            .child(placeholder(&title, lines))
     }
 }
