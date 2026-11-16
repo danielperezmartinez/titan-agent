@@ -9,7 +9,7 @@ use titan_agent_core::team::{EventKind, Findings, TEXT_LIMIT, clip, first_line};
 
 use crate::commands::{run_tests, worktree};
 use crate::config::{Role, TeamConfig, resolve};
-use crate::process::{git, git_ok, path_warnings};
+use crate::process::{git, git_ok, last_lines, path_warnings};
 use crate::state::{self, EventLog, HistoryEntry, RoleState, now_iso, relative, task_dir};
 use crate::{Args, Failure, codex};
 
@@ -55,6 +55,9 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         ));
     };
     let role = launchable(team, role_name)?;
+    // One command at a time per task: two turns must not share a history
+    // number, a review round or a thread.
+    let _lock = state::lock_task(team, task)?;
     let mut state = state::load(team, task)?;
     let wt = worktree(team, &state);
     if !wt.is_dir() {
@@ -85,6 +88,18 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         return Err(Failure::usage(
             "Para continuar un hilo es obligatorio indicar -m o -f",
         ));
+    }
+
+    let is_reviewer = team.flow.review_role.as_deref() == Some(role_name.as_str());
+    let round = state.review_rounds + u32::from(is_reviewer);
+    if is_reviewer && round > team.flow.max_review_rounds && !args.flag("--force") {
+        return Err(Failure {
+            code: 3,
+            message: format!(
+                "Se superó el máximo de rondas de revisión ({}); usa --force",
+                team.flow.max_review_rounds
+            ),
+        });
     }
 
     let mut prompt = match &thread_id {
@@ -120,23 +135,17 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         prompt.push_str(&format!("\n\n# Diff respecto a la base\n\n{diff}"));
     }
     if args.flag("--test") {
-        let (code, output) = run_tests(team, &state)?;
-        prompt.push_str(&format!(
-            "\n\n# Resultado de los tests (exit {code})\n\n{output}"
-        ));
+        if args.flag("--dry-run") {
+            prompt.push_str("\n\n# Resultado de los tests\n\n(no se ejecutan en --dry-run)");
+        } else {
+            let (code, output) = run_tests(team, &state)?;
+            prompt.push_str(&format!(
+                "\n\n# Resultado de los tests (exit {code})\n\n{}",
+                last_lines(&output, 150)
+            ));
+        }
     }
 
-    let is_reviewer = team.flow.review_role.as_deref() == Some(role_name.as_str());
-    let round = state.review_rounds + u32::from(is_reviewer);
-    if is_reviewer && round > team.flow.max_review_rounds && !args.flag("--force") {
-        return Err(Failure {
-            code: 3,
-            message: format!(
-                "Se superó el máximo de rondas de revisión ({}); usa --force",
-                team.flow.max_review_rounds
-            ),
-        });
-    }
     let n = state.history.len() as u32 + 1;
     let dir = task_dir(team, task);
     let file = |suffix: &str| dir.join(format!("{n:02}-{}.{suffix}", safe(role_name)));
@@ -171,7 +180,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
                 .unwrap_or("encargo inicial"),
             TEXT_LIMIT,
         ),
-    });
+    })?;
     log.append(EventKind::TurnStarted {
         role: role_name.clone(),
         turn,
@@ -181,7 +190,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         sandbox: Some(role.sandbox.clone()),
         thread_id: thread_id.clone(),
         review_round: is_reviewer.then_some(round),
-    });
+    })?;
     let started = Instant::now();
     let outcome = codex::run(
         &program,
@@ -190,11 +199,14 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         &wt,
         Duration::from_secs(role.timeout_s),
         |text| {
-            log.append(EventKind::Activity {
+            // Activity is best effort: losing a line must not stop the turn.
+            if let Err(error) = log.append(EventKind::Activity {
                 role: role_name.clone(),
                 turn,
                 text,
-            })
+            }) {
+                eprintln!("aviso: {}", error.message);
+            }
         },
     );
     let out = match outcome {
@@ -207,8 +219,17 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         },
     };
     let duration = started.elapsed();
-    let _ = std::fs::write(file("jsonl"), &out.stdout);
-    let _ = std::fs::write(file("stderr"), &out.stderr);
+    // From here on the turn has run: every step is recorded even if an
+    // earlier one fails, and the failures are reported at the end.
+    let mut failures: Vec<String> = Vec::new();
+    for (suffix, content) in [("jsonl", &out.stdout), ("stderr", &out.stderr)] {
+        if let Err(error) = std::fs::write(file(suffix), content) {
+            failures.push(format!(
+                "No se pudo guardar {}: {error}",
+                file(suffix).display()
+            ));
+        }
+    }
     let text = std::fs::read_to_string(&response).unwrap_or_else(|_| out.last_message.clone());
     let _ = std::fs::remove_file(&response);
     let report: Option<Value> = role
@@ -221,9 +242,27 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
     } else {
         "md"
     });
-    std::fs::write(&output_file, &text).map_err(Failure::io)?;
+    if let Err(error) = std::fs::write(&output_file, &text) {
+        failures.push(format!(
+            "No se pudo guardar {}: {error}",
+            output_file.display()
+        ));
+    }
 
-    let (commit, changed) = commit_turn(team, role, &wt, role_name, turn, &mut warnings)?;
+    let (commit, changed) = match commit_turn(team, role, &wt, role_name, turn, &mut warnings) {
+        Ok(done) => done,
+        Err(error) => {
+            warnings.push(format!(
+                "No se pudo hacer el commit del turno: {}",
+                error.message
+            ));
+            failures.push(format!(
+                "No se pudo hacer el commit del turno: {}",
+                error.message
+            ));
+            (None, Vec::new())
+        }
+    };
     warnings.extend(path_warnings(
         &role.allowed_paths,
         &role.forbidden_paths,
@@ -251,7 +290,8 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         changed_files: changed.clone(),
         warnings: warnings.clone(),
         text: clip(&summary, TEXT_LIMIT),
-    });
+    })
+    .unwrap_or_else(|error| failures.push(error.message));
     if let (Some(verdict), Some(findings)) = (&verdict, findings) {
         let questions = report
             .as_ref()
@@ -264,7 +304,8 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             verdict: verdict.clone(),
             findings,
             questions,
-        });
+        })
+        .unwrap_or_else(|error| failures.push(error.message));
     }
 
     let entry = HistoryEntry {
@@ -311,6 +352,12 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             report.as_ref(),
             is_reviewer.then_some(round),
         );
+    }
+    if !failures.is_empty() {
+        for failure in &failures {
+            eprintln!("{failure}");
+        }
+        return Ok(2);
     }
     Ok(if out.status == "ok" { 0 } else { 1 })
 }
@@ -379,7 +426,20 @@ fn commit_turn(
         return Ok((None, Vec::new()));
     }
     if !team.project.autocommit {
-        return Ok((None, Vec::new()));
+        // No commit, but the changed files still get their warnings.
+        let status = git(wt, &["status", "--porcelain", "--untracked-files=all"])?;
+        let changed = status
+            .lines()
+            .filter_map(|line| line.get(3..))
+            .map(|path| {
+                path.rsplit(" -> ")
+                    .next()
+                    .unwrap_or(path)
+                    .trim_matches('"')
+                    .to_string()
+            })
+            .collect();
+        return Ok((None, changed));
     }
     git(wt, &["add", "-A"])?;
     if git_ok(wt, &["diff", "--cached", "--quiet"]) {

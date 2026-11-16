@@ -1,8 +1,8 @@
 #!/bin/sh
-# Envoltorio de titan-team (crates/titan-team), la herramienta del equipo en
-# Rust que sustituyó al prototipo en Python en la fase 3 (ADR-0005, ADR-0010).
-# Compila la primera vez (solo titan-team y el núcleo, sin la interfaz) y
-# pasa los argumentos tal cual: bin/team roles, bin/team ask <rol> <encargo>…
+# Wrapper of titan-team (crates/titan-team), the team tool in Rust that
+# replaced the Python prototype in phase 3 (ADR-0005, ADR-0010). It builds
+# on first use (only titan-team and the core, not the interface) and passes
+# the arguments through: bin/team roles, bin/team ask <role> <task>...
 set -e
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 exec cargo run --quiet --release --manifest-path "$root/Cargo.toml" -p titan-team -- "$@"

@@ -52,8 +52,9 @@ pub fn git_ok(repo: &Path, args: &[&str]) -> bool {
 }
 
 /// Runs `command` with the system shell in `dir`, killing it after
-/// `limit`. Returns the exit code (124 on timeout) and the last 150 lines
-/// of its combined output.
+/// `limit`. Returns the exit code (124 on timeout) and its whole combined
+/// output. Whatever the command left running in the background is ended
+/// with it, so its open pipes cannot outlive the limit.
 pub fn run_shell(command: &str, dir: &Path, limit: Duration) -> (i32, String) {
     let mut shell = if cfg!(windows) {
         let mut c = Command::new("cmd");
@@ -98,7 +99,10 @@ pub fn run_shell(command: &str, dir: &Path, limit: Duration) -> (i32, String) {
     let deadline = Instant::now() + limit;
     let mut code = loop {
         match child.try_wait() {
-            Ok(Some(status)) => break status.code().unwrap_or(1),
+            Ok(Some(status)) => {
+                kill_tree(&mut child);
+                break status.code().unwrap_or(1);
+            }
             Ok(None) if Instant::now() >= deadline => {
                 kill_tree(&mut child);
                 break 124;
@@ -111,14 +115,18 @@ pub fn run_shell(command: &str, dir: &Path, limit: Duration) -> (i32, String) {
     for reader in readers {
         text.push_str(&String::from_utf8_lossy(&reader.join().unwrap_or_default()));
     }
-    let lines: Vec<&str> = text.lines().collect();
-    let mut tail = lines[lines.len().saturating_sub(150)..].join("\n");
     if code == 124 {
-        tail.push_str(&format!("\nTests agotaron {} s", limit.as_secs()));
+        text.push_str(&format!("\nTests agotaron {} s", limit.as_secs()));
     } else if code < 0 {
         code = 1;
     }
-    (code, tail)
+    (code, text)
+}
+
+/// The last `count` lines of `text`, for a prompt.
+pub fn last_lines(text: &str, count: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(count)..].join("\n")
 }
 
 /// Starts the program in its own process group, so a timeout can end it
@@ -147,36 +155,81 @@ pub fn kill_tree(child: &mut std::process::Child) {
     let _ = child.wait();
 }
 
-/// `fnmatch`-style match: `*` is any run of chars (slashes included), `?`
-/// one char. A pattern ending in `/` covers everything below that folder.
+/// `fnmatch`-style match over chars: `*` is any run of chars (slashes
+/// included), `?` one char, `[abc]`, `[a-z]` and `[!abc]` a class. A
+/// pattern ending in `/` covers everything below that folder.
 pub fn path_matches(file: &str, pattern: &str) -> bool {
     let pattern = if pattern.ends_with('/') {
         format!("{pattern}*")
     } else {
         pattern.to_string()
     };
-    glob(file.as_bytes(), pattern.as_bytes())
+    let text: Vec<char> = file.chars().collect();
+    let pattern: Vec<char> = pattern.chars().collect();
+    glob(&text, &pattern)
 }
 
-fn glob(text: &[u8], pattern: &[u8]) -> bool {
+/// Matches one class starting at `pattern[0] == '['`: `Some((matched,
+/// length))`, or `None` when the `[` is not closed (then it is literal).
+fn class(c: char, pattern: &[char]) -> Option<(bool, usize)> {
+    let mut i = 1;
+    let negated = matches!(pattern.get(i), Some('!') | Some('^'));
+    if negated {
+        i += 1;
+    }
+    let mut matched = false;
+    let mut first = true;
+    while i < pattern.len() {
+        if pattern[i] == ']' && !first {
+            return Some((matched != negated, i + 1));
+        }
+        first = false;
+        if i + 2 < pattern.len() && pattern[i + 1] == '-' && pattern[i + 2] != ']' {
+            matched |= pattern[i] <= c && c <= pattern[i + 2];
+            i += 3;
+        } else {
+            matched |= pattern[i] == c;
+            i += 1;
+        }
+    }
+    None
+}
+
+fn glob(text: &[char], pattern: &[char]) -> bool {
     let (mut t, mut p) = (0, 0);
     let mut star: Option<(usize, usize)> = None;
     while t < text.len() {
-        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
-            t += 1;
-            p += 1;
-        } else if p < pattern.len() && pattern[p] == b'*' {
-            star = Some((p, t));
-            p += 1;
-        } else if let Some((sp, st)) = star {
-            p = sp + 1;
-            t = st + 1;
-            star = Some((sp, st + 1));
-        } else {
-            return false;
+        let step = match pattern.get(p) {
+            Some('*') => {
+                star = Some((p, t));
+                p += 1;
+                continue;
+            }
+            Some('?') => Some(1),
+            Some('[') => match class(text[t], &pattern[p..]) {
+                Some((true, len)) => Some(len),
+                Some((false, _)) => None,
+                None => (text[t] == '[').then_some(1),
+            },
+            Some(c) => (*c == text[t]).then_some(1),
+            None => None,
+        };
+        match step {
+            Some(len) => {
+                t += 1;
+                p += len;
+            }
+            None => match star {
+                Some((sp, st)) => {
+                    p = sp + 1;
+                    t = st + 1;
+                    star = Some((sp, st + 1));
+                }
+                None => return false,
+            },
         }
     }
-    pattern[p..].iter().all(|b| *b == b'*')
+    pattern[p..].iter().all(|c| *c == '*')
 }
 
 /// Warnings for the files a turn changed.
@@ -205,6 +258,12 @@ mod tests {
         assert!(path_matches("docs/a.md", "docs/"));
         assert!(path_matches("a.rs", "?.rs"));
         assert!(!path_matches("ab.rs", "?.rs"));
+        assert!(path_matches("ñ.rs", "?.rs"));
+        assert!(path_matches("v2.rs", "v[0-9].rs"));
+        assert!(!path_matches("vx.rs", "v[0-9].rs"));
+        assert!(path_matches("b.md", "[!a].md"));
+        assert!(!path_matches("a.md", "[!a].md"));
+        assert!(path_matches("[x", "[x"));
     }
 
     #[test]
@@ -226,6 +285,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_shell_command_is_killed_at_its_limit() {
+        let started = Instant::now();
+        let (code, _) = run_shell("sleep 5 & echo bg", Path::new("."), Duration::from_secs(5));
+        assert_eq!(code, 0);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "a background child must not hold it"
+        );
         let (code, out) = run_shell(
             "echo hi; sleep 5; echo late",
             Path::new("."),

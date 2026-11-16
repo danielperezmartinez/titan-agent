@@ -247,7 +247,7 @@ pub fn parse(text: &str, base: &Path) -> Result<TeamConfig, Vec<ConfigError>> {
 
     let codex_table = c.table(&table, "", "codex").unwrap_or(&empty);
     c.unknown_keys(codex_table, "codex", &CODEX_KEYS);
-    let codex_config = c.list(codex_table, "codex", "config");
+    let codex_config = c.pairs(codex_table, "codex", "config");
 
     let flow_table = c.table(&table, "", "flow").unwrap_or(&empty);
     c.unknown_keys(flow_table, "flow", &FLOW_KEYS);
@@ -462,6 +462,28 @@ impl Checker {
         }
     }
 
+    /// A list of `key=value` overrides for Codex.
+    fn pairs(&mut self, table: &Table, prefix: &str, key: &str) -> Vec<String> {
+        let list = self.list(table, prefix, key);
+        let bad: Vec<&str> = list
+            .iter()
+            .filter(|pair| {
+                !pair
+                    .split_once('=')
+                    .is_some_and(|(k, _)| !k.trim().is_empty())
+            })
+            .map(String::as_str)
+            .collect();
+        if !bad.is_empty() {
+            self.error(
+                &join(prefix, key),
+                "bad_type",
+                &format!("cada entrada es clave=valor; no lo son: {}", bad.join(", ")),
+            );
+        }
+        list
+    }
+
     fn choice(
         &mut self,
         table: &Table,
@@ -541,7 +563,7 @@ impl Checker {
             output_schema: self.file(table, &p, "output_schema"),
             allowed_paths: self.list(table, &p, "allowed_paths"),
             forbidden_paths: self.list(table, &p, "forbidden_paths"),
-            config: self.list(table, &p, "config"),
+            config: self.pairs(table, &p, "config"),
             timeout_s: self.positive(table, &p, "timeout_s").unwrap_or(900),
             purpose: self.text(table, &p, "purpose", false).unwrap_or_default(),
             cli,
@@ -598,6 +620,17 @@ mod tests {
         assert_eq!(
             errors("name = \"x\"\n[roles]\n")[0],
             ("version".into(), "missing_key")
+        );
+        let found = errors(
+            "version = 1\nname = \"x\"\n[codex]\nconfig = [\"a=1\", \"nope\"]\n[roles.r]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nconfig = [\"=x\"]\n",
+        );
+        assert!(
+            found.contains(&("codex.config".into(), "bad_type")),
+            "{found:?}"
+        );
+        assert!(
+            found.contains(&("roles.r.config".into(), "bad_type")),
+            "{found:?}"
         );
     }
 

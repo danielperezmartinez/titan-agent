@@ -6,7 +6,7 @@
 use crate::project::project_root;
 use crate::protocol::TeamTask;
 use crate::session::{AgentCli, Session, SessionState, short_model};
-use crate::team::{FeedItem, TeamRun, USER, parse_event};
+use crate::team::{EventKind, FeedItem, TeamRun, USER, parse_event};
 
 /// A message counts as travelling (dot on the edge, «hablando») this long.
 pub const MESSAGE_LIVE_MS: i64 = 6_000;
@@ -83,12 +83,30 @@ pub fn latest_team(teams: &[TeamTask], root: &str) -> Option<(TeamTask, TeamRun)
     teams
         .iter()
         .filter(|task| task.project_root == root)
-        .filter_map(|task| {
-            let events: Vec<_> = task.events.iter().filter_map(parse_event).collect();
-            TeamRun::from_events(&events).map(|run| (task.clone(), run))
-        })
+        .filter_map(|task| run_of(task).map(|run| (task.clone(), run)))
         .filter(|(_, run)| !run.closed)
         .max_by_key(|(_, run)| run.last_ts_ms)
+}
+
+/// Summary of a task as the daemon sends it: its last events, with the
+/// `task_created` event put back in front when it fell out of them, and the
+/// turns and tokens of the whole file.
+pub fn run_of(task: &TeamTask) -> Option<TeamRun> {
+    let mut events: Vec<_> = task.events.iter().filter_map(parse_event).collect();
+    let has_created = events
+        .iter()
+        .any(|e| matches!(e.kind, EventKind::TaskCreated { .. }));
+    if !has_created && let Some(created) = task.created.as_ref().and_then(parse_event) {
+        events.insert(0, created);
+    }
+    let mut run = TeamRun::from_events(&events)?;
+    for member in &mut run.members {
+        if let Some(totals) = task.totals.get(&member.role) {
+            member.turns = totals.turns.max(member.turns);
+            member.tokens = totals.tokens.max(member.tokens);
+        }
+    }
+    Some(run)
 }
 
 fn same_folder(a: &str, b: &str) -> bool {
@@ -415,6 +433,8 @@ mod tests {
             folder: "/p/.claude/worktrees/w".into(),
             task: "demo".into(),
             events,
+            created: None,
+            totals: Default::default(),
         }
     }
 
@@ -560,5 +580,27 @@ mod tests {
         assert_eq!(latest_team(&teams, "/p").unwrap().0.task, "newer");
         assert!(latest_team(&teams, "/other").is_none());
         assert_eq!(team_project(&teams[0]), "/p");
+    }
+
+    #[test]
+    fn a_long_task_keeps_its_team_and_counters_past_the_last_events() {
+        let mut long = task(vec![ev(
+            "decision",
+            9_000,
+            json!({"by":"director","text":"sigue"}),
+        )]);
+        assert!(run_of(&long).is_none());
+        long.created = Some(created(1_000));
+        long.totals.insert(
+            "disenador_tests".into(),
+            crate::protocol::RoleTotals {
+                turns: 7,
+                tokens: 900,
+            },
+        );
+        let run = run_of(&long).unwrap();
+        assert_eq!(run.last_ts_ms, 9_000);
+        let member = run.find("disenador_tests").unwrap();
+        assert_eq!((member.turns, member.tokens), (7, 900));
     }
 }

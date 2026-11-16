@@ -307,7 +307,8 @@ impl TeamRun {
         };
         let director_name = info.director.clone();
         for event in events {
-            run.last_ts_ms = run.last_ts_ms.max(event.ts_ms);
+            // The time of the last event in file order, as the contract says.
+            run.last_ts_ms = event.ts_ms;
             let at = event.ts_ms;
             match &event.kind {
                 EventKind::TaskCreated { .. } => {}
@@ -339,9 +340,9 @@ impl TeamRun {
                     member.working = true;
                     member.activity = None;
                     member.since_ms = Some(at);
-                    if thread_id.is_some() {
-                        member.thread_id = thread_id.clone();
-                    }
+                    // A new thread (`--new`) starts with no id: forget the
+                    // old one so the monitor does not open it.
+                    member.thread_id = thread_id.clone();
                     run.spans.push((role.clone(), at, None));
                 }
                 EventKind::Activity { role, text, .. } => {
@@ -364,9 +365,7 @@ impl TeamRun {
                     member.turns += 1;
                     member.tokens += usage.input_tokens + usage.output_tokens;
                     member.since_ms = Some(at);
-                    if thread_id.is_some() {
-                        member.thread_id = thread_id.clone();
-                    }
+                    member.thread_id = thread_id.clone();
                     if let Some(span) = run
                         .spans
                         .iter_mut()
@@ -522,6 +521,19 @@ mod tests {
         assert_eq!(last.text, "[timeout] sin respuesta");
         assert_eq!(run.review_role.as_deref(), Some("revisor"));
         assert_eq!(run.workers().count(), 1);
+        // A later `--new` turn has no thread yet: the old one is dropped,
+        // and the run's time is that of its last event even if older.
+        let mut more = events.clone();
+        more.push(
+            parse_event(
+                &json!({"v":1,"ts_ms":4000,"task":"demo","type":"turn_started","role":"revisor",
+                "turn":2,"cli":"codex","model":"gpt-6.1-sol","thread_id":null,"review_round":2}),
+            )
+            .unwrap(),
+        );
+        let run = TeamRun::from_events(&more).unwrap();
+        assert_eq!(run.find("revisor").unwrap().thread_id, None);
+        assert_eq!(run.last_ts_ms, 4000);
         assert_eq!(run.find("revisor").unwrap().tokens, 12);
     }
 }

@@ -6,14 +6,15 @@
 //! are read incrementally from the last offset, so a long task costs only
 //! its new lines on each poll.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 use titan_agent_core::project::project_root;
-use titan_agent_core::protocol::{TEAM_EVENTS_SENT, TeamTask};
+use titan_agent_core::protocol::{RoleTotals, TEAM_EVENTS_SENT, TeamTask};
+use titan_agent_core::team::{EventKind, parse_event};
 
 /// A task whose last event is older than this is no longer shown.
 pub const ACTIVE_WINDOW_MS: i64 = 12 * 60 * 60 * 1000;
@@ -30,6 +31,8 @@ struct FileState {
     events: VecDeque<Value>,
     closed: bool,
     last_ts_ms: i64,
+    created: Option<Value>,
+    totals: BTreeMap<String, RoleTotals>,
 }
 
 /// Follows the events files of every team folder it is shown.
@@ -85,6 +88,8 @@ impl TeamScanner {
                     folder: folder.clone(),
                     task,
                     events: state.events.iter().cloned().collect(),
+                    created: state.created.clone(),
+                    totals: state.totals.clone(),
                 });
             }
         }
@@ -156,11 +161,20 @@ fn follow(path: &Path, state: &mut FileState) {
         if !value.is_object() {
             continue;
         }
-        if value.get("type").and_then(Value::as_str) == Some("task_closed") {
-            state.closed = true;
-        }
-        if let Some(ts) = value.get("ts_ms").and_then(Value::as_i64) {
-            state.last_ts_ms = state.last_ts_ms.max(ts);
+        // Every JSON object is forwarded, but only valid events of a known
+        // version close the task, count or set its time.
+        if let Some(event) = parse_event(&value) {
+            state.last_ts_ms = event.ts_ms;
+            match &event.kind {
+                EventKind::TaskClosed { .. } => state.closed = true,
+                EventKind::TaskCreated { .. } => state.created = Some(value.clone()),
+                EventKind::TurnFinished { role, usage, .. } => {
+                    let totals = state.totals.entry(role.clone()).or_default();
+                    totals.turns += 1;
+                    totals.tokens += usage.input_tokens + usage.output_tokens;
+                }
+                _ => {}
+            }
         }
         state.events.push_back(value);
         while state.events.len() > TEAM_EVENTS_SENT {
@@ -195,25 +209,32 @@ mod tests {
         file.write_all(text.as_bytes()).unwrap();
     }
 
+    fn decision(ts: i64) -> String {
+        format!(
+            "{{\"v\":1,\"ts_ms\":{ts},\"task\":\"demo\",\"type\":\"decision\",\"by\":null,\"text\":\"x\"}}\n"
+        )
+    }
+
+    fn closed(ts: i64, v: u32) -> String {
+        format!(
+            "{{\"v\":{v},\"ts_ms\":{ts},\"task\":\"demo\",\"type\":\"task_closed\",\"delete_branch\":false}}\n"
+        )
+    }
+
     #[test]
     fn half_written_lines_wait_and_the_cap_keeps_the_newest() {
         let dir = folder("partial");
         let folders = vec![dir.to_string_lossy().to_string()];
         let mut scanner = TeamScanner::default();
-        append(
-            &dir,
-            "{\"v\":1,\"ts_ms\":100,\"task\":\"demo\",\"type\":\"task_cre",
-        );
+        let first = decision(100);
+        append(&dir, &first[..20]);
         assert!(scanner.scan(&folders, 200).is_empty());
-        append(&dir, "ated\"}\nnot json\n");
+        append(&dir, &format!("{}not json\n", &first[20..]));
         let tasks = scanner.scan(&folders, 200);
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].events.len(), 1);
         for n in 0..TEAM_EVENTS_SENT + 5 {
-            append(
-                &dir,
-                &format!("{{\"v\":1,\"ts_ms\":{},\"type\":\"activity\"}}\n", 200 + n),
-            );
+            append(&dir, &decision(200 + n as i64));
         }
         let tasks = scanner.scan(&folders, 1000);
         assert_eq!(tasks[0].events.len(), TEAM_EVENTS_SENT);
@@ -230,23 +251,54 @@ mod tests {
     }
 
     #[test]
-    fn a_rewritten_file_is_read_again_and_closing_hides_the_task() {
-        let dir = folder("rewrite");
+    fn only_a_valid_close_hides_the_task_and_the_last_event_sets_its_time() {
+        let dir = folder("close");
         let folders = vec![dir.to_string_lossy().to_string(), String::new()];
+        let mut scanner = TeamScanner::default();
+        append(&dir, &decision(ACTIVE_WINDOW_MS * 3));
+        append(&dir, &decision(5));
+        // The newest line is older: the task has expired at 13 h.
+        assert!(scanner.scan(&folders, 13 * 3_600_000).is_empty());
+        append(&dir, &decision(13 * 3_600_000));
+        append(&dir, "{\"type\":\"task_closed\"}\n");
+        append(&dir, &closed(13 * 3_600_000, 99));
+        let tasks = scanner.scan(&folders, 13 * 3_600_000);
+        assert_eq!(tasks.len(), 1, "malformed or future closes are ignored");
+        assert_eq!(tasks[0].events.len(), 5, "but still forwarded");
+        append(&dir, &closed(13 * 3_600_000, 1));
+        assert!(scanner.scan(&folders, 13 * 3_600_000).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn creation_and_totals_survive_the_cap_and_rewrites_start_over() {
+        let dir = folder("totals");
+        let folders = vec![dir.to_string_lossy().to_string()];
         let mut scanner = TeamScanner::default();
         append(
             &dir,
-            "{\"v\":1,\"ts_ms\":1,\"type\":\"task_created\"}\n{\"v\":1,\"ts_ms\":2,\"type\":\"decision\"}\n",
+            "{\"v\":1,\"ts_ms\":1,\"task\":\"demo\",\"type\":\"task_created\",\"base\":\"main\",\"base_commit\":\"c\",\"branch\":\"b\",\"worktree\":\"w\",\"team\":{\"name\":\"t\"}}\n",
         );
-        assert_eq!(scanner.scan(&folders, 10)[0].events.len(), 2);
-        std::fs::write(
-            dir.join(".agents/estado/demo/events.jsonl"),
-            "{\"v\":1,\"ts_ms\":5,\"type\":\"task_created\"}\n",
-        )
-        .unwrap();
-        assert_eq!(scanner.scan(&folders, 10)[0].events.len(), 1);
-        append(&dir, "{\"v\":1,\"ts_ms\":6,\"type\":\"task_closed\"}\n");
-        assert!(scanner.scan(&folders, 10).is_empty());
+        let finished = "{\"v\":1,\"ts_ms\":2,\"task\":\"demo\",\"type\":\"turn_finished\",\"role\":\"rev\",\"turn\":1,\"status\":\"ok\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}\n";
+        append(&dir, finished);
+        append(&dir, finished);
+        for n in 0..TEAM_EVENTS_SENT {
+            append(&dir, &decision(3 + n as i64));
+        }
+        let task = &scanner.scan(&folders, 1000)[0];
+        assert_ne!(task.events[0]["type"], "task_created");
+        assert_eq!(task.created.as_ref().unwrap()["type"], "task_created");
+        assert_eq!(
+            task.totals["rev"],
+            RoleTotals {
+                turns: 2,
+                tokens: 30
+            }
+        );
+        std::fs::write(dir.join(".agents/estado/demo/events.jsonl"), decision(9)).unwrap();
+        let task = &scanner.scan(&folders, 1000)[0];
+        assert_eq!(task.events.len(), 1);
+        assert!(task.created.is_none() && task.totals.is_empty());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

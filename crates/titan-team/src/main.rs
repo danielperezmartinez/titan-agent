@@ -98,6 +98,64 @@ const FLAGS: [&str; 9] = [
     "--help",
 ];
 
+/// What each command accepts: its positional arguments and its options
+/// (`--config` and `--help` go with every command).
+fn accepted(command: &str) -> Option<(usize, &'static [&'static str])> {
+    Some(match command {
+        "check" | "roles" => (0, &["--json"]),
+        "new" => (1, &["--brief", "--base"]),
+        "ask" => (
+            2,
+            &[
+                "-m",
+                "--message",
+                "-f",
+                "--file",
+                "--diff",
+                "--test",
+                "--new",
+                "--force",
+                "--dry-run",
+                "--json",
+            ],
+        ),
+        "show" => (1, &["--json"]),
+        "diff" => (1, &["--stat"]),
+        "test" => (1, &[]),
+        "decide" => (1, &["-m", "--message"]),
+        "close" => (1, &["--delete-branch"]),
+        _ => return None,
+    })
+}
+
+/// Refuses options and arguments the command does not take, before it does
+/// anything (an ignored `--dry-run` must not let `close` run for real).
+fn check_args(args: &Args) -> Result<(), Failure> {
+    let command = args.words[0].as_str();
+    let Some((count, options)) = accepted(command) else {
+        return Err(Failure::usage(format!(
+            "orden desconocida: {command} (titan-team --help)"
+        )));
+    };
+    let given = args
+        .flags
+        .iter()
+        .chain(args.options.iter().map(|(key, _)| key))
+        .filter(|key| !matches!(key.as_str(), "--config" | "--help"));
+    for key in given {
+        if !options.contains(&key.as_str()) {
+            return Err(Failure::usage(format!("{command} no admite {key}")));
+        }
+    }
+    let positional = args.words.len() - 1;
+    if positional != count {
+        return Err(Failure::usage(format!(
+            "{command} lleva {count} argumento(s) y se dieron {positional} (titan-team --help)"
+        )));
+    }
+    Ok(())
+}
+
 fn parse_args(raw: Vec<String>) -> Result<Args, Failure> {
     let mut args = Args {
         words: Vec::new(),
@@ -138,6 +196,7 @@ fn run(raw: Vec<String>) -> Result<i32, Failure> {
             0
         });
     }
+    check_args(&args)?;
     let cwd: PathBuf = std::env::current_dir().map_err(Failure::io)?;
     let path = config::find(args.option(&["--config"]), &cwd).map_err(Failure::usage)?;
     let command = args.words[0].as_str();
@@ -200,5 +259,15 @@ mod tests {
         assert!(args.flag("--json"));
         assert_eq!(parse_args(vec!["--nope".into()]).unwrap_err().code, 2);
         assert_eq!(parse_args(vec!["-m".into()]).unwrap_err().code, 2);
+        let words = |line: &str| parse_args(line.split(' ').map(String::from).collect()).unwrap();
+        assert!(check_args(&words("close demo --delete-branch")).is_ok());
+        assert_eq!(
+            check_args(&words("close demo --dry-run")).unwrap_err().code,
+            2
+        );
+        assert_eq!(check_args(&words("show demo extra")).unwrap_err().code, 2);
+        assert_eq!(check_args(&words("ask r")).unwrap_err().code, 2);
+        assert!(check_args(&words("ask r t -m hi --json --config x")).is_ok());
+        assert_eq!(check_args(&words("fly")).unwrap_err().code, 2);
     }
 }

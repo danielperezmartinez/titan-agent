@@ -146,7 +146,7 @@ impl MainView {
             .filter(|a| !a.is_director && a.cli.is_some())
             .collect();
         // The reviewer goes on the right, as in the preview.
-        let mut order: Vec<usize> = vec![0, 2, 3, 4];
+        let mut order: Vec<usize> = vec![0, 2, 1, 3, 4];
         if let Some(index) = workers
             .iter()
             .position(|a| Some(&a.id) == board.review_role.as_ref())
@@ -156,6 +156,13 @@ impl MainView {
             order = vec![1, 0, 2, 3, 4];
         }
         let slots = slots();
+        // Roles beyond the five slots are named below the graph instead of
+        // being dropped (the lanes and the desk show them all).
+        let hidden: Vec<String> = workers
+            .iter()
+            .skip(order.len())
+            .map(|a| board.label(&a.id))
+            .collect();
         for (agent, slot) in workers.iter().zip(order) {
             let (place, points, label) = slots[slot].clone();
             places.push((agent, place));
@@ -214,18 +221,19 @@ impl MainView {
                         .into_any_element(),
                 );
                 let horizontal = edge.points.len() == 2 && edge.points[0].1 == edge.points[1].1;
-                let (left, width) = if horizontal {
-                    // Centred over the line, above both boxes.
+                let (left, top, width) = if horizontal {
+                    // Centred over the line, in the free space above both
+                    // boxes, so it covers neither.
                     let mid = (edge.points[0].0 + edge.points[1].0) / 2.;
-                    (mid - LABEL_W / 2., LABEL_W)
+                    (mid - LABEL_W / 2., edge.points[0].1 - 74., LABEL_W)
                 } else {
-                    (edge.label.0, 260.)
+                    (edge.label.0, edge.label.1, 260.)
                 };
                 labels.push(
                     div()
                         .absolute()
                         .left(px(left))
-                        .top(px(edge.label.1))
+                        .top(px(top))
                         .w(px(width))
                         .flex()
                         .when(horizontal, |d| d.justify_center())
@@ -338,7 +346,13 @@ impl MainView {
                                         .child("sin eventos todavía"),
                                 )
                             })
-                            .children(feed),
+                            .children(feed)
+                            .when(!hidden.is_empty(), |d| {
+                                d.child(div().text_color(color(theme::MUTE)).child(format!(
+                                    "sin sitio en el grafo: {} (ver carriles o mesa de control)",
+                                    hidden.join(", ")
+                                )))
+                            }),
                     )
                     .child(
                         div()

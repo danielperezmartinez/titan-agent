@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-16T18:40:00+01:00
+Última modificación: 2026-11-16T21:00:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -260,6 +260,36 @@ El evento `sessions` (`{"event":"sessions","params":{sessions, sources, terminal
 ### Parte 5. Monitor (interfaz; sin tests de aceptación, solo como contexto)
 
 Al pulsar un proyecto en el árbol, el centro muestra su monitor: barra con `[#] proyecto`, «encargo X · ronda r de max · N agentes», `[*] en vivo` y tres botones `grafo`, `carriles`, `mesa de control`. El encargo mostrado es el más reciente de `teams` de ese proyecto. Si no hay ninguno, el centro dice «Sin equipo trabajando en <proyecto>» y lista las sesiones sueltas. Los datos salen de `TeamRun::from_events`, del estado de la sesión del director (una sesión de Claude Code cuyo `cwd` es `folder`; si «te necesita», el monitor lo muestra como mensaje al usuario) y de `quotas`. Clic en un agente: abre su sesión (`cx:<thread_id>` para los roles de Codex).
+
+### Ampliaciones compatibles tras la revisión (2026-11-16, antes de integrar)
+
+Salen de la revisión de Sol de la fase 3 y no cambian `v` ni la versión del
+protocolo:
+
+- **Opciones por orden**: cada orden rechaza con exit 2, antes de hacer nada,
+  las opciones y argumentos que no admite (por ejemplo `close --dry-run`).
+- **Bloqueo por encargo**: `new`, `ask` y `close` toman
+  `<state_dir>/<encargo>.lock`; si otra orden lo tiene, exit 2 al momento
+  («ocupado»).
+- **Nada se ejecuta antes de tiempo**: el tope de rondas se comprueba antes de
+  cualquier otra cosa, y `--dry-run` no ejecuta `test_cmd`.
+- **Persistencia**: si no se pueden escribir `brief_sent` o `turn_started`,
+  Codex no se lanza (exit 2). Una vez lanzado, el turno se registra entero
+  aunque falle un paso posterior (guardar salidas, el commit, un evento), y
+  esos fallos dan exit 2 con su explicación; un commit fallido queda además
+  como aviso del turno.
+- **`test` imprime la salida completa**; el prompt de `ask --test` lleva sus
+  últimas 150 líneas.
+- **`config` de `[codex]` y de cada rol**: cada entrada debe ser
+  `clave=valor` (si no, `bad_type`).
+- **`TeamTask` gana dos campos opcionales**: `created` (el evento
+  `task_created`, aunque ya no esté entre los últimos 300) y `totals` (turnos
+  terminados y tokens de cada rol en todo el fichero). Sin ellos, un encargo
+  con más de 300 eventos perdía su equipo en el monitor.
+- **El daemon solo interpreta eventos válidos**: reenvía cualquier objeto JSON,
+  pero solo un evento válido de su versión cierra el encargo, suma a
+  `totals` o fija su hora; la caducidad de 12 h usa el último evento del
+  fichero, no el máximo.
 
 ## Alternativas consideradas
 

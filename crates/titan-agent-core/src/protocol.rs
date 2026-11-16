@@ -6,6 +6,8 @@
 //! `{"id":1,"result":...}` or `{"id":1,"error":{...}}` and pushes events
 //! (`{"event":"sessions","params":{...}}`). Terminal bytes travel in base64.
 
+use std::collections::BTreeMap;
+
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
@@ -196,6 +198,22 @@ pub struct TeamTask {
     /// Raw event objects of `events.jsonl`, in file order (the last
     /// [`TEAM_EVENTS_SENT`] at most).
     pub events: Vec<Value>,
+    /// The task's `task_created` event, kept even when it is no longer
+    /// among the last events (additive field, ADR-0010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created: Option<Value>,
+    /// Finished turns and tokens of each role over the whole file, which
+    /// the last events alone may undercount (additive field, ADR-0010).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub totals: BTreeMap<String, RoleTotals>,
+}
+
+/// Counters of one role over the whole events file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RoleTotals {
+    pub turns: u32,
+    /// Input plus output tokens of its finished turns.
+    pub tokens: u64,
 }
 
 /// Events of a task sent in each snapshot, at most.

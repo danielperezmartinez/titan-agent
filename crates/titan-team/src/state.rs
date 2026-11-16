@@ -114,12 +114,20 @@ pub fn save(team: &TeamConfig, state: &TaskState) -> Result<(), Failure> {
     std::fs::rename(&temp, &path).map_err(Failure::io)
 }
 
-/// `path` relative to `base` when it is inside it, for the state file.
+/// `path` relative to `base`, with `..` when it lies outside (both are
+/// absolute and already free of `.` components).
 pub fn relative(base: &Path, path: &Path) -> String {
-    path.strip_prefix(base)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .into_owned()
+    let base: Vec<_> = base.components().collect();
+    let target: Vec<_> = path.components().collect();
+    let common = base.iter().zip(&target).take_while(|(a, b)| a == b).count();
+    let mut out = PathBuf::new();
+    for _ in common..base.len() {
+        out.push("..");
+    }
+    for part in &target[common..] {
+        out.push(part.as_os_str());
+    }
+    out.to_string_lossy().into_owned()
 }
 
 pub fn now_ms() -> i64 {
@@ -169,29 +177,46 @@ impl EventLog {
         }
     }
 
-    /// Appends an event. A failure to log never stops the team's work: it
-    /// is reported on stderr.
-    pub fn append(&self, kind: EventKind) {
+    /// Appends an event, as one line written at once.
+    pub fn append(&self, kind: EventKind) -> Result<(), Failure> {
         let event = TeamEvent::new(now_ms(), &self.task, kind);
-        let mut line = match serde_json::to_string(&event) {
-            Ok(line) => line,
-            Err(error) => {
-                eprintln!("aviso: no se pudo escribir un evento: {error}");
-                return;
-            }
-        };
+        let mut line = serde_json::to_string(&event)
+            .map_err(|e| Failure::usage(format!("No se pudo escribir un evento: {e}")))?;
         line.push('\n');
-        let written = std::fs::OpenOptions::new()
+        std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.path)
-            .and_then(|mut file| file.write_all(line.as_bytes()));
-        if let Err(error) = written {
-            eprintln!(
-                "aviso: no se pudo escribir en {}: {error}",
-                self.path.display()
-            );
-        }
+            .and_then(|mut file| file.write_all(line.as_bytes()))
+            .map_err(|error| {
+                Failure::usage(format!(
+                    "No se pudo escribir en {}: {error}",
+                    self.path.display()
+                ))
+            })
+    }
+}
+
+/// Exclusive hold on one task while a command changes it. Dropping it
+/// releases the lock.
+pub struct TaskLock(#[allow(dead_code)] std::fs::File);
+
+/// Takes the task's lock (`<state_dir>/<task>.lock`), or fails at once if
+/// another titan-team command holds it.
+pub fn lock_task(team: &TeamConfig, task: &str) -> Result<TaskLock, Failure> {
+    std::fs::create_dir_all(&team.state_dir).map_err(Failure::io)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(team.state_dir.join(format!("{task}.lock")))
+        .map_err(Failure::io)?;
+    match file.try_lock() {
+        Ok(()) => Ok(TaskLock(file)),
+        Err(std::fs::TryLockError::WouldBlock) => Err(Failure::usage(format!(
+            "El encargo {task} está ocupado por otra orden de titan-team; espera a que termine"
+        ))),
+        Err(std::fs::TryLockError::Error(error)) => Err(Failure::io(error)),
     }
 }
 
@@ -213,5 +238,12 @@ mod tests {
             assert_eq!(check_task_name(bad).unwrap_err().code, 2, "{bad}");
         }
         assert!(check_task_name(&"x".repeat(64)).is_ok());
+    }
+
+    #[test]
+    fn paths_outside_the_base_go_up_with_dots() {
+        let base = Path::new("/r/p");
+        assert_eq!(relative(base, Path::new("/r/p/.agents/w/t")), ".agents/w/t");
+        assert_eq!(relative(base, Path::new("/r/w/t")), "../w/t");
     }
 }

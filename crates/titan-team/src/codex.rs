@@ -148,6 +148,12 @@ pub fn run(
     let mut activities = 0;
     let mut timed_out = false;
     loop {
+        // Checked on every line: a turn that never stops writing must not
+        // outlive its limit.
+        if Instant::now() >= deadline {
+            timed_out = true;
+            break;
+        }
         let left = deadline.saturating_duration_since(Instant::now());
         match rx.recv_timeout(left) {
             Ok(bytes) => {
@@ -173,7 +179,11 @@ pub fn run(
     } else {
         loop {
             match child.try_wait() {
-                Ok(Some(status)) => break status.code(),
+                Ok(Some(status)) => {
+                    // Anything it left running would keep the pipes open.
+                    kill_tree(&mut child);
+                    break status.code();
+                }
                 Ok(None) if Instant::now() >= deadline => {
                     timed_out = true;
                     kill_tree(&mut child);
@@ -375,6 +385,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(out.status, "timeout");
+        let args = vec![
+            "-c".to_string(),
+            "cat >/dev/null; while :; do echo '{}'; sleep 0.01; done".to_string(),
+        ];
+        let started = Instant::now();
+        let out = run(
+            "sh",
+            &args,
+            "hi",
+            Path::new("."),
+            Duration::from_millis(300),
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(out.status, "timeout");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "endless output must not beat the limit"
+        );
         let args = vec!["-c".to_string(), "cat >/dev/null; exit 4".to_string()];
         let out = run(
             "sh",

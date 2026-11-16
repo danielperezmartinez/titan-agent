@@ -103,6 +103,7 @@ fn task_arg(rest: &[String]) -> Result<&str, Failure> {
 
 pub fn new(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Result<i32, Failure> {
     let task = task_arg(rest)?;
+    let _lock = state::lock_task(team, task)?;
     if state::state_file(team, task).exists() {
         return Err(Failure::usage(format!("Ya existe el encargo {task}")));
     }
@@ -175,7 +176,7 @@ pub fn new(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         branch: branch.clone(),
         worktree: state.worktree.clone(),
         team: team_info(team),
-    });
+    })?;
     println!(
         "Worktree: {}\nRama: {branch}\nSiguiente paso: titan-team ask <rol> {task}  (primer rol de flow.steps)",
         worktree.display()
@@ -299,13 +300,14 @@ pub fn decide(team: &TeamConfig, rest: &[String], args: &Args) -> Result<i32, Fa
     EventLog::new(team, &state.task).append(EventKind::Decision {
         by: team.director().map(str::to_string),
         text: clip(text, DECISION_LIMIT),
-    });
+    })?;
     println!("Decisión anotada en {task}");
     Ok(0)
 }
 
 pub fn close(team: &TeamConfig, rest: &[String], args: &Args) -> Result<i32, Failure> {
     let task = task_arg(rest)?;
+    let _lock = state::lock_task(team, task)?;
     let mut state = state::load(team, task)?;
     let wt = worktree(team, &state).to_string_lossy().into_owned();
     git(&team.project.repo, &["worktree", "remove", &wt])?;
@@ -316,7 +318,7 @@ pub fn close(team: &TeamConfig, rest: &[String], args: &Args) -> Result<i32, Fai
     state.closed = true;
     state.closed_at = Some(now_iso());
     state::save(team, &state)?;
-    EventLog::new(team, task).append(EventKind::TaskClosed { delete_branch });
+    EventLog::new(team, task).append(EventKind::TaskClosed { delete_branch })?;
     println!("Encargo {task} cerrado");
     Ok(0)
 }
