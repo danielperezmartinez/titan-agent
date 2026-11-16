@@ -33,6 +33,7 @@ struct FileState {
     last_ts_ms: i64,
     created: Option<Value>,
     totals: BTreeMap<String, RoleTotals>,
+    director_session: Option<String>,
 }
 
 /// Follows the events files of every team folder it is shown.
@@ -90,6 +91,7 @@ impl TeamScanner {
                     events: state.events.iter().cloned().collect(),
                     created: state.created.clone(),
                     totals: state.totals.clone(),
+                    director_session: state.director_session.clone(),
                 });
             }
         }
@@ -165,6 +167,9 @@ fn follow(path: &Path, state: &mut FileState) {
         // version close the task, count or set its time.
         if let Some(event) = parse_event(&value) {
             state.last_ts_ms = event.ts_ms;
+            if event.director_session.is_some() {
+                state.director_session = event.director_session.clone();
+            }
             match &event.kind {
                 EventKind::TaskClosed { .. } => state.closed = true,
                 EventKind::TaskCreated { .. } => state.created = Some(value.clone()),
@@ -287,7 +292,7 @@ mod tests {
             &dir,
             "{\"v\":1,\"ts_ms\":1,\"task\":\"demo\",\"type\":\"task_created\",\"base\":\"main\",\"base_commit\":\"c\",\"branch\":\"b\",\"worktree\":\"w\",\"team\":{\"name\":\"t\"}}\n",
         );
-        let finished = "{\"v\":1,\"ts_ms\":2,\"task\":\"demo\",\"type\":\"turn_finished\",\"role\":\"rev\",\"turn\":1,\"status\":\"ok\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}\n";
+        let finished = "{\"v\":1,\"ts_ms\":2,\"task\":\"demo\",\"director_session\":\"s-1\",\"type\":\"turn_finished\",\"role\":\"rev\",\"turn\":1,\"status\":\"ok\",\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}\n";
         append(&dir, finished);
         append(&dir, finished);
         for n in 0..TEAM_EVENTS_SENT {
@@ -296,6 +301,7 @@ mod tests {
         let task = &scanner.scan(&folders, 1000)[0];
         assert_ne!(task.events[0]["type"], "task_created");
         assert_eq!(task.created.as_ref().unwrap()["type"], "task_created");
+        assert_eq!(task.director_session.as_deref(), Some("s-1"));
         assert_eq!(
             task.totals["rev"],
             RoleTotals {
@@ -307,6 +313,7 @@ mod tests {
         let task = &scanner.scan(&folders, 1000)[0];
         assert_eq!(task.events.len(), 1);
         assert!(task.created.is_none() && task.totals.is_empty());
+        assert!(task.director_session.is_none());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

@@ -90,7 +90,7 @@ pub fn latest_team(teams: &[TeamTask], root: &str) -> Option<(TeamTask, TeamRun)
 
 /// Summary of a task as the daemon sends it: its last events, with the
 /// `task_created` event put back in front when it fell out of them, and the
-/// turns and tokens of the whole file.
+/// turns, tokens and director session of the whole file.
 pub fn run_of(task: &TeamTask) -> Option<TeamRun> {
     let mut events: Vec<_> = task.events.iter().filter_map(parse_event).collect();
     let has_created = events
@@ -100,6 +100,9 @@ pub fn run_of(task: &TeamTask) -> Option<TeamRun> {
         events.insert(0, created);
     }
     let mut run = TeamRun::from_events(&events)?;
+    if task.director_session.is_some() {
+        run.director_session = task.director_session.clone();
+    }
     for member in &mut run.members {
         if let Some(totals) = task.totals.get(&member.role) {
             member.turns = totals.turns.max(member.turns);
@@ -444,6 +447,7 @@ mod tests {
             events,
             created: None,
             totals: Default::default(),
+            director_session: None,
         }
     }
 
@@ -633,6 +637,16 @@ mod tests {
         assert_eq!(
             b.agent("director").unwrap().session.as_deref(),
             Some("cl:d")
+        );
+    }
+
+    #[test]
+    fn the_whole_file_names_the_director_when_the_last_events_do_not() {
+        let (mut t, _) = sample();
+        t.director_session = Some("whole".into());
+        assert_eq!(
+            run_of(&t).unwrap().director_session.as_deref(),
+            Some("whole")
         );
     }
 }

@@ -309,6 +309,9 @@ hilo ocupado). Tampoco cambian `v` ni la versión del protocolo:
   `director_session` (el último visto) y el monitor une el director a la
   sesión `cl:<id>` exacta; si no viene o el daemon no la lista, sigue la regla
   de la Parte 5 (la sesión de Claude Code de la carpeta base, la más activa).
+  `TeamTask` gana el campo opcional `director_session` (la última de todo el
+  fichero), como `created` y `totals`, para no perderla cuando ya no está en
+  los últimos 300 eventos (hallazgo de la revisión de Sol del cierre).
 - **Hilo ocupado: `status = "busy"` y exit 4.** Si Codex rechaza el turno
   porque el hilo ya tiene otro escritor (su error o su stderr contienen
   «already has an active writer», sin distinguir mayúsculas; pasa cuando el
@@ -323,7 +326,9 @@ hilo ocupado). Tampoco cambian `v` ni la versión del protocolo:
   - se escriben los eventos del turno igual, con `turn_finished.status =
     "busy"`, el `thread_id` que el rol ya tenía y `text = "hilo de <rol>
     abierto en titan-agent"`; el historial guarda la entrada con ese estado;
-  - `TeamRun` y los `totals` del daemon no cuentan un turno `busy`.
+  - `TeamRun` y los `totals` del daemon no cuentan un turno `busy`, y
+    `TeamRun` devuelve la ronda de revisión que su `turn_started` había
+    adelantado.
   
   El director (skill `equipo`) avisa al usuario y repite la misma orden
   cuando este se lo dice. La otra mitad (abrir el hilo en solo lectura desde

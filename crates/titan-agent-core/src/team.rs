@@ -319,6 +319,8 @@ impl TeamRun {
             last_report: None,
         };
         let director_name = info.director.clone();
+        // Round before each role's running turn: a busy turn gives it back.
+        let mut round_before: Vec<(String, u32)> = Vec::new();
         for event in events {
             // The time of the last event in file order, as the contract says.
             run.last_ts_ms = event.ts_ms;
@@ -350,6 +352,8 @@ impl TeamRun {
                     ..
                 } => {
                     if let Some(round) = review_round {
+                        round_before.retain(|(r, _)| r != role);
+                        round_before.push((role.clone(), run.review_round));
                         run.review_round = *round;
                     }
                     let member = run.member(role);
@@ -375,11 +379,20 @@ impl TeamRun {
                     status,
                     ..
                 } => {
+                    // A busy thread did not run the turn: it is not counted
+                    // and its review round is not spent.
+                    let busy = status == STATUS_BUSY;
+                    let before = round_before
+                        .iter()
+                        .position(|(r, _)| r == role)
+                        .map(|i| round_before.remove(i).1);
+                    if let (true, Some(before)) = (busy, before) {
+                        run.review_round = before;
+                    }
                     let member = run.member(role);
                     member.working = false;
                     member.activity = None;
-                    // A busy thread did not run the turn: it is not counted.
-                    if status != STATUS_BUSY {
+                    if !busy {
                         member.turns += 1;
                     }
                     member.tokens += usage.input_tokens + usage.output_tokens;
@@ -560,6 +573,8 @@ mod tests {
     fn a_busy_turn_keeps_its_thread_and_is_not_counted() {
         let mut events = vec![parse_event(&created()).unwrap()];
         for line in [
+            json!({"v":1,"ts_ms":1900,"task":"demo","type":"turn_started","role":"revisor","turn":2,
+                "cli":"codex","model":"gpt-6.1-sol","thread_id":"t-1","review_round":1}),
             json!({"v":1,"ts_ms":2000,"task":"demo","director_session":"s-1","type":"brief_sent",
                 "from":"director","to":"revisor","turn":2,"resumed":true,"text":"otra vuelta"}),
             json!({"v":1,"ts_ms":2100,"task":"demo","type":"turn_finished","role":"revisor","turn":2,
@@ -575,12 +590,13 @@ mod tests {
             (0, Some("t-1"))
         );
         assert_eq!(run.feed[1].text, "[busy] hilo abierto en titan-agent");
+        assert_eq!(run.review_round, 0, "a busy turn does not spend its round");
         // The last event without a session does not forget the one seen.
         assert_eq!(run.director_session.as_deref(), Some("s-1"));
-        let back = serde_json::to_value(&events[1]).unwrap();
+        let back = serde_json::to_value(&events[2]).unwrap();
         assert_eq!(back["director_session"], "s-1");
         assert!(
-            serde_json::to_value(&events[3])
+            serde_json::to_value(&events[4])
                 .unwrap()
                 .get("director_session")
                 .is_none()

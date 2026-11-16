@@ -206,6 +206,10 @@ pub struct TeamTask {
     /// the last events alone may undercount (additive field, ADR-0010).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub totals: BTreeMap<String, RoleTotals>,
+    /// Last `director_session` over the whole file, which the last events
+    /// alone may no longer carry (additive field, ADR-0010).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub director_session: Option<String>,
 }
 
 /// Counters of one role over the whole events file.
