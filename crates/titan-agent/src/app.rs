@@ -99,6 +99,8 @@ pub struct MainView {
     monitor_tab: MonitorTab,
     /// Time window of the monitor's lanes, in seconds.
     lane_window_s: i64,
+    /// Window width, for views that place things in pixels.
+    viewport_w: f32,
     _brief_events: Subscription,
 }
 
@@ -235,6 +237,7 @@ impl MainView {
             quotas: Vec::new(),
             monitor_tab: MonitorTab::from_env(),
             lane_window_s: monitor::LANE_WINDOWS[0],
+            viewport_w: 1440.,
             _brief_events: brief_events,
         }
     }
@@ -460,6 +463,7 @@ impl MainView {
 
 impl Render for MainView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.viewport_w = f32::from(window.viewport_size().width);
         if self.focus_terminal {
             self.focus_terminal = false;
             if let Selection::Session(key) = &self.selection

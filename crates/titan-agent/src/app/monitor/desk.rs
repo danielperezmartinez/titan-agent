@@ -243,7 +243,15 @@ impl MainView {
         };
         let stats = if agent.is_director {
             match agent.started_at_ms {
-                Some(start) => format!("en esta sesión {} min", ((now - start) / 60_000).max(0)),
+                Some(start) => format!(
+                    "encargos {} · en esta sesión {} min",
+                    board
+                        .messages
+                        .iter()
+                        .filter(|m| m.from == agent.id && m.to != USER)
+                        .count(),
+                    ((now - start) / 60_000).max(0)
+                ),
                 None => "sin sesión a la vista".into(),
             }
         } else {

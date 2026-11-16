@@ -17,6 +17,8 @@ const WIDTH: f32 = 960.;
 const HEIGHT: f32 = 560.;
 /// One trip of a message dot along its line.
 const TRIP_MS: i64 = 1100;
+/// Width of the label of a message on a horizontal line.
+const LABEL_W: f32 = 180.;
 
 /// Centre and size of a node.
 #[derive(Clone, Copy)]
@@ -102,6 +104,16 @@ fn along(points: &[(f32, f32)], fraction: f32) -> (f32, f32) {
     *points.last().unwrap_or(&(0., 0.))
 }
 
+/// `12 s`, `3 min`, `2 h`: age of an older «ahora» line.
+fn short_age(ms: i64) -> String {
+    let seconds = (ms / 1000).max(0);
+    match seconds {
+        0..=59 => format!("{seconds} s"),
+        60..=3599 => format!("{} min", seconds / 60),
+        _ => format!("{} h", seconds / 3600),
+    }
+}
+
 /// A line between two node ids.
 struct Edge {
     a: String,
@@ -159,6 +171,7 @@ impl MainView {
 
         let live = board.live_message(now);
         let mut layer: Vec<AnyElement> = Vec::new();
+        let mut labels: Vec<AnyElement> = Vec::new();
         for edge in &edges {
             let on = live.filter(|m| {
                 (m.from == edge.a && m.to == edge.b) || (m.from == edge.b && m.to == edge.a)
@@ -200,24 +213,38 @@ impl MainView {
                         .bg(sender)
                         .into_any_element(),
                 );
-                layer.push(
+                let horizontal = edge.points.len() == 2 && edge.points[0].1 == edge.points[1].1;
+                let (left, width) = if horizontal {
+                    // Centred over the line, above both boxes.
+                    let mid = (edge.points[0].0 + edge.points[1].0) / 2.;
+                    (mid - LABEL_W / 2., LABEL_W)
+                } else {
+                    (edge.label.0, 260.)
+                };
+                labels.push(
                     div()
                         .absolute()
-                        .left(px(edge.label.0))
+                        .left(px(left))
                         .top(px(edge.label.1))
-                        .max_w(px(260.))
-                        .px(px(6.))
-                        .py(px(2.))
-                        .bg(color(theme::SURFACE))
-                        .border_1()
-                        .border_color(sender)
-                        .rounded(px(4.))
-                        .text_size(px(11.))
-                        .text_color(color(theme::INK))
-                        .whitespace_nowrap()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .child(m.text.clone())
+                        .w(px(width))
+                        .flex()
+                        .when(horizontal, |d| d.justify_center())
+                        .child(
+                            div()
+                                .max_w(px(width))
+                                .px(px(6.))
+                                .py(px(2.))
+                                .bg(color(theme::SURFACE))
+                                .border_1()
+                                .border_color(sender)
+                                .rounded(px(4.))
+                                .text_size(px(11.))
+                                .text_color(color(theme::INK))
+                                .whitespace_nowrap()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(m.text.clone()),
+                        )
                         .into_any_element(),
                 );
             }
@@ -225,6 +252,7 @@ impl MainView {
         for (agent, place) in places {
             layer.push(self.graph_node(board, agent, place, cx).into_any_element());
         }
+        layer.extend(labels);
 
         let feed: Vec<Div> = board
             .feed
@@ -242,7 +270,11 @@ impl MainView {
                             .w(px(72.))
                             .flex_none()
                             .text_color(color(theme::STONE))
-                            .child(ago(item.at_ms, now)),
+                            .child(if i == 0 {
+                                ago(item.at_ms, now)
+                            } else {
+                                format!("hace {}", short_age(now - item.at_ms))
+                            }),
                     )
                     .child(
                         div()
@@ -381,6 +413,7 @@ impl MainView {
             .child(
                 div()
                     .flex()
+                    .flex_none()
                     .items_center()
                     .gap(px(8.))
                     .text_size(px(12.))
@@ -406,6 +439,7 @@ impl MainView {
             )
             .child(
                 div()
+                    .flex_none()
                     .text_size(px(11.))
                     .text_color(color(theme::MUTE))
                     .whitespace_nowrap()
@@ -413,15 +447,18 @@ impl MainView {
                     .text_ellipsis()
                     .child(sub),
             )
-            .child(
-                div()
-                    .text_size(px(12.))
-                    .text_color(color(l.action_hex))
-                    .whitespace_nowrap()
-                    .overflow_hidden()
-                    .text_ellipsis()
-                    .child(action),
-            )
+            .when(!action.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .text_size(px(12.))
+                        .text_color(color(l.action_hex))
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(action),
+                )
+            })
     }
 }
 
@@ -437,5 +474,7 @@ mod tests {
         assert_eq!(along(&points, 0.5), (10., 10.));
         assert_eq!(along(&points, 1.), (10., 30.));
         assert_eq!(slots().len(), 5);
+        assert_eq!(short_age(4_000), "4 s");
+        assert_eq!(short_age(185_000), "3 min");
     }
 }

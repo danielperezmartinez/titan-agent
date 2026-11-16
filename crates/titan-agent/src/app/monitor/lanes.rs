@@ -15,6 +15,8 @@ use super::super::MainView;
 use super::{LANE_WINDOWS, agent_hex, look, with_alpha};
 
 const LANE_H: f32 = 72.;
+/// Width of the session tree on the left of the window.
+const NAV_W: f32 = 340.;
 /// Space between the «ahora» line and the right edge of the track.
 const NOW_MARGIN: f32 = 40.;
 
@@ -124,11 +126,21 @@ impl MainView {
                     .into_any_element(),
             );
         }
-        for m in board
+        // Track width in pixels (window minus the tree, padding, the lane
+        // column and the margin of «ahora»), to fit each label in the room
+        // left before the next message line.
+        let track_px = (self.viewport_w - NAV_W - 32. - 240. - 3. - NOW_MARGIN).max(100.);
+        let shown: Vec<_> = board
             .messages
             .iter()
             .filter(|m| m.at_ms >= start && m.at_ms <= now)
-        {
+            .collect();
+        for (i, m) in shown.iter().enumerate() {
+            let x = at(m.at_ms) * track_px;
+            let next = shown
+                .get(i + 1)
+                .map_or(track_px, |n| at(n.at_ms) * track_px);
+            let room = (next.min(track_px) - x - 12.).max(0.);
             let (Some(a), Some(b)) = (row_of(&m.from), row_of(&m.to)) else {
                 continue;
             };
@@ -164,19 +176,21 @@ impl MainView {
                             .rounded_full()
                             .bg(tone),
                     )
-                    .child(
-                        div()
-                            .absolute()
-                            .left(px(6.))
-                            .top(px(if b > a { sender_y - 6. } else { sender_y - 12. }))
-                            .w(px(220.))
-                            .whitespace_nowrap()
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .text_size(px(11.))
-                            .text_color(tone)
-                            .child(m.text.clone()),
-                    )
+                    .when(room >= 24., |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .left(px(6.))
+                                .top(px(if b > a { sender_y - 6. } else { sender_y - 12. }))
+                                .w(px(room.min(220.)))
+                                .whitespace_nowrap()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_size(px(11.))
+                                .text_color(tone)
+                                .child(m.text.clone()),
+                        )
+                    })
                     .into_any_element(),
             );
         }
