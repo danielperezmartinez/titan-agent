@@ -1,13 +1,13 @@
 ---
 Nombre: Ventana principal con proyectos importados y monitor por sesión directora
-Estado: Propuesta
+Estado: Aceptada
 Ámbito: Layout
 Resumen: 'La columna izquierda lista los proyectos importados (aunque no tengan sesiones), cada uno con un `+` que abre la conversación en borrador con ese proyecto, y al final un grupo «otras carpetas» con las sesiones de carpetas no importadas. La cabecera de un proyecto abre su resumen (carpeta, sesiones, equipos y acciones). El monitor del equipo deja de colgar del proyecto: se abre con `[m]` en la barra de la sesión directora y, si esa directora lleva varios encargos, se elige cuál. La zona central es la vista «conversación» (borrador o sesión), el resumen del proyecto o el monitor.'
 Decisión: Árbol de proyectos importados con `+` por proyecto y grupo «otras carpetas»; la cabecera abre el resumen del proyecto; el monitor se abre con `[m]` desde la sesión directora.
 Reemplaza: ["[[Ventana principal al estilo Claude Code Desktop]]"]
 Reemplazada por: []
 Fecha de creación: 2026-11-17T23:40:00+01:00
-Última modificación: 2026-11-17T23:40:00+01:00
+Última modificación: 2026-11-18T00:05:00+01:00
 ---
 
 # Ventana principal con proyectos importados y monitor por sesión directora

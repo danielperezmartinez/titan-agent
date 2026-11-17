@@ -398,13 +398,18 @@ Qué hace, en una frase: **ver qué agentes trabajan, en qué proyecto y quién 
 con quién, y hablar con cualquier sesión** de Claude Code o Codex desde una sola
 ventana.
 
-- **Sesiones**: árbol por proyecto con las sesiones de todos los CLI, su estado y
-  su agente; al elegir una se ve su terminal con el CLI oficial y se escribe en
-  él. Ver [[Decisiones visuales/Ventana principal al estilo Claude Code Desktop]].
+- **Sesiones**: árbol de proyectos importados (y «otras carpetas») con las
+  sesiones de todos los CLI, su estado y su agente; al elegir una se ve su
+  conversación (hoy, el terminal con el CLI oficial; el chat llega en la
+  0.8.0). Ver
+  [[Decisiones visuales/Ventana principal con proyectos importados y monitor por sesión directora]],
+  [[Decisiones visuales/Conversación de sesión y campo de texto común]] y
+  [[Decisiones/ADR-0012 Chat de sesión sobre las vías oficiales de cada CLI]].
 - **Nueva sesión**: un encargo escrito por el usuario y los ajustes por defecto,
   con las salvaguardas de
   [[Decisiones/ADR-0002 Lanzar sesiones desde la app con salvaguardas]].
-- **Monitor del proyecto**: en tiempo real, con tres vistas. Ver
+- **Monitor del equipo**: en tiempo real, con tres vistas, desde la sesión
+  directora (`[m]`). Ver
   [[Decisiones visuales/Monitor del proyecto en tres vistas]].
 - **Equipo**: la herramienta que reparte el trabajo entre roles (Opus dirige e
   implementa, Sol escribe los tests de aceptación y revisa, Luna solo para

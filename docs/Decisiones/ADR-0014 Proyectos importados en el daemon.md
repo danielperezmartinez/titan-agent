@@ -1,14 +1,14 @@
 ---
 Nombre: Proyectos importados en el daemon
 Número: 14
-Estado: Propuesta
+Estado: Aceptada
 Resumen: 'La lista de proyectos deja de salir solo de las sesiones detectadas: el usuario importa carpetas como proyectos (como en Claude Code Desktop) y se ven aunque no tengan sesiones. La lista vive en el daemon, en projects.json de la carpeta de configuración de titan-agent, y se gestiona con peticiones nuevas del protocolo (project_add, project_remove) y un campo nuevo del evento sessions, para que la vean todos los clientes (también Android). Las sesiones de carpetas no importadas siguen visibles en un grupo «otras carpetas». La primera vez se importan los proyectos que ya tienen sesiones.'
 Decisión: Proyectos importados guardados por el daemon en projects.json v1, expuestos en el protocolo de forma compatible; las sesiones de carpetas no importadas van al grupo «otras carpetas».
 Consecuencias: El daemon escribe un fichero propio de configuración (hasta ahora solo lo hacía la interfaz con defaults.json). El árbol ya no depende solo de las sesiones. El daemon busca encargos del equipo también en los proyectos importados sin sesiones. Ampliación compatible de ADR-0007 sin subir PROTOCOL_VERSION.
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-17T23:35:00+01:00
-Última modificación: 2026-11-17T23:35:00+01:00
+Última modificación: 2026-11-18T00:05:00+01:00
 ---
 
 # ADR-0014 · Proyectos importados en el daemon

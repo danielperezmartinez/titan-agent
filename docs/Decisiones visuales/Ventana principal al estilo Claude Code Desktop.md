@@ -1,13 +1,13 @@
 ---
 Nombre: Ventana principal al estilo Claude Code Desktop
-Estado: Aceptada
+Estado: Reemplazada
 Ámbito: Layout
 Resumen: 'Una sola ventana con una columna izquierda (botón Nueva sesión, filtro y árbol de sesiones agrupado por proyecto, con las sesiones lanzadas por otra anidadas debajo) y una zona central que muestra lo seleccionado: el terminal de la sesión, el cuadro de nueva sesión con sus ajustes en botones, o el monitor del proyecto. Sin pestañas.'
 Decisión: Columna izquierda de sesiones en árbol y zona central según la selección (sesión, nueva sesión o monitor de proyecto), sin pestañas ni pantallas intermedias.
 Reemplaza: []
-Reemplazada por: []
+Reemplazada por: ["[[Ventana principal con proyectos importados y monitor por sesión directora]]"]
 Fecha de creación: 2026-11-14T14:32:34+01:00
-Última modificación: 2026-11-14T14:32:34+01:00
+Última modificación: 2026-11-18T00:05:00+01:00
 ---
 
 # Ventana principal al estilo Claude Code Desktop
