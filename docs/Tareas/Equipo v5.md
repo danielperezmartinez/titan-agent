@@ -1,11 +1,11 @@
 ---
 Nombre: Equipo v5
-Estado: En curso
+Estado: Hecha
 Resumen: 'Corrige las carencias del equipo v4 anotadas en la ronda 0.5.0: titan-team ejecuta formato y tests tras los turnos de los roles que escriben y pasa la compuerta al revisor, la skill exige un contrato numerado con las firmas que usan los tests, los movimientos de código los hace el director con un script, hay un kit de demo versionado en scripts/demo/ con escenas y captura verificada por PID, y ask --allow autoriza una ruta en un turno. Deja la configuración v5 como la vigente.'
 Decisiones: 'Ajustes acordados con el usuario desde la sesión de control (2026-11-17). Versión 0.5.1 (patch), acordada con el usuario para no mover la 0.6.0 de la distribución (ADR-0011). Lo que toque ficheros que también cambia feat/v0.5-equipo-v4 espera a que la 0.5.0 se integre (rebase antes de la PR). Las comprobaciones no añaden tipos de evento: van como activity, warnings y status del turno, para no tocar titan_agent_core::team (lo cambia la 0.5.0).'
 Bloqueada: []
 Fecha de creación: 2026-11-17T14:52:00+01:00
-Última modificación: 2026-11-17T17:50:00+01:00
+Última modificación: 2026-11-17T18:00:00+01:00
 ---
 
 # Equipo v5
@@ -298,7 +298,13 @@ y la ADR-0011, en local el 2026-11-17:
   un origen sin salto final (se niega sin crear nada).
 - Versión **0.5.1** (acordada con el usuario el 2026-11-17: patch, para no
   mover la 0.6.0 de la distribución que fija ADR-0011).
-- **Pendiente**: PR, CI e integración con autorización del usuario.
+- **PR #9** integrada por squash con autorización del usuario: commit
+  `45eb802` en `main`, con los checks `Cambios`, `Fugas`, `Verificar` y
+  `Windows` en verde. GitHub rechazó `--author-email` con el correo noreply
+  («Invalid email address», como en la PR #4) y se integró sin él. Versión
+  0.5.1, sin etiqueta: no se publica release. La rama de antes del rebase
+  (`feat/equipo-v5`) se borró de `origin`; la PR fue desde
+  `feat/equipo-v5-0.5.1`.
 
 ## Métricas
 
@@ -327,4 +333,14 @@ y la ADR-0011, en local el 2026-11-17:
 
 ## Resultado
 
-<Se rellena al completar.>
+El equipo v5 es la configuración vigente (sección «Configuración v5»), y la
+hará servir la ronda de la 0.6.0
+([[Versión 0.6.0 - Instalador y actualización automática]]). Entraron A1–A6:
+
+- comprobaciones tras el turno, `ask --gate` y `ask --allow` en titan-team;
+- la skill y los prompts de la v5;
+- `scripts/mover-lineas.sh`;
+- el kit `scripts/demo/`;
+- el registro de peticiones del daemon.
+
+Las carencias nuevas de arriba quedan para la siguiente versión del equipo.
