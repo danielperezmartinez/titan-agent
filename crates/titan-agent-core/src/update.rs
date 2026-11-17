@@ -130,7 +130,10 @@ pub enum UpdateError {
     NoArtifact(String),
     BadName(String),
     TooBig(u64),
-    SizeMismatch { expected: u64, got: u64 },
+    SizeMismatch {
+        expected: u64,
+        got: u64,
+    },
     HashMismatch,
     UnsafeEntry(String),
     Incomplete(String),
@@ -343,6 +346,9 @@ mod tests {
             sha256: String::new(),
             size: 1,
         };
-        assert_eq!(check_download(1, "", &artifact), Err(UpdateError::HashMismatch));
+        assert_eq!(
+            check_download(1, "", &artifact),
+            Err(UpdateError::HashMismatch)
+        );
     }
 }

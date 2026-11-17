@@ -37,9 +37,9 @@ fn main() {
         #[cfg(unix)]
         None => report(launch::launch(Vec::new())),
         #[cfg(unix)]
-        Some(arg) if arg.starts_with('-') => {
-            report(launch::launch(std::iter::once(arg.to_string()).chain(args).collect()))
-        }
+        Some(arg) if arg.starts_with('-') => report(launch::launch(
+            std::iter::once(arg.to_string()).chain(args).collect(),
+        )),
         #[cfg(not(unix))]
         None | Some("install" | "uninstall") => {
             eprintln!("titan-agent-launcher: en Windows la versión es portable (sin instalar)");

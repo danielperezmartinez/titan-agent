@@ -54,7 +54,10 @@ pub fn extract(archive: &Path, root: &Path, version: Version) -> Result<(), Upda
         for entry in tar.entries().map_err(broken)? {
             let mut entry = entry.map_err(broken)?;
             let kind = match entry.header().entry_type() {
-                EntryType::Regular | EntryType::Continuous => EntryKind::File,
+                // A sparse file is a regular file stored with its holes.
+                EntryType::Regular | EntryType::Continuous | EntryType::GNUSparse => {
+                    EntryKind::File
+                }
                 EntryType::Directory => EntryKind::Dir,
                 EntryType::Symlink => EntryKind::Symlink,
                 EntryType::Link => EntryKind::Hardlink,
@@ -84,7 +87,7 @@ pub fn extract(archive: &Path, root: &Path, version: Version) -> Result<(), Upda
                 files.push(rest.to_string());
             }
             if !entry.unpack_in(&temp).map_err(broken)? {
-                return Err(UpdateError::UnsafeEntry(path));
+                return Err(UpdateError::UnsafeEntry(format!("{path} (al extraer)")));
             }
         }
         let refs: Vec<&str> = files.iter().map(String::as_str).collect();
@@ -94,4 +97,71 @@ pub fn extract(archive: &Path, root: &Path, version: Version) -> Result<(), Upda
     })();
     let _ = std::fs::remove_dir_all(&temp);
     result
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    const ROOT: &str = "titan-agent-0.6.1-linux-x86_64";
+
+    fn tarball(count: usize, link: Option<(&str, &str)>) -> Vec<u8> {
+        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        let mut tar = tar::Builder::new(gz);
+        for binary in &BINARIES[..count] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(1);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tar.append_data(&mut header, format!("{ROOT}/bin/{binary}"), b"x".as_slice())
+                .unwrap();
+        }
+        if let Some((path, target)) = link {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(EntryType::Symlink);
+            header.set_size(0);
+            tar.append_link(&mut header, path, target).unwrap();
+        }
+        tar.into_inner().unwrap().finish().unwrap()
+    }
+
+    fn extract_into(name: &str, bytes: &[u8]) -> (PathBuf, Result<(), UpdateError>) {
+        let root =
+            std::env::temp_dir().join(format!("titan-prepare-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("versions")).unwrap();
+        let archive = root.join("a.tar.gz");
+        std::fs::write(&archive, bytes).unwrap();
+        let result = extract(&archive, &root, Version::parse("0.6.1").unwrap());
+        (root, result)
+    }
+
+    #[test]
+    fn a_complete_archive_lands_in_its_version_folder_with_its_modes() {
+        let (root, result) = extract_into("ok", &tarball(4, None));
+        result.unwrap();
+        let daemon = root.join("versions/0.6.1/bin/titan-agentd");
+        let mode = std::fs::metadata(&daemon).unwrap().permissions().mode();
+        assert_eq!(mode & 0o111, 0o111);
+        assert!(is_prepared(&root, Version::parse("0.6.1").unwrap()));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_escaping_link_or_a_missing_binary_leaves_nothing() {
+        let link = format!("{ROOT}/share/evil");
+        let outside = ["..", "..", "..", "outside"].join("/");
+        let (root, result) = extract_into("link", &tarball(4, Some((&link, &outside))));
+        assert_eq!(result.unwrap_err().code(), "unsafe_entry");
+        assert!(!root.join("versions/0.6.1").exists());
+        let (other, result) = extract_into("missing", &tarball(3, None));
+        assert_eq!(result.unwrap_err().code(), "incomplete");
+        assert_eq!(
+            std::fs::read_dir(other.join("versions")).unwrap().count(),
+            0
+        );
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(other);
+    }
 }

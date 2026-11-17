@@ -66,7 +66,9 @@ fn components_inside<'a>(root: &str, path: &'a str) -> Option<Vec<&'a str>> {
     if path.is_empty() || path.starts_with('/') || path.contains('\\') || root.is_empty() {
         return None;
     }
-    let mut parts = path.split('/').filter(|part| !part.is_empty() && *part != ".");
+    let mut parts = path
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".");
     if parts.next()? != root {
         return None;
     }
@@ -82,7 +84,10 @@ fn components_inside<'a>(root: &str, path: &'a str) -> Option<Vec<&'a str>> {
 pub fn check_bundle(files: &[&str]) -> Result<(), UpdateError> {
     for binary in BINARIES {
         let wanted = format!("bin/{binary}");
-        if !files.iter().any(|file| file.trim_start_matches("./") == wanted) {
+        if !files
+            .iter()
+            .any(|file| file.trim_start_matches("./") == wanted)
+        {
             return Err(UpdateError::Incomplete(binary.to_string()));
         }
     }

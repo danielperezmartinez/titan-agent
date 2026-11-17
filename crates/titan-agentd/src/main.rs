@@ -183,7 +183,10 @@ mod server {
         // The launcher finds the daemon of a bad version by this pid.
         let pid_path = socket.with_file_name(titan_agent_core::protocol::PID_FILE);
         if let Err(error) = std::fs::write(&pid_path, std::process::id().to_string()) {
-            eprintln!("titan-agentd: no se pudo escribir {}: {error}", pid_path.display());
+            eprintln!(
+                "titan-agentd: no se pudo escribir {}: {error}",
+                pid_path.display()
+            );
         }
         let _ = std::fs::remove_file(socket);
         let listener = UnixListener::bind(socket)

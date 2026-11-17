@@ -7,12 +7,7 @@ use titan_agent_core::protocol::UpdateStatus;
 use titan_agent_core::update::apply_blockers;
 
 impl Hub {
-    pub(super) fn update_request(
-        self: &Arc<Self>,
-        client: u64,
-        id: Option<u64>,
-        request: Request,
-    ) {
+    pub(super) fn update_request(self: &Arc<Self>, client: u64, id: Option<u64>, request: Request) {
         let updater = &self.updater;
         let answer: Result<Option<UpdateStatus>, (&'static str, String)> = match request {
             Request::UpdateStatus => Ok(Some(updater.status(self))),

@@ -12,7 +12,9 @@ use crate::launch::point_current;
 /// The folder this launcher was unpacked in: the parent of its `bin/`.
 fn bundle_dir() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let bin = exe.parent().filter(|dir| dir.file_name().is_some_and(|n| n == "bin"));
+    let bin = exe
+        .parent()
+        .filter(|dir| dir.file_name().is_some_and(|n| n == "bin"));
     bin.and_then(Path::parent)
         .map(Path::to_path_buf)
         .ok_or_else(|| format!("{} no está dentro de una carpeta bin/", exe.display()))
@@ -73,7 +75,10 @@ pub fn install() -> Result<(), String> {
     let home = home()?;
     let bin = home.join(".local/bin");
     link(&root.join("titan-agent-launcher"), &bin.join("titan-agent"))?;
-    link(&root.join("current/bin/titan-team"), &bin.join("titan-team"))?;
+    link(
+        &root.join("current/bin/titan-team"),
+        &bin.join("titan-team"),
+    )?;
 
     let icon_source = target.join("share").join(format!("{APP_ID}.svg"));
     let icon = if icon_source.is_file() {

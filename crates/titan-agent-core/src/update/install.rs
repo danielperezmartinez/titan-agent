@@ -96,7 +96,11 @@ pub fn install_root(exe: &Path) -> Option<(PathBuf, Version)> {
 /// Versions to delete once nothing is pending: every one below `current`
 /// except the newest of them (the previous one), and every bad one that is
 /// not `current`. Newer good ones (prepared) stay. Sorted.
-pub fn versions_to_remove(current: Version, installed: &[Version], bad: &[Version]) -> Vec<Version> {
+pub fn versions_to_remove(
+    current: Version,
+    installed: &[Version],
+    bad: &[Version],
+) -> Vec<Version> {
     let previous = installed.iter().filter(|v| **v < current).max().copied();
     let mut remove: Vec<Version> = installed
         .iter()
@@ -174,9 +178,10 @@ mod tests {
 
     #[test]
     fn only_executables_inside_versions_are_installed() {
-        let (root, version) =
-            install_root(Path::new("/h/.local/share/titan-agent/versions/0.6.1/bin/titan-agentd"))
-                .unwrap();
+        let (root, version) = install_root(Path::new(
+            "/h/.local/share/titan-agent/versions/0.6.1/bin/titan-agentd",
+        ))
+        .unwrap();
         assert_eq!(root, Path::new("/h/.local/share/titan-agent"));
         assert_eq!(version, v("0.6.1"));
         for build in [
@@ -196,7 +201,10 @@ mod tests {
             versions_to_remove(v("0.6.1"), &all, &[v("0.7.0")]),
             [v("0.5.0"), v("0.5.2"), v("0.7.0")]
         );
-        assert_eq!(versions_to_remove(v("0.6.1"), &all, &[]), [v("0.5.0"), v("0.5.2")]);
+        assert_eq!(
+            versions_to_remove(v("0.6.1"), &all, &[]),
+            [v("0.5.0"), v("0.5.2")]
+        );
         assert!(versions_to_remove(v("0.5.0"), &[v("0.5.0")], &[v("0.5.0")]).is_empty());
     }
 

@@ -23,8 +23,8 @@ use std::time::{Duration, Instant};
 
 use titan_agent_core::protocol::{UpdateState, UpdateStatus};
 use titan_agent_core::update::{
-    LINUX_TARGET, Pending, RELEASES_URL, UpdateError, Version, accepted_keys,
-    config_dir, install_root, select, verify_manifest, versions_to_remove,
+    LINUX_TARGET, Pending, RELEASES_URL, UpdateError, Version, accepted_keys, config_dir,
+    install_root, select, verify_manifest, versions_to_remove,
 };
 
 use crate::hub::{Hub, now_ms};
@@ -102,10 +102,7 @@ impl Updater {
                 first_check = Duration::from_secs(seconds);
             }
         }
-        let auto = config_dir
-            .as_deref()
-            .map(read_auto)
-            .unwrap_or(true);
+        let auto = config_dir.as_deref().map(read_auto).unwrap_or(true);
         let status = UpdateStatus {
             active: install.is_some(),
             installed: env!("CARGO_PKG_VERSION").to_string(),
@@ -339,7 +336,10 @@ impl Updater {
             (Some(to), _) => (to, true),
             (None, Some(current)) => (current, false),
             (None, None) => {
-                return Err(("nothing_to_apply", "no hay ninguna versión preparada".into()));
+                return Err((
+                    "nothing_to_apply",
+                    "no hay ninguna versión preparada".into(),
+                ));
             }
         };
         let blockers = hub.windows_and_blockers().1;
@@ -494,7 +494,10 @@ mod tests {
         std::os::unix::fs::symlink("versions/0.6.0", root.join("current")).unwrap();
         std::fs::write(root.join("update/pending.json"), "{}").unwrap();
         prune(&root);
-        assert!(root.join("versions/0.5.0").exists(), "pending: nothing goes");
+        assert!(
+            root.join("versions/0.5.0").exists(),
+            "pending: nothing goes"
+        );
         std::fs::remove_file(root.join("update/pending.json")).unwrap();
         prune(&root);
         assert!(!root.join("versions/0.5.0").exists());
