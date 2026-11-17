@@ -1,12 +1,12 @@
 ---
 Nombre: Versión 0.6.0 - Instalador y actualización automática
 Estado: Pendiente
-Resumen: 'Implementar ADR-0011. Hay que montar el workflow «Publicar versión» (tar.gz de Linux, zip experimental de Windows, manifiesto firmado con minisign y atestaciones) y titan-agent-launcher (instalar, desinstalar, lanzar y volver atrás). El actualizador va en el daemon (comprobar cada 6 h, descargar, verificar, preparar y aplicar cuando sea seguro, con exec), y el aviso [^] en la cabecera con su bloque de Configuración. Las builds de debug pasan al socket agentd-dev.sock. Lo hace el equipo v4 y termina publicando la v0.6.0 e instalándola en el PC del usuario.'
+Resumen: 'Implementar ADR-0011. Hay que montar el workflow «Publicar versión» (tar.gz de Linux, zip experimental de Windows, manifiesto firmado con minisign y atestaciones) y titan-agent-launcher (instalar, desinstalar, lanzar y volver atrás). El actualizador va en el daemon (comprobar cada 6 h, descargar, verificar, preparar y aplicar cuando sea seguro, con exec), y el aviso [^] en la cabecera con su bloque de Configuración. Las builds de debug pasan al socket agentd-dev.sock. Lo hace el equipo v5 y termina publicando la v0.6.0 e instalándola en el PC del usuario.'
 Decisiones: '[[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada]] y [[Decisiones visuales/Aviso de actualización en la cabecera]]. Versión 0.6.0 (minor), acordada con el usuario el 2026-11-17. Clave generada con minisign del paquete de Arch, que instala el usuario. Al instalar se retira la entrada «titan-agent (main)» del menú.'
 Bloqueada:
   - '[[Acentos y teclas muertas en el terminal integrado]]'
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T10:00:00+01:00
+Última modificación: 2026-11-17T17:45:00+01:00
 ---
 
 # Versión 0.6.0 - Instalador y actualización automática
@@ -98,11 +98,14 @@ cuando esa PR esté integrada, sobre el `main` resultante.
 Fuera de alcance: el instalador y el actualizador de Windows (se hacen con el
 daemon de Windows), un canal canary y pasar los PTY al daemon nuevo.
 
-## Equipo (variante v4, skill `equipo`)
+## Equipo (configuración v5, skill `equipo`)
 
-- **Opus dirige e implementa.** Fija el contrato antes de los tests, a partir
-  de los §2 a §7 de ADR-0011 y de la decisión visual, sin inventar detalles.
-  Después implementa cada parte con sus tests.
+Configuración vigente descrita en [[Equipo v5]].
+
+- **Opus dirige e implementa.** Fija el contrato numerado y las firmas que
+  usan los tests antes de lanzar a Sol, a partir de los §2 a §7 de ADR-0011 y
+  de la decisión visual, sin inventar detalles. Después implementa cada parte
+  con sus tests; los movimientos de código, con `scripts/mover-lineas.sh`.
 - **Sol escribe pocos tests de aceptación** desde ese contrato, antes de
   implementar:
   - el manifiesto rechazado por cada una de las seis comprobaciones (firma,
@@ -114,14 +117,22 @@ daemon de Windows), un canal canary y pasar los PTY al daemon nuevo.
   - `install` idempotente en un `HOME` temporal;
   - un workflow que rechaza `1.0.0`.
 
+  Al menos uno por apartado del contrato; titan-team formatea y ejecuta los
+  tests tras su turno.
+
   Las firmas de los tests usan una clave de prueba generada para ellos, nunca
   la real.
-- **Revisión de Sol** con contexto limpio al final. Este es el código más
+- **Revisión de Sol** con contexto limpio al final, con la compuerta
+  (`ask --gate`). Este es el código más
   delicado de la app: descarga y ejecuta binarios. Revisa también
   `release.yml` (permisos mínimos, secretos solo en `publicar`, sin
   interpolar entradas en scripts).
-- **Evaluador visual** (Opus nuevo) del aviso contra la previa.
-- **Luna** solo para trabajo mecánico.
+- **Evaluador visual** (Opus nuevo) del aviso contra la previa, con capturas
+  del kit `scripts/demo/` (una escena por estado del aviso: `ready`,
+  confirmación, `applying`, vuelta atrás; hay que añadirlas al kit). La
+  interacción la prueba el usuario con una «Prueba a mano» de pasos y
+  resultado esperado.
+- **Luna** solo para ediciones repetitivas; su turno pasa la compuerta.
 
 ## Criterios de finalización
 

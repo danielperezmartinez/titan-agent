@@ -228,6 +228,9 @@ mod server {
                         }
                         None => ServerMessage::bad_line(error.to_string()),
                     };
+                    if let Some(text) = crate::hub::requests::describe_answer(&answer) {
+                        crate::hub::requests::log(id, &text);
+                    }
                     let _ = tx.send(encode_line(&answer));
                 }
             }

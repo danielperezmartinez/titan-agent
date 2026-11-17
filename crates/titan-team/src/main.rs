@@ -7,6 +7,7 @@
 //! `danger-full-access`, and reads no credentials of any CLI.
 
 mod ask;
+mod checks;
 mod codex;
 mod commands;
 mod config;
@@ -46,8 +47,8 @@ Uso: titan-team [--config RUTA] <orden> [opciones]
   check [--json]                         valida team.toml
   roles [--json]                         lista los roles y el flujo
   new <encargo> --brief FICHERO [--base REV]
-  ask <rol> <encargo> [-m TEXTO | -f FICHERO] [--diff] [--test] [--new]
-                      [--force] [--dry-run] [--json]
+  ask <rol> <encargo> [-m TEXTO | -f FICHERO] [--diff] [--test] [--gate]
+                      [--allow PATRÓN]... [--new] [--force] [--dry-run] [--json]
   show <encargo> [--json]
   diff <encargo> [--stat]
   test <encargo>
@@ -78,10 +79,20 @@ impl Args {
             .find(|(key, _)| names.contains(&key.as_str()))
             .map(|(_, value)| value.as_str())
     }
+
+    /// Every value of a repeatable option, in order.
+    pub fn options(&self, name: &str) -> Vec<&str> {
+        self.options
+            .iter()
+            .filter(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+            .collect()
+    }
 }
 
-const VALUE_OPTIONS: [&str; 7] = [
+const VALUE_OPTIONS: [&str; 8] = [
     "--config",
+    "--allow",
     "--brief",
     "--base",
     "-m",
@@ -89,10 +100,11 @@ const VALUE_OPTIONS: [&str; 7] = [
     "-f",
     "--file",
 ];
-const FLAGS: [&str; 9] = [
+const FLAGS: [&str; 10] = [
     "--json",
     "--diff",
     "--test",
+    "--gate",
     "--new",
     "--force",
     "--dry-run",
@@ -118,6 +130,8 @@ fn accepted(command: &str) -> Option<(usize, &'static [&'static str])> {
                 "--file",
                 "--diff",
                 "--test",
+                "--gate",
+                "--allow",
                 "--new",
                 "--force",
                 "--dry-run",
@@ -173,6 +187,13 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Failure> {
             let value = iter
                 .next()
                 .ok_or_else(|| Failure::usage(format!("{arg} necesita un valor")))?;
+            // A pattern is never an option: `--allow --dry-run` must not
+            // swallow the dry run (use `--allow=-x` for a pattern like that).
+            if arg == "--allow"
+                && (FLAGS.contains(&value.as_str()) || VALUE_OPTIONS.contains(&value.as_str()))
+            {
+                return Err(Failure::usage("--allow necesita un valor"));
+            }
             args.options.push((arg, value));
         } else if let Some((key, value)) = arg.split_once('=')
             && VALUE_OPTIONS.contains(&key)
@@ -282,6 +303,18 @@ mod tests {
         assert_eq!(check_args(&words("show demo extra")).unwrap_err().code, 2);
         assert_eq!(check_args(&words("ask r")).unwrap_err().code, 2);
         assert!(check_args(&words("ask r t -m hi --json --config x")).is_ok());
+        let allow = words("ask r t --allow a/ --gate --allow=b.rs");
+        assert!(check_args(&allow).is_ok());
+        assert_eq!(allow.options("--allow"), ["a/", "b.rs"]);
+        assert_eq!(parse_args(vec!["--allow".into()]).unwrap_err().code, 2);
+        let swallowed = parse_args(
+            ["ask", "r", "t", "--allow", "--dry-run"]
+                .map(String::from)
+                .to_vec(),
+        );
+        assert_eq!(swallowed.unwrap_err().code, 2);
+        assert!(parse_args(vec!["--allow=--odd".into()]).is_ok());
+        assert_eq!(check_args(&words("show t --gate")).unwrap_err().code, 2);
         assert_eq!(check_args(&words("fly")).unwrap_err().code, 2);
     }
 }

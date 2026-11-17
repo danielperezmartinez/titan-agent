@@ -406,9 +406,11 @@ ventana.
   [[Decisiones/ADR-0002 Lanzar sesiones desde la app con salvaguardas]].
 - **Monitor del proyecto**: en tiempo real, con tres vistas. Ver
   [[Decisiones visuales/Monitor del proyecto en tres vistas]].
-- **Equipo**: la herramienta que reparte el trabajo entre roles (Opus dirige,
-  Luna implementa, un diseñador de tests distinto del implementador, Sol revisa).
-  Ver [[Decisiones/ADR-0005 Herramienta del equipo en Rust dentro de titan-agent]].
+- **Equipo**: la herramienta que reparte el trabajo entre roles (Opus dirige e
+  implementa, Sol escribe los tests de aceptación y revisa, Luna solo para
+  ediciones repetitivas). Ver
+  [[Decisiones/ADR-0005 Herramienta del equipo en Rust dentro de titan-agent]];
+  la configuración vigente es la de [[Tareas/Equipo v5]].
 - **Remoto**: más adelante, desde Android a través de titan-ssh.
 
 Plan de construcción por fases:

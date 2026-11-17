@@ -5,7 +5,7 @@ Resumen: Reescribir en Rust la herramienta del equipo (titan-team, con su skill)
 Decisiones: '[[Decisiones/ADR-0010 Formato de team.toml y de los eventos del equipo]]. Se integra la variante equipo v4 (rama feat/fase-3-equipo-v4) por recomendación del evaluador independiente, con init/doc, catálogo y la unión exacta del director traídos de la variante A (feat/fase-3-opus). Hilo ocupado: salida 4 y status busy, conservando el hilo; la otra mitad en [[Abrir los hilos del equipo en solo lectura desde la app]]. Cuota de Codex por account/rateLimits/read; Claude «sin dato». bin/team pasa a envoltorio de titan-team. Versión 0.4.0 (minor).'
 Bloqueada: []
 Fecha de creación: 2026-11-14T15:28:51+01:00
-Última modificación: 2026-11-16T22:06:00+01:00
+Última modificación: 2026-11-17T15:20:00+01:00
 ---
 
 # Fase 3 - Herramienta del equipo en Rust y monitor
@@ -110,6 +110,8 @@ implementar:
    tres vistas.
 
 ## Experimento: variante equipo v4
+
+> Sustituida como configuración vigente por la v5 ([[Equipo v5]]).
 
 Parte de la configuración v3 ([[Fase 2 - Nueva sesión con salvaguardas]],
 «Experimento: variante equipo v3») con estos ajustes:

@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use titan_agent_core::discovery::codex_session;
-use titan_agent_core::protocol::{ServerMessage, TranscriptResult, encode_line};
+use titan_agent_core::protocol::{ServerMessage, TranscriptResult};
 use titan_agent_core::session::Session;
 
 use super::Hub;
@@ -34,9 +34,7 @@ impl Hub {
                 Ok(result) => ServerMessage::result(id, &result),
                 Err((code, text)) => ServerMessage::error(id, code, text),
             };
-            if let Some(c) = hub.lock().clients.get(&client) {
-                let _ = c.tx.send(encode_line(&message));
-            }
+            super::send_to(&hub.lock(), client, message);
         });
     }
 

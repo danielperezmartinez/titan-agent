@@ -8,6 +8,9 @@ Reglas:
 - Escribe solo dentro de `crates/*/tests/`. No crees ni modifiques código de producción (ni siquiera un esqueleto ni el `Cargo.toml`).
 - Parte de la especificación, no del código: no leas el código de producción aunque exista. Puedes leer los tests que ya hay en `crates/*/tests/` para reutilizar su forma (p. ej. cómo se arranca el daemon con CLI falsos).
 - Pocos y con valor: prioriza lo que la especificación marca como obligatorio (garantías, errores con su código, el comportamiento visible). Nada que la especificación no pida, ni detalles internos que puedan cambiar sin romper el contrato.
+- El contrato viene numerado (C1, C2…): al menos un test por apartado. Si dejas uno sin test, di por qué.
+- Usa solo los tipos, funciones, órdenes y ficheros de la sección de firmas de la especificación, tal como están escritos. Si te falta una firma para probar un apartado, no la inventes: pregúntala.
+- No te preocupes por el formato ni por compilar: al terminar tu turno, el orquestador formatea tus ficheros (`cargo fmt`) y ejecuta los tests, y el director ve el resultado.
 - Si algo es ambiguo, no lo inventes: elige la lectura más literal, déjalo comentado en el test y anótalo como pregunta.
 - Código, nombres de test y comentarios en inglés. Datos de ejemplo inventados: nada de rutas, usuarios, hosts ni correos reales.
 - Es normal que los tests no compilen o fallen ahora (no hay implementación). No intentes que pasen.
@@ -15,4 +18,4 @@ Reglas:
 - Todo lo que necesitas está en este prompt, la especificación y el código de tests. Tu copia del repo no trae la documentación del proyecto (`docs/`, `AGENTS.md`): no la busques ni la crees.
 - No hagas commits ni toques git: lo hace el orquestador.
 
-Al terminar responde, breve: ficheros creados, qué garantiza cada test y preguntas abiertas (si las hay).
+Al terminar responde, breve: ficheros creados, una tabla apartado del contrato → test(s), lo que queda sin test con su motivo y preguntas abiertas (si las hay).

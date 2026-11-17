@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-16T21:35:00+01:00
+Última modificación: 2026-11-17T15:20:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -337,6 +337,31 @@ hilo ocupado). Tampoco cambian `v` ni la versión del protocolo:
 - Códigos de salida, en total: **0** bien · **1** turno o test fallido ·
   **2** uso, configuración o estado · **3** tope de rondas · **4** hilo
   ocupado.
+
+### Ampliaciones compatibles del equipo v5 (2026-11-17)
+
+De [[Tareas/Equipo v5]] (carencias del equipo v4 en la
+[[Tareas/Ronda de arreglos 0.5.0|ronda 0.5.0]]). Claves opcionales y
+opciones nuevas: no cambian `version` de `team.toml`, ni `v` de los
+eventos, ni el protocolo; tampoco hay tipos de evento nuevos. El contrato
+completo (C1–C5) está en la nota de la tarea; en resumen:
+
+- `[project] fmt_cmd` y `gate_cmd`; `[roles.<n>] checks` (`"fmt"`,
+  `"test"`, `"gate"`, solo con `workspace-write`) y `checks_required`.
+  Errores: `unknown_value` en `roles.<n>.checks` (valor fuera de la lista o
+  rol `read-only`) y `missing_key` en `project.<nombre>_cmd` si falta la
+  orden de una comprobación.
+- Tras un turno `ok`, las `checks` del rol corren en el worktree antes del
+  commit automático (un `activity` `$ <orden>` antes de cada una), su salida
+  queda en `NN-<rol>.checks.txt` y en `checks` del historial, cada fallo es
+  un aviso `comprobación <nombre> falló (exit N)` y, con
+  `checks_required`, el turno queda `status = "error"` y `ask` sale con 1.
+- `ask --gate`: tras `turn_started` y un `activity` `$ <orden>`, ejecuta
+  `gate_cmd` y añade `# Compuerta (exit N)` con sus últimas 150 líneas al
+  mensaje (y a `NN-<rol>.gate.txt`); sin `gate_cmd`, exit 2 sin lanzar nada
+  ni escribir eventos.
+- `ask --allow <patrón>` (repetible): esas rutas no avisan en ese turno; el
+  historial guarda `allowed`.
 
 ## Alternativas consideradas
 
