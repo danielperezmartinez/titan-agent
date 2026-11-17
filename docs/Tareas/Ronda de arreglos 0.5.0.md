@@ -5,7 +5,7 @@ Resumen: 'Primera ronda de pulido tras la v1 de escritorio (v0.4.0), versión 0.
 Decisiones: 'Versión 0.5.0 sin etiqueta y nada de 1.x hasta que lo decida el usuario (regla en README → Publicación). El usuario pausó la comparación de variantes durante la ronda: solo queda la variante equipo v4, y el objetivo pasa a detectar y corregir las carencias del equipo. La transcripción se lee por el app-server de Codex (decisión del usuario).'
 Bloqueada: []
 Fecha de creación: 2026-11-16T23:15:00+01:00
-Última modificación: 2026-11-17T15:20:00+01:00
+Última modificación: 2026-11-17T15:35:00+01:00
 ---
 
 # Ronda de arreglos 0.5.0
@@ -197,4 +197,6 @@ Fricciones encontradas en esta ronda, con su causa probable y una propuesta.
 
 ## Resultado
 
-<Se rellena al completar.>
+- **Publicación**: PR #8 integrada con squash en `main` el 2026-11-17, commit `b1237e8`, versión **0.5.0** sin etiqueta. Checks `Cambios`, `Fugas`, `Verificar` y `Windows` en verde. GitHub rechazó `--author-email` con el correo noreply, así que el squash sale con el correo principal de la cuenta.
+- El usuario pidió integrarla tal cual: tiene ideas futuras que quizá resuelvan por otro camino los hallazgos de «tomar el control».
+- Quedan en curso [[Acentos y teclas muertas en el terminal integrado]] (prueba a mano) y [[Abrir los hilos del equipo en solo lectura desde la app]] (prueba a mano y hallazgos).

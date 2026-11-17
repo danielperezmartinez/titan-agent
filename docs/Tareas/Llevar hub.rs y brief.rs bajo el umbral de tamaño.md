@@ -1,11 +1,11 @@
 ---
 Nombre: Llevar hub.rs y brief.rs bajo el umbral de tamaño
-Estado: En curso
+Estado: Hecha
 Resumen: Dos ficheros superaban las 800 líneas al fijar la regla de estructura del código (2026-11-16) — crates/titan-agentd/src/hub.rs (unas 1330) y crates/titan-agent/src/brief.rs (unas 920) — y hay que dividirlos o justificar su tamaño en su cabecera, sin cambios de comportamiento.
-Decisiones: 'hub.rs se dividió en la fase 3 (variante equipo v4) y brief.rs en la ronda 0.5.0 (BriefText y sus tests a brief/text.rs), los dos moviendo código sin cambios de comportamiento. Falta integrar la PR de la ronda.'
+Decisiones: 'hub.rs se dividió en la fase 3 (variante equipo v4) y brief.rs en la ronda 0.5.0 (BriefText y sus tests a brief/text.rs), los dos moviendo código sin cambios de comportamiento. Integrado en la PR #8 (v0.5.0).'
 Bloqueada: []
 Fecha de creación: 2026-11-16T18:05:00+01:00
-Última modificación: 2026-11-16T23:05:00+01:00
+Última modificación: 2026-11-17T15:35:00+01:00
 ---
 
 # Llevar hub.rs y brief.rs bajo el umbral de tamaño
@@ -57,4 +57,5 @@ interfaz (`app.rs`).
 
 ## Resultado
 
-<Se rellena al completar.>
+- **Publicación**: PR #8 integrada con squash en `main` el 2026-11-17, commit `b1237e8`, versión **0.5.0** sin etiqueta. Checks `Cambios`, `Fugas`, `Verificar` y `Windows` en verde. GitHub rechazó `--author-email` con el correo noreply, así que el squash sale con el correo principal de la cuenta.
+- `hub.rs` (fase 3) y `brief.rs` (ronda 0.5.0) divididos moviendo código, sin cambios de comportamiento; ningún `.rs` del workspace pasa de 800 líneas.

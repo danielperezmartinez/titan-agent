@@ -2,10 +2,10 @@
 Nombre: Acentos y teclas muertas en el terminal integrado
 Estado: En curso
 Resumen: 'En el terminal integrado de titan-agent, una tecla muerta (el acento agudo de un teclado español) no se compone con la letra siguiente: se escribe una comilla simple y luego la letra (á sale como ''a). Hay que componer las teclas muertas (y, si GPUI lo da, el método de entrada) antes de mandar los bytes al PTY.'
-Decisiones: 'Visto por el usuario en la prueba manual del cierre de la fase 3 (2026-11-16). Ronda 0.5.0: como el terminal de Zed, el texto lo entrega el manejador de entrada de la plataforma (EntityInputHandler), ya compuesto, y el manejador de teclas solo manda teclas especiales y combinaciones con control o alt. Falta la prueba a mano del usuario y la PR.'
+Decisiones: 'Visto por el usuario en la prueba manual del cierre de la fase 3 (2026-11-16). Ronda 0.5.0: como el terminal de Zed, el texto lo entrega el manejador de entrada de la plataforma (EntityInputHandler), ya compuesto, y el manejador de teclas solo manda teclas especiales y combinaciones con control o alt. Integrado en la PR #8 (v0.5.0); falta la prueba a mano del usuario.'
 Bloqueada: []
 Fecha de creación: 2026-11-16T21:50:00+01:00
-Última modificación: 2026-11-16T23:10:00+01:00
+Última modificación: 2026-11-17T15:35:00+01:00
 ---
 
 # Acentos y teclas muertas en el terminal integrado
@@ -162,6 +162,8 @@ Rama `feat/v0.5-equipo-v4` (sin push), 2026-11-16:
   recibe: «sí» debe llegar como `73 c3 ad`.
 
 ## Resultado
+
+- **Publicación**: PR #8 integrada con squash en `main` el 2026-11-17, commit `b1237e8`, versión **0.5.0** sin etiqueta. Checks `Cambios`, `Fugas`, `Verificar` y `Windows` en verde. GitHub rechazó `--author-email` con el correo noreply, así que el squash sale con el correo principal de la cuenta.
 
 - Causa: en Linux GPUI compone las teclas muertas con xkb. La tecla muerta
   llega como `KeyDownEvent` con `key = "'"` (la tecla del teclado

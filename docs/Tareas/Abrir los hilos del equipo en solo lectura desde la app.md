@@ -2,10 +2,10 @@
 Nombre: Abrir los hilos del equipo en solo lectura desde la app
 Estado: En curso
 Resumen: 'En la app, el clic en un rol del equipo abre su hilo en solo lectura (el daemon sirve la transcripción) y solo un «tomar el control» explícito y avisado lanza codex resume; mientras el hilo esté abierto así, el monitor marca el rol. Es la otra mitad del hilo ocupado de titan-team (salida 4), para la fase 4.'
-Decisiones: 'Acordado al cerrar la fase 3 (2026-11-16): titan-team ya conserva el hilo y sale con 4 si está abierto en otro sitio; esta tarea evita que la app lo abra como escritor sin querer. Sin cola en titan-team. Ronda 0.5.0: el usuario eligió leer la transcripción por el app-server de Codex (thread/read y thread/items/list); petición transcript como ampliación compatible de ADR-0007. Falta la prueba a mano y la PR.'
+Decisiones: 'Acordado al cerrar la fase 3 (2026-11-16): titan-team ya conserva el hilo y sale con 4 si está abierto en otro sitio; esta tarea evita que la app lo abra como escritor sin querer. Sin cola en titan-team. Ronda 0.5.0: el usuario eligió leer la transcripción por el app-server de Codex (thread/read y thread/items/list); petición transcript como ampliación compatible de ADR-0007. Integrado en la PR #8 (v0.5.0); faltan la prueba a mano y decidir los hallazgos de la prueba de «tomar el control» (nota de la ronda).'
 Bloqueada: []
 Fecha de creación: 2026-11-16T21:40:00+01:00
-Última modificación: 2026-11-16T23:15:00+01:00
+Última modificación: 2026-11-17T15:35:00+01:00
 ---
 
 # Abrir los hilos del equipo en solo lectura desde la app
@@ -313,6 +313,8 @@ Rama `feat/v0.5-equipo-v4` (sin push), 2026-11-16:
   `.previa/v05-equipo-v4/probar-ventana.sh` (CLI reales, socket propio).
 
 ## Resultado
+
+- **Publicación**: PR #8 integrada con squash en `main` el 2026-11-17, commit `b1237e8`, versión **0.5.0** sin etiqueta. Checks `Cambios`, `Fugas`, `Verificar` y `Windows` en verde. GitHub rechazó `--author-email` con el correo noreply, así que el squash sale con el correo principal de la cuenta.
 
 - **Núcleo**: `transcript` (tipos y conversión de los elementos de Codex),
   `TranscriptResult` y `Request::Transcript` en el protocolo; `Member.busy`;
