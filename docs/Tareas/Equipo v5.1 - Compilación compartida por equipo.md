@@ -1,11 +1,11 @@
 ---
 Nombre: Equipo v5.1 - Compilación compartida por equipo
-Estado: En curso
+Estado: Hecha
 Resumen: 'Ajustes previos a la 0.6.0 sobre las carencias del equipo v5. Los encargos, sus comprobaciones y la compuerta de un mismo equipo compilan en una carpeta compartida (project.target_dir, exportada como CARGO_TARGET_DIR y abierta en el sandbox de los roles que escriben), ligada al checkout del director: otros equipos en paralelo tienen la suya. La compuerta de un encargo nuevo pasa de 221 s a 52 s. Además, la línea «se ejecutará» abrevia HOME a ~, el kit de demo captura sin estilos de hover y la skill pasa la skill al revisor en las tareas sobre el propio equipo. Versión 0.5.2.'
 Decisiones: 'Acordado con el usuario el 2026-11-17 (sesión de control): carpeta de compilación por equipo, no global; sccache queda como mejora futura. Va en una PR previa a la 0.6.0 con la versión 0.5.2 (patch), acordada con el usuario el 2026-11-17.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T18:10:00+01:00
-Última modificación: 2026-11-17T18:10:00+01:00
+Última modificación: 2026-11-17T18:31:00+01:00
 ---
 
 # Equipo v5.1 - Compilación compartida por equipo
@@ -78,5 +78,17 @@ Rama `chore/equipo-v5.1`, en local el 2026-11-17:
   nuevo en el test de `run_shell`.
 - Kit de demo: `demo.sh shots inicio nueva` captura con `shot` sin hover, y
   la línea «se ejecutará» sale como `cd ~/dev/titan-ssh && …`.
+- **PR #10** integrada por squash con autorización del usuario: commit
+  `b1daedb` en `main`, con los checks `Cambios`, `Fugas`, `Verificar` y
+  `Windows` en verde y gitleaks en cada commit y push. Versión 0.5.2, sin
+  etiqueta ni release. El squash salió con el correo principal de la cuenta
+  (el `--author-email` se pasó vacío por un error del agente al leer el
+  correo noreply), que la excepción de [[README#Repositorio y publicación]]
+  permite.
 
 ## Resultado
+
+El equipo comparte carpeta de compilación (`.agents/target` en este repo),
+la línea «se ejecutará» abrevia `HOME`, el kit captura sin hover y la skill
+pasa la skill al revisor en las tareas sobre el equipo. Lo usa ya la ronda
+de la [[Versión 0.6.0 - Instalador y actualización automática|0.6.0]].
