@@ -5,7 +5,7 @@ Resumen: 'Implementar ADR-0011. Hay que montar el workflow «Publicar versión»
 Decisiones: '[[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada]] y [[Decisiones visuales/Aviso de actualización en la cabecera]]. Versión 0.6.0 (minor), acordada con el usuario el 2026-11-17. Clave generada con minisign del paquete de Arch, que instala el usuario. Al instalar se retira la entrada «titan-agent (main)» del menú.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T23:50:00+01:00
+Última modificación: 2026-11-18T01:00:00+01:00
 ---
 
 # Versión 0.6.0 - Instalador y actualización automática
@@ -524,6 +524,9 @@ Rama `feat/v0.6.0`, en local el 2026-11-17:
   Evaluador visual: 2 rondas.
 
 ## Carencias del equipo
+
+Las corrige [[Equipo v6]] (todas salvo la 6, que no pide ajuste), con la
+tabla carencia → ajuste en su nota.
 
 1. **El aislamiento del worktree rechaza órdenes compuestas que nombran git**
    (también `github` en una ruta, o `git` dentro de un mensaje de `-m`) y

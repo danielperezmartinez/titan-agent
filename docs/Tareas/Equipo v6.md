@@ -40,6 +40,70 @@ Numeración de la nota de la 0.6.0 (C = carencia) y el ajuste:
 
 C6 (el evaluador visual funcionó) no pide ajuste.
 
+## Diseño
+
+- **A1. Órdenes y mensajes.** La skill pide, en una sesión en segundo plano
+  o en un worktree, git de una orden por llamada (sin `&&`, `;` ni
+  tuberías) y los mensajes largos escritos con la herramienta de ficheros y
+  pasados por fichero (`git commit -F`, `ask --message-file`). titan-team
+  acepta `--message-file` (sinónimo de `-f`) y rechaza un mensaje vacío
+  (salida 2, sin turno ni eventos).
+- **A2. Rutas en el contrato.** Todo fichero o recurso que nombre el
+  contrato lleva su ruta exacta.
+- **A3. Kit de demo.** La app lee `TITAN_AGENT_DEMO_SIZE` (tamaño inicial)
+  y `TITAN_AGENT_DEMO_KEYS` (guion de teclas que despacha a la ventana con
+  `Window::dispatch_keystroke` 1,5 s después de abrirse); su análisis va en
+  `titan_agent::demo`, con tests. `demo.sh`: escenas `nueva-teclas` y
+  `act-estrecho` (1000x800), `shot` comprueba el tamaño de cada escena,
+  `demo.sh flujos` lista los kits de punta a punta, y el daemon de la demo
+  recibe `TITAN_AGENT_CONFIG_DIR` con un `projects.json` inventado
+  (ADR-0014). La skill pide un kit de punta a punta para los estados que
+  dependen de un servicio.
+- **A4. Luna y el sandbox.** Su prompt dice que unos tests de PTY o sockets
+  fallan dentro de su sandbox: si compila, lo dice («tests bloqueados por
+  el sandbox») sin darlo por fallido; cuenta la compuerta de titan-team.
+- **A5. titan-team fijado.** `bin/team` usa `TITAN_TEAM_BIN`, si no el
+  binario fijado `.agents/team-bin/titan-team`, y si no `cargo run`.
+  `bin/team pin [REV]` lo compila desde esa revisión (`git archive` en una
+  carpeta temporal y la carpeta de compilación del equipo:
+  unos 6 s con las dependencias calientes) y `unpin` lo quita.
+  `titan-team --version`. La skill pide `bin/team pin origin/main` en las
+  tareas sobre el propio equipo.
+- **A6. Lógica de interacción en modelos puros.** La skill exige que la
+  lógica de interacción nueva de la interfaz vaya en funciones o modelos
+  puros con firmas en el contrato y tests de Sol; el prompt del revisor lo
+  añade a sus criterios.
+
+## Configuración v6 (vigente)
+
+Sustituye a la v5 ([[Equipo v5]] y [[Equipo v5.1 - Compilación compartida por equipo]]).
+El reparto no cambia; lo nuevo va marcado:
+
+1. El director (Opus) escribe la especificación con el contrato numerado,
+   las firmas que usan los tests **y la ruta exacta de todo fichero o
+   recurso que nombre** (nuevo). **La lógica de interacción de la interfaz
+   va en modelos puros con sus firmas en el contrato** (nuevo). En las
+   tareas sobre el propio equipo, **dirige con titan-team fijado**
+   (`bin/team pin origin/main`, nuevo).
+2. Sol (gpt-6.1-sol, medium) escribe pocos tests de aceptación, al menos uno
+   por apartado; titan-team los formatea y ejecuta tras su turno.
+3. El director implementa cada parte con sus tests; los movimientos de
+   código, con `scripts/mover-lineas.sh`. **git de una orden por llamada y
+   mensajes por fichero** (nuevo).
+4. Luna (gpt-6-luna) solo para ediciones repetitivas; su turno pasa la
+   compuerta o cuenta como fallido, y **unos tests bloqueados por su
+   sandbox no son un fallo suyo** (nuevo).
+5. Una revisión final de Sol (high) en un hilo nuevo, con la compuerta, sin
+   evaluar lo visual y **comprobando que la lógica de interacción no quede
+   en la vista** (nuevo). El mensaje va con `--message-file` (nuevo).
+6. Evaluador visual: un subagente de Opus nuevo en cada ronda (máximo 2),
+   con capturas del kit por escena y estado, **también estrechas y con
+   texto escrito por el guion de teclas**, y **un kit de punta a punta para
+   los estados que dependen de un servicio** (nuevo); el usuario prueba a
+   mano la lista de clics de la nota.
+
+Fuente de verdad del reparto: `.agents/team.toml` y la skill `equipo`.
+
 ## Contrato (para los tests de aceptación)
 
 ### C1. `titan-team --version`

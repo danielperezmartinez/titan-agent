@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-17T23:40:00+01:00
+Última modificación: 2026-11-18T01:00:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -374,6 +374,21 @@ opcional, sin cambiar `version`:
   `CARGO_TARGET_DIR`, y un rol `workspace-write` también, con la carpeta en
   `sandbox_workspace_write.writable_roots` de Codex. Sin la clave, nada
   cambia.
+
+### Ampliación compatible del equipo v6 (2026-11-18)
+
+De [[Tareas/Equipo v6]]. Opciones nuevas de la línea de órdenes, sin
+cambiar `version`, los eventos ni los códigos de salida:
+
+- `titan-team --version` (o `-V`): `titan-team <versión>`, sin
+  `team.toml`.
+- `ask --message-file FICHERO`: sinónimo de `-f`/`--file`. Un mensaje
+  vacío o solo con espacios (`-m` o fichero) es un error de uso (salida 2)
+  y no lanza el turno ni escribe eventos.
+- `bin/team` (el envoltorio de este repo, no titan-team) elige el binario:
+  `TITAN_TEAM_BIN`, si no el fijado en `.agents/team-bin/titan-team`
+  (`bin/team pin [REV]`, que compila titan-team de esa revisión; `bin/team
+  unpin` lo quita), y si no `cargo run` desde el checkout.
 
 ### Cómo se lanza el turno: ADR-0013 (2026-11-17)
 
