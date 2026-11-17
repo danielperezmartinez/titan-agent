@@ -40,6 +40,7 @@ impl Failure {
 const HELP: &str = "titan-team: encargos del equipo definido en .agents/team.toml
 
 Uso: titan-team [--config RUTA] <orden> [opciones]
+     titan-team --version
 
 Órdenes:
   init [--force]                         crea .agents/team.toml de partida aquí
@@ -47,7 +48,7 @@ Uso: titan-team [--config RUTA] <orden> [opciones]
   check [--json]                         valida team.toml
   roles [--json]                         lista los roles y el flujo
   new <encargo> --brief FICHERO [--base REV]
-  ask <rol> <encargo> [-m TEXTO | -f FICHERO] [--diff] [--test] [--gate]
+  ask <rol> <encargo> [-m TEXTO | -f/--message-file FICHERO] [--diff] [--test] [--gate]
                       [--allow PATRÓN]... [--new] [--force] [--dry-run] [--json]
   show <encargo> [--json]
   diff <encargo> [--stat]
@@ -90,7 +91,7 @@ impl Args {
     }
 }
 
-const VALUE_OPTIONS: [&str; 8] = [
+const VALUE_OPTIONS: [&str; 9] = [
     "--config",
     "--allow",
     "--brief",
@@ -99,8 +100,9 @@ const VALUE_OPTIONS: [&str; 8] = [
     "--message",
     "-f",
     "--file",
+    "--message-file",
 ];
-const FLAGS: [&str; 10] = [
+const FLAGS: [&str; 11] = [
     "--json",
     "--diff",
     "--test",
@@ -111,6 +113,7 @@ const FLAGS: [&str; 10] = [
     "--stat",
     "--delete-branch",
     "--help",
+    "--version",
 ];
 
 /// What each command accepts: its positional arguments and its options
@@ -128,6 +131,7 @@ fn accepted(command: &str) -> Option<(usize, &'static [&'static str])> {
                 "--message",
                 "-f",
                 "--file",
+                "--message-file",
                 "--diff",
                 "--test",
                 "--gate",
@@ -200,9 +204,12 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Failure> {
             && key.starts_with("--")
         {
             args.options.push((key.to_string(), value.to_string()));
-        } else if FLAGS.contains(&arg.as_str()) || arg == "-h" {
-            args.flags
-                .push(if arg == "-h" { "--help".into() } else { arg });
+        } else if FLAGS.contains(&arg.as_str()) || arg == "-h" || arg == "-V" {
+            args.flags.push(match arg.as_str() {
+                "-h" => "--help".into(),
+                "-V" => "--version".into(),
+                _ => arg,
+            });
         } else if arg.starts_with('-') && arg != "-" {
             return Err(Failure::usage(format!("opción desconocida: {arg}")));
         } else {
@@ -214,6 +221,10 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Failure> {
 
 fn run(raw: Vec<String>) -> Result<i32, Failure> {
     let args = parse_args(raw)?;
+    if args.flag("--version") && args.words.is_empty() {
+        println!("titan-team {}", env!("CARGO_PKG_VERSION"));
+        return Ok(0);
+    }
     if args.flag("--help") || args.words.is_empty() {
         println!("{HELP}");
         return Ok(if args.words.is_empty() && !args.flag("--help") {
@@ -316,5 +327,18 @@ mod tests {
         assert!(parse_args(vec!["--allow=--odd".into()]).is_ok());
         assert_eq!(check_args(&words("show t --gate")).unwrap_err().code, 2);
         assert_eq!(check_args(&words("fly")).unwrap_err().code, 2);
+        // -V is --version, which only goes alone; --message-file takes a value.
+        assert!(words("-V").flag("--version"));
+        assert_eq!(check_args(&words("show t --version")).unwrap_err().code, 2);
+        let file = words("ask r t --message-file m.md");
+        assert!(check_args(&file).is_ok());
+        assert_eq!(
+            file.option(&["-f", "--file", "--message-file"]),
+            Some("m.md")
+        );
+        assert_eq!(
+            parse_args(vec!["--message-file".into()]).unwrap_err().code,
+            2
+        );
     }
 }

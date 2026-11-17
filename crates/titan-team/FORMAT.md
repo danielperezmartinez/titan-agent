@@ -117,7 +117,8 @@ Se informa de **todos** a la vez, cada uno con `path` (p. ej.
 
 ## Órdenes
 
-`titan-team --help` las lista. `new` crea el encargo (rama, worktree y estado);
+`titan-team --help` las lista y `titan-team --version` (o `-V`) da la
+versión. `new` crea el encargo (rama, worktree y estado);
 `ask <rol> <encargo>` es un turno de un rol de Codex, que continúa su hilo si
 ya tiene uno (`-m`/`-f` obligatorio entonces; `--new` empieza otro), ejecuta
 las `checks` del rol, hace commit de lo que escribió y avisa de rutas.
@@ -127,7 +128,10 @@ con sus últimas 150 líneas (también en `NN-<rol>.gate.txt`): sirve para un ro
 `read-only` que no puede ejecutarla. `ask --allow <patrón>` (repetible)
 autoriza esas rutas en ese turno: no avisan por `allowed_paths` ni
 `forbidden_paths`, y el historial guarda los patrones en `allowed`; `show`, `diff`, `test`; `decide -m`
-anota una decisión del director; `close` quita el worktree. `new`, `ask` y
+anota una decisión del director; `close` quita el worktree. El mensaje del
+director va con `-m TEXTO` o desde un fichero con `-f`/`--file`/`--message-file`
+(nunca los dos); un mensaje vacío o solo con espacios es un error de uso
+(salida 2) y no lanza el turno. `new`, `ask` y
 `close` toman un bloqueo por encargo (otra orden a la vez: salida 2,
 «ocupado»).
 

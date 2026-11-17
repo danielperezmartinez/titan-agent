@@ -11,6 +11,8 @@ docs/.obsidian/cache
 .agents/worktrees/
 # Carpeta de compilación compartida por los encargos del equipo
 .agents/target/
+# titan-team fijado con bin/team pin (para las tareas sobre el propio equipo)
+.agents/team-bin/
 # Estado del equipo: sus salidas pueden contener datos del entorno
 .agents/state/
 __pycache__/
