@@ -1,14 +1,14 @@
 ---
 Nombre: Distribución en GitHub Releases con instalación por usuario y actualización firmada
 Número: 11
-Estado: Propuesta
-Resumen: 'Cómo se distribuye y se actualiza titan-agent desde la 0.6.0, acordado con el usuario el 2026-11-17. El CI publica en GitHub Releases un tar.gz para Linux y un zip experimental para Windows, desde un workflow lanzado a mano sobre main que crea él mismo la etiqueta v0.x.y. Nunca una 1.x sin decisión del usuario. En Linux se instala por usuario en ~/.local, sin sudo: una carpeta por versión, el enlace current, un lanzador estable y la entrada en el menú de Plasma. El daemon comprueba cada 6 h un manifiesto firmado con minisign, descarga y verifica en segundo plano y deja la versión preparada. La cabecera muestra un aviso discreto con el botón «actualizar». Al cerrar la ventana, el daemon aplica la versión cuando no hay ventana conectada ni sesiones trabajando con terminal en él, y se reinicia con exec. Si la versión nueva no arranca dos veces, el lanzador vuelve a la anterior. La comprobación no envía datos del usuario.'
+Estado: Aceptada
+Resumen: 'Aceptada por el usuario el 2026-11-17. Cómo se distribuye y se actualiza titan-agent desde la 0.6.0. El CI publica en GitHub Releases un tar.gz para Linux y un zip experimental para Windows, desde un workflow lanzado a mano sobre main que crea él mismo la etiqueta v0.x.y. Nunca una 1.x sin decisión del usuario. En Linux se instala por usuario en ~/.local, sin sudo: una carpeta por versión, el enlace current, un lanzador estable y la entrada en el menú de Plasma. El daemon comprueba cada 6 h un manifiesto firmado con minisign, descarga y verifica en segundo plano y deja la versión preparada. La cabecera muestra un aviso discreto con el botón «actualizar». Al cerrar la ventana, el daemon aplica la versión cuando no hay ventana conectada ni sesiones trabajando con terminal en él, y se reinicia con exec. Si la versión nueva no arranca dos veces, el lanzador vuelve a la anterior. La comprobación no envía datos del usuario.'
 Decisión: 'Artefactos solo en GitHub Releases generados por un workflow manual sobre main que valida 0.x.y y crea la etiqueta. En Linux, tar.gz instalado por usuario con carpetas por versión, enlace current y lanzador estable con vuelta atrás. En Windows, zip portable experimental. Manifiesto con SHA-256 firmado con minisign (clave privada en el environment release y en una copia fuera de línea del usuario, pública dentro de la app, con lista de claves para rotar), más atestaciones de GitHub para la primera instalación. El daemon comprueba, descarga, verifica y aplica cuando es seguro. El aviso va en la cabecera.'
 Consecuencias: 'La clave privada de minisign pasa a ser el secreto más crítico del proyecto: con ella se ejecuta código en cada instalación. El daemon gana red, descarga y su propio reemplazo, así que el actualizador debe ser lo más estable y lo más probado del código. Hay un binario más, titan-agent-launcher, que cambia poco. Las builds de debug pasan a otro socket. Reiniciar el daemon corta los terminales adjuntos (las sesiones siguen vivas en su CLI) y pierde su historial. Windows se publica sin firma y sin actualizador hasta que exista su daemon.'
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T10:00:00+01:00
+Última modificación: 2026-11-17T17:00:00+01:00
 ---
 
 # ADR-0011 · Distribución en GitHub Releases con instalación por usuario y actualización firmada
@@ -395,6 +395,8 @@ A partir de ahí, las versiones llegan solas.
   - Windows sale sin firma y sin actualizador hasta que tenga daemon.
   - `[workspace.package].version` no puede pasar a 1.x. Mientras sea 0.x, un
     cambio incompatible sube la `minor`.
+- Aceptada por el usuario el 2026-11-17, tras ver un boceto de la cabecera,
+  de Configuración y del flujo.
 - Afecta a [[Tareas/Versión 0.6.0 - Instalador y actualización automática]],
   que lo implementa, y a la sección «Distribución» de
   [[Seguridad/Checklist de lanzamiento]].

@@ -1,13 +1,13 @@
 ---
 Nombre: Aviso de actualización en la cabecera
-Estado: Propuesta
+Estado: Aceptada
 Ámbito: Componente
-Resumen: 'Cuando hay una versión nueva, la cabecera muestra a la derecha, entre los contadores de estado y los botones [i] y [*], una sola línea discreta con el marcador ASCII nuevo [^], la versión en mute y el enlace «actualizar» en accent. Si hay agentes trabajando, la confirmación se despliega en esa misma línea. No hay toasts, ventanas ni nada en el árbol. Los ajustes («Buscar actualizaciones», «Buscar ahora», la versión instalada) viven en Configuración.'
+Resumen: 'Aceptada por el usuario el 2026-11-17, tras ver un boceto de todos los estados. Cuando hay una versión nueva, la cabecera muestra a la derecha, entre los contadores de estado y los botones [i] y [*], una sola línea discreta con el marcador ASCII nuevo [^], la versión en mute y el enlace «actualizar» en accent. Si hay agentes trabajando, la confirmación se despliega en esa misma línea. No hay toasts, ventanas ni nada en el árbol. Los ajustes («Buscar actualizaciones», «Buscar ahora», la versión instalada) viven en Configuración.'
 Decisión: 'Aviso de actualización como elemento en línea en el extremo derecho de la cabecera, con el marcador [^], estados en mute, «actualizar» como enlace accent y confirmación en la misma línea; sin toasts ni modales.'
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T10:00:00+01:00
+Última modificación: 2026-11-17T17:00:00+01:00
 ---
 
 # Aviso de actualización en la cabecera
@@ -65,7 +65,8 @@ Boceto (cabecera a 1280 px, estado `ready`):
 titan-agent torre de control      [>] 3 trabajando  [?] 1 te necesita  [+] 4 en espera   [^] v0.6.1 · actualizar   [i]  [*]
 ```
 
-La previa se dibuja en `design/preview/` dentro de
+El usuario aprobó el 2026-11-17 un boceto con estos estados (un lienzo fuera
+del repo). La previa versionada se dibuja en `design/preview/` dentro de
 [[Tareas/Versión 0.6.0 - Instalador y actualización automática]], antes de
 implementarlo, y el evaluador visual la usa como referencia.
 
