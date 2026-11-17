@@ -5,7 +5,7 @@ Resumen: 'En la app, el clic en un rol del equipo abre su hilo en solo lectura (
 Decisiones: 'Acordado al cerrar la fase 3 (2026-11-16): titan-team ya conserva el hilo y sale con 4 si está abierto en otro sitio; esta tarea evita que la app lo abra como escritor sin querer. Sin cola en titan-team. Ronda 0.5.0: el usuario eligió leer la transcripción por el app-server de Codex (thread/read y thread/items/list); petición transcript como ampliación compatible de ADR-0007. Integrado en la PR #8 (v0.5.0); faltan la prueba a mano y decidir los hallazgos de la prueba de «tomar el control» (nota de la ronda).'
 Bloqueada: []
 Fecha de creación: 2026-11-16T21:40:00+01:00
-Última modificación: 2026-11-17T15:35:00+01:00
+Última modificación: 2026-11-17T23:30:00+01:00
 ---
 
 # Abrir los hilos del equipo en solo lectura desde la app
@@ -365,3 +365,20 @@ y 3 menores**. Decisiones:
   rol revisor». Aplazado: el estado del rol en la barra de solo lectura.
   Descartado: el alto de las tarjetas de la mesa y la flecha del feed (no
   son de esta rama).
+
+## Sustituida por el chat de sesión (2026-11-17)
+
+La vista de solo lectura y «tomar el control» pasan a ser el chat de
+[[Chat de sesión con Codex y Claude Code]]
+([[Decisiones/ADR-0012 Chat de sesión sobre las vías oficiales de cada CLI|ADR-0012]]
+y [[Decisiones/ADR-0013 Turnos de titan-team por el app-server de Codex|ADR-0013]]):
+
+- el usuario habla con el rol por el app-server compartido;
+- titan-team ejecuta sus turnos en el mismo app-server, así que ya no hay
+  escritor doble;
+- con el rol ocupado, el mensaje va a la cola oficial de Codex.
+
+Los hallazgos de «tomar el control» de la prueba manual (ver
+[[Ronda de arreglos 0.5.0]]) los resuelve esa tarea, que tiene un solo
+camino de entrada. Esta tarea se cierra cuando aquella se integre. Hasta
+entonces sigue pendiente su prueba a mano.
