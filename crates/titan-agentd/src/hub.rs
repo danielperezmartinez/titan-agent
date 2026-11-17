@@ -27,6 +27,7 @@ use crate::claude::run_with_timeout;
 use crate::codex::{CodexClient, socket_path as codex_socket_path};
 
 mod launch;
+pub(crate) mod requests;
 mod terminals;
 mod threads;
 
@@ -243,11 +244,10 @@ impl Hub {
     /// Handles one request line from a client.
     pub fn handle(self: &Arc<Self>, client: u64, message: ClientMessage, hello_done: &mut bool) {
         let id = message.id;
-        let reply = |state: &State, answer: ServerMessage| {
-            if let Some(c) = state.clients.get(&client) {
-                let _ = c.tx.send(encode_line(&answer));
-            }
-        };
+        if let Some(text) = requests::describe(&message.request) {
+            requests::log(client, &text);
+        }
+        let reply = |state: &State, answer: ServerMessage| send_to(state, client, answer);
         if !*hello_done && !matches!(message.request, Request::Hello { .. }) {
             if let Some(id) = id {
                 reply(
@@ -359,9 +359,7 @@ impl Hub {
                             Ok(()) => ServerMessage::result(id, &serde_json::json!({})),
                             Err(text) => ServerMessage::error(id, "stop_failed", text),
                         };
-                        if let Some(c) = state.clients.get(&client) {
-                            let _ = c.tx.send(encode_line(&message));
-                        }
+                        send_to(&state, client, message);
                     }
                 });
             }
@@ -451,7 +449,11 @@ fn rebuild(state: &mut State) {
     state.sessions = sessions;
 }
 
+/// Sends an answer to one client; an error answer also goes to the log.
 fn send_to(state: &State, client: u64, message: ServerMessage) {
+    if let Some(text) = requests::describe_answer(&message) {
+        requests::log(client, &text);
+    }
     if let Some(c) = state.clients.get(&client) {
         let _ = c.tx.send(encode_line(&message));
     }

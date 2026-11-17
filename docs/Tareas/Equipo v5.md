@@ -2,10 +2,10 @@
 Nombre: Equipo v5
 Estado: En curso
 Resumen: 'Corrige las carencias del equipo v4 anotadas en la ronda 0.5.0: titan-team ejecuta formato y tests tras los turnos de los roles que escriben y pasa la compuerta al revisor, la skill exige un contrato numerado con las firmas que usan los tests, los movimientos de código los hace el director con un script, hay un kit de demo versionado en scripts/demo/ con escenas y captura verificada por PID, y ask --allow autoriza una ruta en un turno. Deja la configuración v5 como la vigente.'
-Decisiones: 'Ajustes acordados con el usuario desde la sesión de control (2026-11-17). Lo que toque ficheros que también cambia feat/v0.5-equipo-v4 espera a que la 0.5.0 se integre (rebase antes de la PR). Las comprobaciones no añaden tipos de evento: van como activity, warnings y status del turno, para no tocar titan_agent_core::team (lo cambia la 0.5.0).'
+Decisiones: 'Ajustes acordados con el usuario desde la sesión de control (2026-11-17). Versión 0.5.1 (patch), acordada con el usuario para no mover la 0.6.0 de la distribución (ADR-0011). Lo que toque ficheros que también cambia feat/v0.5-equipo-v4 espera a que la 0.5.0 se integre (rebase antes de la PR). Las comprobaciones no añaden tipos de evento: van como activity, warnings y status del turno, para no tocar titan_agent_core::team (lo cambia la 0.5.0).'
 Bloqueada: []
 Fecha de creación: 2026-11-17T14:52:00+01:00
-Última modificación: 2026-11-17T14:52:00+01:00
+Última modificación: 2026-11-17T17:50:00+01:00
 ---
 
 # Equipo v5
@@ -41,7 +41,7 @@ Numeración de la nota de la 0.5.0 (C = carencia) y el ajuste acordado:
 | C9. El evaluador visual no prueba la interacción | A4: escenas por estado y lista de clics para el usuario |
 | C6. Avisos de `forbidden_paths` que no aportan | A5: `ask --allow <patrón>` |
 | C11. El traspaso al usuario no daba pasos ni resultado esperado | A4: «Prueba a mano» con pasos numerados y su resultado esperado |
-| C12. El daemon no registra las peticiones que recibe | A6: pendiente de la integración de la 0.5.0 (toca el daemon) |
+| C12. El daemon no registra las peticiones que recibe | A6: una línea por petición y por error en el log del daemon |
 | C13. Los scripts de prueba dejaban vivo su daemon | A4: `shot`, `shots` y `probar` paran la demo al salir |
 
 C11–C13 salieron de la prueba manual de la 0.5.0 (nota de la ronda, rama
@@ -115,12 +115,15 @@ repetitivas en muchos sitios con un patrón fijado.
   qué se prueba, la orden y una lista numerada de pasos con el resultado
   esperado de cada uno, que se le da al usuario tal cual.
 
-### A6. Registro de peticiones del daemon (pendiente)
+### A6. Registro de peticiones del daemon
 
-Que `titan-agentd` deje una línea por petición recibida (método, sesión y
-resultado; nunca el texto que se escribe en un terminal) en su log, para que
-una prueba deje rastro. Toca el daemon, que cambia la 0.5.0: se hace tras
-integrarla, antes de la PR, o pasa a una tarea propia si no cabe.
+`titan-agentd` escribe en su log (stderr) una línea por petición recibida
+(`HH:MM:SSZ cliente N: attach cl:… (80x24)`) y otra por cada error que
+responde (`error <código> en la petición <id>: <mensaje>`), para que una
+prueba a mano deje rastro. Nunca lo que escribe el usuario: `input` y
+`resize` no se registran (uno por tecla o por fotograma) y `launch` va sin el
+encargo ni la orden. Módulo `crates/titan-agentd/src/hub/requests.rs`, con su
+test. Se hizo tras integrar la 0.5.0, que cambiaba el daemon.
 
 ### A5. `ask --allow <patrón>`
 
@@ -271,37 +274,43 @@ control.
 
 ## Verificación
 
-Rama `feat/equipo-v5` (subida a `origin`, sin PR hasta integrar la 0.5.0), en
-local el 2026-11-17:
+Rama `feat/equipo-v5`, rebasada sobre `main` con la 0.5.0 integrada (PR #8)
+y la ADR-0011, en local el 2026-11-17:
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
-  warnings` y `cargo test --workspace` en verde: **123 tests** (112 en
+  warnings` y `cargo test --workspace` en verde: **142 tests** (130 en
   `main`): 8 de aceptación de Sol (`equipo_v5_acceptance.rs`, commit
-  `ec5555e`, sin tocar desde entonces y en verde a la primera) y 3 propios
-  (validación de `checks`, resumen de comprobaciones y la compuerta dentro
-  del turno), más casos nuevos en el test de argumentos. Hooks de gitleaks
-  en cada commit y push.
-- La compuerta de `--gate` pasó en el worktree del revisor (exit 0).
+  `ec5555e`, sin tocar desde entonces y en verde a la primera) y 4 propios
+  (validación de `checks`, resumen de comprobaciones, la compuerta dentro del
+  turno y el registro de peticiones del daemon), más casos nuevos en el test
+  de argumentos (`--allow --dry-run`). Hooks de gitleaks en cada commit y
+  push.
+- La compuerta de `--gate` pasó en el worktree del revisor (exit 0, unos
+  8 min de build en frío).
 - Kit de demo: `demo.sh shots` capturó `inicio`, `terminal`, `nueva`,
-  `nueva-menu`, `ajustes`, `grafo`, `carriles`, `mesa` (1440×900, PID
-  comprobado, sin datos del entorno en la imagen) y, tras salir, no queda
-  ningún proceso de la demo. Las escenas de hilo se comprueban tras el
-  rebase sobre la 0.5.0.
+  `nueva-menu`, `ajustes`, `grafo`, `carriles`, `mesa`, `hilo`,
+  `hilo-largo` (abre abajo) e `hilo-confirmar` (1440×900, PID comprobado,
+  sin datos del entorno en la imagen); al salir no queda ningún proceso de
+  la demo. El log del daemon privado recoge `hello`, `subscribe` y
+  `transcript cx:…` de cada ventana (A6).
 - `mover-lineas.sh`: probado con rango válido, inserción, destino nuevo,
   rango fuera del fichero, el mismo fichero por enlace duro y simbólico, y
   un origen sin salto final (se niega sin crear nada).
-- **Pendiente**: rebase sobre la 0.5.0, A6, la versión que acuerde el
-  usuario, `docs/README.md` (Propósito → Equipo), PR, CI e integración.
+- Versión **0.5.1** (acordada con el usuario el 2026-11-17: patch, para no
+  mover la 0.6.0 de la distribución que fija ADR-0011).
+- **Pendiente**: PR, CI e integración con autorización del usuario.
 
 ## Métricas
 
 - **Tiempo**: de 14:45 a 15:17 del 2026-11-17 (unos **32 min**) hasta la
-  rama lista para el rebase, sin paradas por límites de uso ni esperas al
-  usuario. Queda la espera a la integración de la 0.5.0.
-- **Uso de Claude** (transcript, Opus 5.5) hasta aquí: 123 respuestas y 142
-  llamadas a herramientas, unos **122 k tokens de salida, 298 k de escritura
-  en caché y 27,8 M de lectura de caché**. Sin subagentes (no hay interfaz
-  nueva que evaluar).
+  rama lista para el rebase y, tras integrarse la 0.5.0, unos **25 min** más
+  (rebase, A6, escenas de hilo, versión y bóveda), hasta las 17:50. Esperas
+  al usuario: dos preguntas de versión, de poco más de 1 min. Sin paradas
+  por límites de uso.
+- **Uso de Claude** (transcript, Opus 5.5) hasta abrir la PR: unas 150
+  respuestas y 175 llamadas a herramientas, unos **140 k tokens de salida,
+  640 k de escritura en caché y 37 M de lectura de caché**. Sin subagentes
+  (no hay interfaz nueva que evaluar).
 - **Codex**: 2 llamadas, 1,05 M de entrada (0,95 M en caché) y 13 k de salida.
 
   | Encargo | Rol | Entrada (caché) | Salida | Tiempo |

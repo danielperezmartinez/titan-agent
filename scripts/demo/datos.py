@@ -180,17 +180,19 @@ def cmd(command, code=0):
             "exitCode": code}
 
 
-def review_items():
-    """A long reviewer thread: the view must open at its end."""
-    items = [("r1", user("Eres el REVISOR de un equipo. Revisas con contexto limpio.\n\n"
-                         "# Compuerta (exit 0)\n\ntest result: ok. 214 passed"))]
-    files = ["sftp.rs", "explorer.rs", "rename.rs", "errors.rs", "protocol.rs"]
+def mechanic_items():
+    """A long finished thread (Luna): the read-only view must open at its end."""
+    items = [("m1", user("Eres el AYUDANTE MECÁNICO de un equipo.\n\n"
+                         "Renombra los helpers de sftp.rs según la lista del encargo."))]
+    helpers = ["open_dir", "stat_entry", "rename_entry", "remove_entry", "read_link"]
     for n in range(1, 31):
-        name = files[n % len(files)]
-        items.append(("r1", cmd(f"sed -n {n * 40},{n * 40 + 60}p crates/shared/src/{name}")))
-        items.append(("r1", {"type": "reasoning", "summary": [
-            f"Paso {n}: comprobar {name} frente al contrato C{n % 4 + 1}."], "content": []}))
-    items.append(("r1", agent("Leyendo los tests de aceptación: cubren C1–C4.")))
+        name = helpers[n % len(helpers)]
+        items.append(("m1", cmd(f"rg -n {name} crates/shared/src")))
+        items.append(("m1", {"type": "reasoning", "summary": [
+            f"Paso {n}: cambiar las llamadas a {name} en el sitio {n}."], "content": []}))
+    items.append(("m1", {"type": "fileChange", "changes": [{"path": "crates/shared/src/sftp.rs"}]}))
+    items.append(("m1", cmd("cargo test -p shared sftp")))
+    items.append(("m1", agent("Renombrados 4 helpers en sftp.rs; 8/8 tests pasan.")))
     return items
 
 
@@ -212,12 +214,14 @@ threads = {
     "th-mec": {"cwd": os.path.join(WT, "sftp-renombrar"), "source": "exec",
                "preview": "Eres el AYUDANTE MECÁNICO de un equipo.", "updated": NOW_S - 700,
                "model": "gpt-6-luna",
-               "items": [("m1", user("Eres el AYUDANTE MECÁNICO de un equipo.\n\nRenombra los helpers.")),
-                         ("m1", {"type": "fileChange", "changes": [{"path": "crates/shared/src/sftp.rs"}]}),
-                         ("m1", agent("Renombrados 4 helpers en sftp.rs."))]},
+               "items": mechanic_items()},
     "th-rev": {"cwd": os.path.join(WT, "sftp-renombrar"), "source": "exec", "active": True,
                "preview": "Eres el REVISOR de un equipo.", "updated": NOW_S - 60,
-               "model": "gpt-6.1-sol", "items": review_items()},
+               "model": "gpt-6.1-sol",
+               "items": [("r1", user("Eres el REVISOR de un equipo.\n\n# Compuerta (exit 0)\n\n"
+                                     "test result: ok. 214 passed")),
+                         ("r1", cmd("git diff a1b2c3d..HEAD --stat")),
+                         ("r1", agent("Leyendo los tests de aceptación: cubren C1–C4."))]},
     "th-links-tests": {"cwd": os.path.join(WT, "sftp-enlaces"), "source": "exec",
                        "preview": "Eres el DISEÑADOR DE TESTS DE ACEPTACIÓN de un equipo.",
                        "updated": NOW_S - 5250, "model": "gpt-6.1-sol",

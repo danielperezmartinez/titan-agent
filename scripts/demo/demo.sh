@@ -71,9 +71,9 @@ describe() {
     grafo) echo "monitor de titan-ssh, vista grafo (revisor trabajando, otro encargo te necesita)" ;;
     carriles) echo "monitor de titan-ssh, vista carriles" ;;
     mesa) echo "monitor de titan-ssh, vista mesa" ;;
-    hilo) echo "hilo de Sol (tests) en solo lectura (desde la 0.5.0)" ;;
-    hilo-largo) echo "hilo largo del revisor: debe abrir abajo (desde la 0.5.0)" ;;
-    hilo-confirmar) echo "hilo con la confirmación de tomar el control (desde la 0.5.0)" ;;
+    hilo) echo "hilo de Sol (tests) en solo lectura" ;;
+    hilo-largo) echo "hilo largo de Luna (terminado): debe abrir abajo" ;;
+    hilo-confirmar) echo "hilo con la confirmación de tomar el control" ;;
     *) return 1 ;;
   esac
 }
@@ -89,7 +89,7 @@ scene_env() {
     ajustes) export TITAN_AGENT_SETTINGS=1 ;;
     grafo | carriles | mesa) export TITAN_AGENT_PROJECT=titan-ssh TITAN_AGENT_MONITOR="$1" ;;
     hilo) scene_env grafo; export TITAN_AGENT_THREAD=disenador_tests ;;
-    hilo-largo) scene_env grafo; export TITAN_AGENT_THREAD=revisor ;;
+    hilo-largo) scene_env grafo; export TITAN_AGENT_THREAD=mecanico ;;
     hilo-confirmar) scene_env hilo; export TITAN_AGENT_DEMO_CONFIRM=1 ;;
     *) die "escena desconocida: $1 (demo.sh escenas)" ;;
   esac
