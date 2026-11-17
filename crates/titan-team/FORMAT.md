@@ -37,7 +37,9 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
 | `base` | texto | `"main"` | Rama de la que sale cada encargo (`new --base` la cambia). |
 | `worktrees_dir` | ruta | `".agents/worktrees"` | Un worktree por encargo. |
 | `branch_prefix` | texto | `"encargo/"` | Prefijo de la rama de cada encargo. |
-| `test_cmd` | texto | — | Orden de tests (`titan-team test`, `ask --test`). |
+| `test_cmd` | texto | — | Orden de tests (`titan-team test`, `ask --test`, comprobación `test`). |
+| `fmt_cmd` | texto | — | Formatea el worktree en el sitio (comprobación `fmt`), p. ej. `cargo fmt --all`. |
+| `gate_cmd` | texto | — | Compuerta completa: formato, lints y tests (comprobación `gate`, `ask --gate`). |
 | `test_timeout_s` | entero > 0 | `300` | Tope de los tests, en segundos. |
 | `autocommit` | booleano | `false` | Commit tras cada turno de un rol que escribe. |
 | `hidden_paths` | lista de patrones | `[]` | Lo que no se copia al worktree (sparse checkout); sigue en la rama. |
@@ -70,6 +72,8 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
 | `output_schema` | ruta a un esquema JSON | no | — |
 | `allowed_paths` | lista de patrones | no | `[]` (aviso si el rol escribe fuera) |
 | `forbidden_paths` | lista de patrones | no | `[]` (aviso si escribe dentro) |
+| `checks` | lista de `"fmt"` · `"test"` · `"gate"` | no | `[]` (solo con `sandbox = "workspace-write"`) |
+| `checks_required` | booleano | no | `false` (si una comprobación falla, el turno falla) |
 | `config` | lista de `clave=valor` | no | `[]` (tras las de `[codex]`) |
 | `timeout_s` | entero > 0 | no | `900` |
 | `purpose` | texto | no | `""` |
@@ -80,6 +84,15 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
 - `allowed_paths` y `forbidden_paths`: comodines al estilo `fnmatch` sobre
   rutas relativas al repo (`*` cubre también `/`, `?`, `[abc]`, `[!abc]`);
   uno que termina en `/` cubre todo lo de debajo.
+- `checks`: tras un turno `ok` de ese rol, titan-team ejecuta en el worktree,
+  en ese orden y todas aunque falle una, las órdenes `[project] <nombre>_cmd`
+  (tope `test_timeout_s`), **antes del commit automático**: lo que cambien
+  (el formato) entra en el commit del turno. Su salida queda en
+  `<encargo>/NN-<rol>.checks.txt` y en `checks` del historial; cada una que
+  falla añade el aviso `comprobación <nombre> falló (exit N)`. Con
+  `checks_required = true`, si alguna falla el turno queda `status = "error"`
+  y `ask` sale con 1 (el commit se hace igual). Un turno que no acaba `ok` no
+  ejecuta ninguna.
 - `hidden_paths`: patrones de `git sparse-checkout` (`/AGENTS.md` es el de la
   raíz; `/docs/`, la carpeta entera).
 
@@ -93,9 +106,9 @@ Se informa de **todos** a la vez, cada uno con `path` (p. ej.
 | `parse_error` | el TOML no se puede leer |
 | `bad_version` | `version` no es `1` |
 | `unknown_key` | una clave que el formato no define |
-| `missing_key` | falta una clave obligatoria |
+| `missing_key` | falta una clave obligatoria, o la orden `[project] <nombre>_cmd` de una comprobación |
 | `bad_type` | otro tipo, fuera de rango (`timeout_s = 0`) o un `config` sin `clave=valor` |
-| `unknown_value` | un valor fuera de su lista, o un rol `claude` con `launch = true` |
+| `unknown_value` | un valor fuera de su lista, un rol `claude` con `launch = true` o `checks` en un rol `read-only` |
 | `unknown_role` | `flow` nombra un rol que no existe |
 | `missing_file` | `prompt_file` u `output_schema` no existen |
 
@@ -105,8 +118,13 @@ Se informa de **todos** a la vez, cada uno con `path` (p. ej.
 
 `titan-team --help` las lista. `new` crea el encargo (rama, worktree y estado);
 `ask <rol> <encargo>` es un turno de un rol de Codex, que continúa su hilo si
-ya tiene uno (`-m`/`-f` obligatorio entonces; `--new` empieza otro), hace
-commit de lo que escribió y avisa de rutas; `show`, `diff`, `test`; `decide -m`
+ya tiene uno (`-m`/`-f` obligatorio entonces; `--new` empieza otro), ejecuta
+las `checks` del rol, hace commit de lo que escribió y avisa de rutas.
+`ask --gate` ejecuta antes `gate_cmd` y añade al mensaje `# Compuerta (exit N)`
+con sus últimas 150 líneas (también en `NN-<rol>.gate.txt`): sirve para un rol
+`read-only` que no puede ejecutarla. `ask --allow <patrón>` (repetible)
+autoriza esas rutas en ese turno: no avisan por `allowed_paths` ni
+`forbidden_paths`, y el historial guarda los patrones en `allowed`; `show`, `diff`, `test`; `decide -m`
 anota una decisión del director; `close` quita el worktree. `new`, `ask` y
 `close` toman un bloqueo por encargo (otra orden a la vez: salida 2,
 «ocupado»).

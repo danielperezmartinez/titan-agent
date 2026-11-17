@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use titan_agent_core::team::{EventKind, Findings, STATUS_BUSY, TEXT_LIMIT, clip, first_line};
 
+use crate::checks::{self, CheckRun};
 use crate::commands::{run_tests, worktree};
 use crate::config::{Role, TeamConfig, resolve};
-use crate::process::{git, git_ok, last_lines, path_warnings};
+use crate::process::{git, git_ok, last_lines, path_matches, path_warnings};
 use crate::state::{self, EventLog, HistoryEntry, RoleState, now_iso, relative, task_dir};
 use crate::{Args, Failure, codex};
 
@@ -93,6 +94,16 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             "Para continuar un hilo es obligatorio indicar -m o -f",
         ));
     }
+    if args.flag("--gate") && team.project.gate_cmd.is_none() {
+        return Err(Failure::usage(
+            "--gate necesita project.gate_cmd en team.toml",
+        ));
+    }
+    let allowed: Vec<String> = args
+        .options("--allow")
+        .into_iter()
+        .map(str::to_string)
+        .collect();
 
     let is_reviewer = team.flow.review_role.as_deref() == Some(role_name.as_str());
     let round = state.review_rounds + u32::from(is_reviewer);
@@ -149,6 +160,16 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             ));
         }
     }
+    let mut gate = None;
+    if args.flag("--gate") {
+        if args.flag("--dry-run") {
+            prompt.push_str("\n\n# Compuerta\n\n(no se ejecuta en --dry-run)");
+        } else {
+            let block = checks::gate(team, &wt)?;
+            prompt.push_str(&format!("\n\n{block}"));
+            gate = Some(block);
+        }
+    }
 
     let n = state.history.len() as u32 + 1;
     let dir = task_dir(team, task);
@@ -168,6 +189,9 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         )));
     }
     std::fs::create_dir_all(&dir).map_err(Failure::io)?;
+    if let Some(block) = &gate {
+        std::fs::write(file("gate.txt"), block).map_err(Failure::io)?;
+    }
 
     let turn = known.map_or(0, |r| r.turns) + 1;
     let log = EventLog::new(team, task);
@@ -237,6 +261,32 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             ));
         }
     }
+    // The role's checks run before the commit, so what they change (the
+    // formatting) goes in the turn's commit.
+    let mut status = out.status;
+    let mut check_runs = Vec::new();
+    if status == "ok" && !role.checks.is_empty() {
+        let (runs, report) = checks::run_checks(team, role, &wt, |cmd| {
+            if let Err(error) = log.append(EventKind::Activity {
+                role: role_name.clone(),
+                turn,
+                text: clip(&format!("$ {cmd}"), TEXT_LIMIT),
+            }) {
+                eprintln!("aviso: {}", error.message);
+            }
+        });
+        if let Err(error) = std::fs::write(file("checks.txt"), report) {
+            failures.push(format!(
+                "No se pudo guardar {}: {error}",
+                file("checks.txt").display()
+            ));
+        }
+        warnings.extend(runs.iter().filter(|r| !r.passed()).map(CheckRun::warning));
+        if role.checks_required && runs.iter().any(|r| !r.passed()) {
+            status = "error";
+        }
+        check_runs = runs;
+    }
     let text = std::fs::read_to_string(&response).unwrap_or_else(|_| out.last_message.clone());
     let _ = std::fs::remove_file(&response);
     let report: Option<Value> = role
@@ -275,10 +325,16 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             (None, Vec::new())
         }
     };
+    // Files the director authorized for this turn (`--allow`) warn of nothing.
+    let watched: Vec<String> = changed
+        .iter()
+        .filter(|file| !allowed.iter().any(|pattern| path_matches(file, pattern)))
+        .cloned()
+        .collect();
     warnings.extend(path_warnings(
         &role.allowed_paths,
         &role.forbidden_paths,
-        &changed,
+        &watched,
     ));
     let thread = if busy {
         thread_id.clone().or(previous_thread)
@@ -297,12 +353,12 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             1 => format!("{verdict} · 1 hallazgo"),
             n => format!("{verdict} · {n} hallazgos"),
         },
-        _ => first_line(&text).unwrap_or(out.status).to_string(),
+        _ => first_line(&text).unwrap_or(status).to_string(),
     };
     log.append(EventKind::TurnFinished {
         role: role_name.clone(),
         turn,
-        status: out.status.to_string(),
+        status: status.to_string(),
         duration_ms: duration.as_millis() as u64,
         thread_id: thread.clone(),
         usage: out.usage,
@@ -335,13 +391,15 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         turn,
         thread_id: thread.clone(),
         resumed: thread_id.is_some(),
-        status: out.status.to_string(),
+        status: status.to_string(),
         duration_s: (duration.as_secs_f64() * 10.0).round() / 10.0,
         usage: out.usage,
         output: relative(&team.base, &output_file),
         commit,
         changed_files: changed,
         warnings,
+        checks: check_runs,
+        allowed,
     };
     state.history.push(entry.clone());
     state.roles.insert(
@@ -391,7 +449,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         );
         return Ok(BUSY_EXIT);
     }
-    Ok(if out.status == "ok" { 0 } else { 1 })
+    Ok(if status == "ok" { 0 } else { 1 })
 }
 
 fn safe(role: &str) -> String {
@@ -533,6 +591,16 @@ fn print_report(
         }
     );
     println!("salida: {}", entry.output);
+    if !entry.checks.is_empty() {
+        let stem = entry
+            .output
+            .rsplit_once('.')
+            .map_or(entry.output.as_str(), |(stem, _)| stem);
+        println!(
+            "comprobaciones: {} → {stem}.checks.txt",
+            checks::summary(&entry.checks)
+        );
+    }
     if let Some(round) = round {
         println!("ronda de revisión: {round}/{}", team.flow.max_review_rounds);
     }

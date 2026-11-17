@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use titan_agent_core::team::{EventKind, TeamEvent, Usage};
 
 use crate::Failure;
+use crate::checks::CheckRun;
 use crate::config::TeamConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +63,12 @@ pub struct HistoryEntry {
     pub changed_files: Vec<String>,
     #[serde(default)]
     pub warnings: Vec<String>,
+    /// Checks run after the turn (`checks` of the role), in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checks: Vec<CheckRun>,
+    /// Patterns authorized for this turn with `ask --allow`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allowed: Vec<String>,
 }
 
 /// A task name: `[a-z0-9-]+`, 1 to 64 chars.

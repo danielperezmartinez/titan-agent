@@ -36,6 +36,10 @@ pub struct Project {
     pub worktrees_dir: PathBuf,
     pub branch_prefix: String,
     pub test_cmd: Option<String>,
+    /// Formats the worktree in place (check `fmt`).
+    pub fmt_cmd: Option<String>,
+    /// The whole gate: format, lints and tests (check `gate`, `ask --gate`).
+    pub gate_cmd: Option<String>,
     pub test_timeout_s: u64,
     pub autocommit: bool,
     pub hidden_paths: Vec<String>,
@@ -61,6 +65,11 @@ pub struct Role {
     pub output_schema: Option<PathBuf>,
     pub allowed_paths: Vec<String>,
     pub forbidden_paths: Vec<String>,
+    /// Commands run in the worktree after an `ok` turn, in this order:
+    /// names of [`CHECKS`].
+    pub checks: Vec<String>,
+    /// A failed check makes the turn fail.
+    pub checks_required: bool,
     pub config: Vec<String>,
     pub timeout_s: u64,
     pub purpose: String,
@@ -75,19 +84,21 @@ const TOP_KEYS: [&str; 7] = [
     "flow",
     "roles",
 ];
-const PROJECT_KEYS: [&str; 8] = [
+const PROJECT_KEYS: [&str; 10] = [
     "repo",
     "base",
     "worktrees_dir",
     "branch_prefix",
     "test_cmd",
+    "fmt_cmd",
+    "gate_cmd",
     "test_timeout_s",
     "autocommit",
     "hidden_paths",
 ];
 const CODEX_KEYS: [&str; 1] = ["config"];
 const FLOW_KEYS: [&str; 4] = ["steps", "review_role", "fix_role", "max_review_rounds"];
-const ROLE_KEYS: [&str; 12] = [
+const ROLE_KEYS: [&str; 14] = [
     "cli",
     "model",
     "effort",
@@ -97,6 +108,8 @@ const ROLE_KEYS: [&str; 12] = [
     "output_schema",
     "allowed_paths",
     "forbidden_paths",
+    "checks",
+    "checks_required",
     "config",
     "timeout_s",
     "purpose",
@@ -104,6 +117,21 @@ const ROLE_KEYS: [&str; 12] = [
 pub const CLIS: [&str; 2] = ["codex", "claude"];
 pub const EFFORTS: [&str; 5] = ["minimal", "low", "medium", "high", "xhigh"];
 pub const SANDBOXES: [&str; 2] = ["read-only", "workspace-write"];
+/// Checks a role can run after its turn, each the `[project]` command
+/// `<name>_cmd`.
+pub const CHECKS: [&str; 3] = ["fmt", "test", "gate"];
+
+impl Project {
+    /// The command of a check of [`CHECKS`], if the project sets it.
+    pub fn check_cmd(&self, check: &str) -> Option<&str> {
+        match check {
+            "fmt" => self.fmt_cmd.as_deref(),
+            "test" => self.test_cmd.as_deref(),
+            "gate" => self.gate_cmd.as_deref(),
+            _ => None,
+        }
+    }
+}
 
 impl TeamConfig {
     pub fn role(&self, name: &str) -> Option<&Role> {
@@ -238,6 +266,8 @@ pub fn parse(text: &str, base: &Path) -> Result<TeamConfig, Vec<ConfigError>> {
             .text(project_table, p, "branch_prefix", false)
             .unwrap_or_else(|| "encargo/".into()),
         test_cmd: c.text(project_table, p, "test_cmd", false),
+        fmt_cmd: c.text(project_table, p, "fmt_cmd", false),
+        gate_cmd: c.text(project_table, p, "gate_cmd", false),
         test_timeout_s: c
             .positive(project_table, p, "test_timeout_s")
             .unwrap_or(300),
@@ -315,6 +345,24 @@ pub fn parse(text: &str, base: &Path) -> Result<TeamConfig, Vec<ConfigError>> {
                 &format!("flow.{key}"),
                 "unknown_role",
                 &format!("no existe el rol {role}"),
+            );
+        }
+    }
+
+    for check in CHECKS {
+        let users: Vec<&str> = roles
+            .iter()
+            .filter(|role| role.checks.iter().any(|c| c == check))
+            .map(|role| role.name.as_str())
+            .collect();
+        if !users.is_empty() && project.check_cmd(check).is_none() {
+            c.error(
+                &format!("project.{check}_cmd"),
+                "missing_key",
+                &format!(
+                    "la comprobación «{check}» de {} necesita project.{check}_cmd",
+                    users.join(", ")
+                ),
             );
         }
     }
@@ -517,6 +565,40 @@ impl Checker {
         Some(path)
     }
 
+    /// `checks`: names of [`CHECKS`], only for a role that may write (the
+    /// checks run in its worktree and can change it).
+    fn checks(&mut self, table: &Table, prefix: &str, sandbox: &str) -> Vec<String> {
+        let checks = self.list(table, prefix, "checks");
+        let path = join(prefix, "checks");
+        let unknown: Vec<&str> = checks
+            .iter()
+            .filter(|check| !CHECKS.contains(&check.as_str()))
+            .map(String::as_str)
+            .collect();
+        if !unknown.is_empty() {
+            self.error(
+                &path,
+                "unknown_value",
+                &format!(
+                    "no son comprobaciones: {}; valores: {}",
+                    unknown.join(", "),
+                    CHECKS.join(", ")
+                ),
+            );
+        }
+        if !checks.is_empty() && sandbox != "workspace-write" {
+            self.error(
+                &path,
+                "unknown_value",
+                "solo un rol con sandbox = \"workspace-write\" lleva comprobaciones",
+            );
+        }
+        checks
+            .into_iter()
+            .filter(|check| CHECKS.contains(&check.as_str()))
+            .collect()
+    }
+
     fn role(&mut self, name: &str, table: &Table) -> Role {
         let p = format!("roles.{name}");
         self.unknown_keys(table, &p, &ROLE_KEYS);
@@ -551,18 +633,22 @@ impl Checker {
                 "un rol de Codex que se lanza necesita su prompt",
             );
         }
+        let sandbox = self
+            .choice(table, &p, "sandbox", &SANDBOXES)
+            .unwrap_or_else(|| "read-only".into());
+        let checks = self.checks(table, &p, &sandbox);
         Role {
             name: name.to_string(),
             model,
             effort: self.choice(table, &p, "effort", &EFFORTS),
-            sandbox: self
-                .choice(table, &p, "sandbox", &SANDBOXES)
-                .unwrap_or_else(|| "read-only".into()),
+            sandbox,
             launch,
             prompt_file,
             output_schema: self.file(table, &p, "output_schema"),
             allowed_paths: self.list(table, &p, "allowed_paths"),
             forbidden_paths: self.list(table, &p, "forbidden_paths"),
+            checks,
+            checks_required: self.boolean(table, &p, "checks_required").unwrap_or(false),
             config: self.pairs(table, &p, "config"),
             timeout_s: self.positive(table, &p, "timeout_s").unwrap_or(900),
             purpose: self.text(table, &p, "purpose", false).unwrap_or_default(),
@@ -582,6 +668,38 @@ mod tests {
             .into_iter()
             .map(|e| (e.path, e.code))
             .collect()
+    }
+
+    #[test]
+    fn checks_need_a_writing_role_and_their_commands() {
+        let found = errors(
+            "version = 1\nname = \"x\"\n[project]\ntest_cmd = \"t\"\n\
+             [roles.w]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nsandbox = \"workspace-write\"\n\
+             checks = [\"fmt\", \"lint\", \"test\"]\nchecks_required = \"yes\"\n\
+             [roles.r]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nchecks = [\"gate\"]\n",
+        );
+        assert_eq!(
+            found,
+            [
+                ("roles.w.checks".to_string(), "unknown_value"),
+                ("roles.w.checks_required".to_string(), "bad_type"),
+                ("roles.r.checks".to_string(), "unknown_value"),
+                ("project.fmt_cmd".to_string(), "missing_key"),
+                ("project.gate_cmd".to_string(), "missing_key"),
+            ]
+        );
+        let team = parse(
+            "version = 1\nname = \"x\"\n[project]\nfmt_cmd = \"f\"\ngate_cmd = \"g\"\n\
+             [roles.w]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nsandbox = \"workspace-write\"\n\
+             checks = [\"gate\", \"fmt\"]\nchecks_required = true\n",
+            Path::new("/nonexistent"),
+        )
+        .unwrap();
+        let role = team.role("w").unwrap();
+        assert_eq!(role.checks, ["gate", "fmt"]);
+        assert!(role.checks_required);
+        assert_eq!(team.project.check_cmd("gate"), Some("g"));
+        assert_eq!(team.project.check_cmd("test"), None);
     }
 
     #[test]

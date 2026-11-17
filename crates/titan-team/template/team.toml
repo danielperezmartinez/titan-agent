@@ -10,6 +10,9 @@ base = "main"
 worktrees_dir = ".agents/worktrees"  # no se versiona: añádelo a .gitignore
 branch_prefix = "encargo/"
 # test_cmd = "cargo test"            # la orden de tests del proyecto
+# fmt_cmd = "cargo fmt --all"        # formatea en el sitio (comprobación "fmt")
+# gate_cmd = "cargo fmt --all --check && cargo clippy -- -D warnings && cargo test"
+#                                    # compuerta completa ("gate" y ask --gate)
 test_timeout_s = 600
 autocommit = true                    # commit tras cada turno de un rol que escribe
 # Lo que los roles no deben leer (sparse checkout; sigue en la rama).
@@ -37,6 +40,7 @@ effort = "medium"
 sandbox = "workspace-write"
 prompt_file = ".agents/prompts/tests.md"
 allowed_paths = ["tests/"]           # aviso si escribe fuera de aquí
+# checks = ["fmt", "test"]          # tras su turno (necesitan fmt_cmd y test_cmd)
 purpose = "Antes de implementar, escribe pocos tests de aceptación desde la especificación."
 
 [roles.revisor]
