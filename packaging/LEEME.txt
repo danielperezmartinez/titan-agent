@@ -1,0 +1,9 @@
+titan-agent: torre de control de las sesiones de Claude Code y Codex.
+
+Instalar (por usuario, sin sudo):      ./install.sh
+Abrir:                                 menú de aplicaciones → titan-agent, o ~/.local/bin/titan-agent
+Desinstalar (conserva la configuración): ~/.local/share/titan-agent/titan-agent-launcher uninstall
+
+Las versiones nuevas se descargan solas, se verifican con la firma del
+proyecto y se aplican al cerrar la ventana. Para no buscarlas: Configuración
+([*]) → Actualizaciones, o la variable TITAN_AGENT_NO_UPDATE=1.

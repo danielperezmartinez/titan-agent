@@ -9,7 +9,10 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use gpui::{ClickEvent, Context, Div, FontWeight, Role, SharedString, div, prelude::*, px};
+use gpui::{
+    ClickEvent, Context, Div, FontWeight, HighlightStyle, Role, SharedString, StyledText, div,
+    prelude::*, px,
+};
 use titan_agent_core::protocol::{Request, UpdateState, UpdateStatus};
 use titan_agent_core::update::install_root;
 
@@ -284,21 +287,25 @@ impl MainView {
             Notice::Confirm { sessions } => row
                 .flex_shrink_1()
                 .child(marker(false))
-                .child(
+                .child({
+                    // One text, so it is cut by whole characters with «…»;
+                    // only the sessions in `warning` (a real state).
+                    let start = "se cerrarán los terminales de ".len();
+                    let count = format!("{sessions} {}", sessions_word(sessions));
+                    let text = format!("se cerrarán los terminales de {count}; siguen vivas");
+                    let warning = HighlightStyle {
+                        color: Some(theme::hsla(theme::WARNING)),
+                        ..HighlightStyle::default()
+                    };
                     div()
                         .min_w(px(0.))
-                        .overflow_hidden()
-                        .text_ellipsis()
+                        .truncate()
                         .text_color(color(theme::BODY))
-                        .child("se cerrarán los terminales de ")
                         .child(
-                            div()
-                                .text_color(color(theme::WARNING))
-                                .child(format!("{sessions} {}", sessions_word(sessions))),
+                            StyledText::new(text)
+                                .with_highlights([(start..start + count.len(), warning)]),
                         )
-                        .child("; siguen vivas")
-                        .flex(),
-                )
+                })
                 .child(mute("·".into()))
                 .child(
                     div()
@@ -415,6 +422,8 @@ impl MainView {
                 div()
                     .flex()
                     .items_center()
+                    .gap(px(4.))
+                    .min_h(px(32.))
                     .child(label("versión instalada"))
                     .child(
                         div()
@@ -459,7 +468,8 @@ impl MainView {
         }
         block.child(
             div()
-                .pl(px(if active { LABEL_W + 4. } else { 0. }))
+                .pl(px(LABEL_W + 4.))
+                .truncate()
                 .text_size(px(11.))
                 .text_color(color(theme::MUTE))
                 .child(last_check_line(status, self.now_ms)),
@@ -491,7 +501,7 @@ pub(super) fn last_check_line(status: Option<&UpdateStatus>, now_ms: i64) -> Str
         (UpdateState::Checking, ..) => "comprobando…".to_string(),
         (UpdateState::Downloading, Some(v), _) => format!("descargando la versión v{v}"),
         (UpdateState::Ready | UpdateState::Waiting, Some(v), _) => {
-            format!("hay una versión nueva (v{v}), se aplicará al cerrar la ventana")
+            format!("v{v} lista; se aplica al cerrar la ventana")
         }
         (_, _, Some(error)) => format!("error: {error}"),
         _ => "estás en la última versión".into(),
@@ -605,7 +615,10 @@ mod tests {
         );
         let mut s = status(UpdateState::Ready);
         s.last_check_ms = Some(0);
-        assert!(last_check_line(Some(&s), 1000).ends_with("se aplicará al cerrar la ventana"));
+        assert!(
+            last_check_line(Some(&s), 1000)
+                .ends_with("v0.6.1 lista; se aplica al cerrar la ventana")
+        );
         s.state = UpdateState::Idle;
         s.version = None;
         s.error = Some("sin conexión".into());

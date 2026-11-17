@@ -1,0 +1,177 @@
+# Publicar versión: compila, firma y publica una versión de titan-agent en
+# GitHub Releases (docs/Decisiones/ADR-0011, §1–§3; docs/README.md,
+# Publicación). Solo se lanza a mano sobre main, con autorización del
+# usuario para esa versión: gh workflow run release.yml --ref main
+# - Preparar: la versión de Cargo.toml es 0.x.y, su etiqueta no existe y los
+#   checks Cambios, Verificar y Fugas del commit terminaron en verde.
+# - Linux y Windows: compilan en release y empaquetan.
+# - Publicar (environment `release`, el único con los secretos de firma):
+#   manifiesto firmado con minisign y comprobado con packaging/minisign.pub,
+#   SHA256SUMS, atestaciones y la Release (borrador y, al final, publicada,
+#   que es cuando se crea la etiqueta v<versión>).
+# Ninguna entrada se interpola en los scripts: todo va por variables.
+name: Publicar versión
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: publicar-version
+  cancel-in-progress: false
+
+jobs:
+  preparar:
+    name: Preparar
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      checks: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Versión 0.x.y, sin etiqueta y con el CI en verde
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          version=$(sh scripts/version-publicable.sh)
+          if gh api "repos/$REPO/git/ref/tags/v$version" >/dev/null 2>&1; then
+            echo "La etiqueta v$version ya existe: sube la versión en una PR." >&2
+            exit 1
+          fi
+          for check in Cambios Verificar Fugas; do
+            result=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=$check" \
+              --jq '[.check_runs[] | select(.conclusion == "success")] | length')
+            if [ "$result" -lt 1 ]; then
+              echo "El check $check del commit $SHA no terminó en verde." >&2
+              exit 1
+            fi
+          done
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux
+    needs: preparar
+    # glibc 2.35: corre en distribuciones más antiguas que la del usuario.
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preparar.outputs.sha }}
+      - name: Librerías del sistema para GPUI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev libx11-xcb-dev \
+            libwayland-dev libfontconfig-dev libfreetype-dev
+      - name: Compilar en release
+        run: cargo build --release --locked --workspace
+      - name: Empaquetar y probar la instalación
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+        run: |
+          tarball=$(sh packaging/package.sh "$VERSION" linux-x86_64 target/release dist)
+          sh scripts/probar-instalacion.sh "$tarball"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  windows:
+    name: Windows (experimental)
+    needs: preparar
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preparar.outputs.sha }}
+      - name: Compilar en release
+        run: cargo build --release --locked --workspace
+      - name: Empaquetar el zip portable
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+        run: |
+          $name = "titan-agent-$env:VERSION-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path "dist/$name/bin" | Out-Null
+          foreach ($b in "titan-agent", "titan-agentd", "titan-team", "titan-agent-launcher") {
+            Copy-Item "target/release/$b.exe" "dist/$name/bin/"
+          }
+          Copy-Item packaging/LEEME.txt "dist/$name/"
+          Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publicar:
+    name: Publicar
+    needs: [preparar, linux, windows]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preparar.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Instalar minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends minisign
+      - name: Manifiesto firmado y SHA256SUMS
+        env:
+          VERSION: ${{ needs.preparar.outputs.version }}
+          TITAN_AGENT_UPDATE_KEY: ${{ secrets.TITAN_AGENT_UPDATE_KEY }}
+          TITAN_AGENT_UPDATE_KEY_PASSWORD: ${{ secrets.TITAN_AGENT_UPDATE_KEY_PASSWORD }}
+        run: |
+          set -eu
+          sh packaging/manifest.sh "$VERSION" dist >/dev/null
+          umask 077
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$TITAN_AGENT_UPDATE_KEY" > "$key"
+          printf '%s\n' "$TITAN_AGENT_UPDATE_KEY_PASSWORD" | minisign -S -s "$key" \
+            -m dist/titan-agent-update.json \
+            -t "titan-agent-update format=1 version=$VERSION"
+          rm -f "$key"
+          # Nada se sube si la firma no verifica con la clave pública del repo.
+          minisign -V -p packaging/minisign.pub -m dist/titan-agent-update.json
+          (cd dist && sha256sum *.tar.gz *.zip titan-agent-update.json > SHA256SUMS)
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+      - name: Crear la Release (borrador) y publicarla
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.preparar.outputs.version }}
+          SHA: ${{ needs.preparar.outputs.sha }}
+        run: |
+          set -eu
+          gh release create "v$VERSION" --draft --target "$SHA" --generate-notes \
+            --title "titan-agent $VERSION" \
+            dist/*.tar.gz dist/*.zip dist/titan-agent-update.json \
+            dist/titan-agent-update.json.minisig dist/SHA256SUMS
+          gh release edit "v$VERSION" --draft=false --latest

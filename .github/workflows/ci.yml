@@ -2,7 +2,8 @@
 # "Seguridad, coste y cumplimiento".
 # - Cambios: detecta si hay algo fuera de docs/. Un cambio de solo bóveda omite
 #   Verificar (un check omitido cuenta como superado).
-# - Verificar: versión, formato, clippy y tests de Rust (incluida la
+# - Verificar: versión, formato, clippy, tests de Rust y el paquete de Linux
+#   instalado en un HOME temporal (incluida la
 #   herramienta del equipo, titan-team). Se omite mientras no exista Cargo.toml.
 #   GPUI enlaza en Linux con xcb, xkbcommon, fontconfig y freetype.
 # - Windows: compila y prueba el workspace en Windows. No es un check
@@ -81,6 +82,15 @@ jobs:
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
+      # Empaqueta el tar.gz de Linux (con la build de debug de los tests) y lo
+      # instala y desinstala en un HOME temporal, sin publicar nada.
+      - name: Paquete de Linux e instalación
+        if: hashFiles('Cargo.toml') != ''
+        run: |
+          cargo build --workspace
+          version=$(sh scripts/version-publicable.sh)
+          tarball=$(sh packaging/package.sh "$version" linux-x86_64 target/debug "$RUNNER_TEMP/dist")
+          sh scripts/probar-instalacion.sh "$tarball"
       - name: Sin proyecto Rust todavía
         if: hashFiles('Cargo.toml') == ''
         run: echo "Aún no hay Cargo.toml; nada que compilar."

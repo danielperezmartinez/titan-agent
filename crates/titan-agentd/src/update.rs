@@ -295,7 +295,9 @@ impl Updater {
             &self.base_url,
         ) {
             Ok(selected) => Ok(Some(selected)),
-            Err(UpdateError::NotNewer(_)) => Ok(None),
+            // Up to date, or the latest one already failed to start here
+            // (the launcher rolled it back): nothing to install.
+            Err(UpdateError::NotNewer(_) | UpdateError::BadVersion(_)) => Ok(None),
             Err(error) => Err(error),
         }
     }
