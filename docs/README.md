@@ -132,6 +132,10 @@ lo que se haga con MCP, CLI o panel.
   usan.
 - Los ficheros de secretos locales (`.env*` salvo `.env.example`, claves de
   firma) están en `.gitignore`.
+- La clave privada de firma de las actualizaciones (minisign) solo vive en el
+  environment `release` de GitHub y en la copia fuera de línea del usuario;
+  nunca en el repo ni en una carpeta de trabajo. Ver
+  [[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada|ADR-0011]].
 
 #### Repositorio y publicación
 
@@ -226,7 +230,7 @@ enlazan en vez de repetirla.
 
 | Cambio | Cómo se publica | Versión | Despliegue |
 | --- | --- | --- | --- |
-| **Código**: cualquier archivo fuera de `docs/` | Rama corta y pull request contra `main`, integrada con squash | Sube en la propia PR | Ninguno al integrar, salvo `experimentos/` (GitHub Pages, ver abajo); una versión se publica con un tag `vX.Y.Z` (ver abajo) |
+| **Código**: cualquier archivo fuera de `docs/` | Rama corta y pull request contra `main`, integrada con squash | Sube en la propia PR | Ninguno al integrar, salvo `experimentos/` (GitHub Pages, ver abajo); una versión se publica con el workflow «Publicar versión» (ver abajo) |
 | **Solo bóveda**: todo dentro de `docs/` | Commit y push directo a `main` | No cambia | Ninguno |
 
 - Un commit o una PR que mezcle bóveda y código cuenta como **código**.
@@ -238,25 +242,31 @@ enlazan en vez de repetirla.
 - **Cada PR de código sube la versión** (`version` de `[workspace.package]` en
   el `Cargo.toml` raíz) y no se integra si no supera la de `main` (lo comprueba
   el CI con `scripts/comprobar-version.sh`). El incremento y el número exacto se
-  acuerdan con el usuario (`major` para cambios incompatibles, `minor` para
-  funcionalidades compatibles, `patch` para correcciones), sin inferirlo del
-  silencio, y el acuerdo queda en la PR.
+  acuerdan con el usuario (`minor` para funcionalidades y, mientras la versión
+  sea 0.x, también para cambios incompatibles; `patch` para correcciones), sin
+  inferirlo del silencio, y el acuerdo queda en la PR.
 - **Versiones 0.x hasta que el usuario decida la 1.0.0.** Nada de 1.x
-  hasta que lo decida el usuario; las etiquetas son solo `v0.x` y solo por el
-  flujo de publicación (abajo). Decisión del usuario del 2026-11-16, al abrir
-  la ronda de arreglos 0.5.0.
+  hasta que lo decida el usuario; las etiquetas son solo `v0.x.y` y solo por el
+  flujo de publicación (abajo). Desde la 0.6.0 el CI rechaza una PR que suba la
+  versión a 1.x. Decisión del usuario del 2026-11-16, al abrir la ronda de
+  arreglos 0.5.0.
 - **Publicar código** significa: rama corta (`feat/*`, `fix/*`, `chore/*`,
   `docs/*`), PR contra `main`, esperar los checks, integrarla solo si el usuario
   lo autorizó para esa PR (si no, detenerse con la PR abierta) y, si la PR
   publica una versión, verificar su release.
 - **Publicar la bóveda** significa: commit y push directo a `main`, sin PR, sin
   subir la versión y sin despliegue.
-- **Publicar una versión** (cuando exista el pipeline de releases): tag
-  `vX.Y.Z` sobre `main`, que construye los paquetes y los publica en GitHub
-  Releases. Formatos, canal canary y autoactualización se deciden en una ADR
-  antes de la primera versión. Solo se crea un tag con autorización del usuario.
-- **Verificar una release**: localizar la ejecución del workflow del tag exacto y
-  comprobar su estado final, sus logs y los artefactos publicados. Ante un fallo,
+- **Publicar una versión** (desde la 0.6.0): se lanza el workflow «Publicar
+  versión» (`.github/workflows/release.yml`) sobre `main`, solo con
+  autorización del usuario para esa versión. El workflow comprueba la versión
+  y el CI, compila, firma y crea él mismo la etiqueta y la Release en GitHub
+  Releases. **Etiquetas solo `v0.x.y` y solo por ese workflow**: nadie crea,
+  mueve ni borra etiquetas a mano. Formatos, firma, instalación y
+  autoactualización:
+  [[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada]].
+- **Verificar una release**: localizar la ejecución del workflow de esa versión y
+  comprobar su estado final, sus logs y los artefactos publicados (incluido que
+  el manifiesto verifica con la clave pública del repo). Ante un fallo,
   avisar al usuario con un reporte y detenerse: no reintentar, rehacer el tag ni
   retirar la release por iniciativa propia. La corrección es una PR nueva con su
   propia versión.
@@ -340,8 +350,9 @@ los agentes:
 
 ### 6. Despliegue y distribución
 
-Ver [[#Publicación]]. La distribución concreta (formatos, canales,
-autoactualización) se decide en una ADR antes de la primera versión.
+Ver [[#Publicación]]. Distribución, instalación por usuario y
+autoactualización:
+[[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada]].
 
 ### 7. Estructura del código
 

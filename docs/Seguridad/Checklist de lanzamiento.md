@@ -2,9 +2,9 @@
 Nombre: Checklist de lanzamiento
 Tipo: Checklist
 Estado: Pendiente
-Resumen: Estado de la configuración fuera del código (ajustes del repo en GitHub, hooks en cada clon, firma y canales de distribución) que ningún test del repo comprueba. Sección GitHub revisada el 2026-11-14 salvo el correo privado de la cuenta; distribución y accesibilidad pendientes.
+Resumen: Estado de la configuración fuera del código (ajustes del repo en GitHub, hooks en cada clon, firma y canales de distribución) que ningún test del repo comprueba. Sección GitHub revisada el 2026-11-14 salvo el correo privado de la cuenta; distribución (puntos de ADR-0011, a revisar al publicar la 0.6.0) y accesibilidad pendientes.
 Última revisión: 2026-11-15
-Última modificación: 2026-11-15T20:02:00+01:00
+Última modificación: 2026-11-17T10:00:00+01:00
 ---
 
 # Checklist de lanzamiento
@@ -46,8 +46,31 @@ trimestre.
 
 ## Distribución
 
-<!-- Se completa con la ADR de distribución (formatos, firma, canales,
-autoactualización) antes de la primera versión. -->
+Según [[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada|ADR-0011]].
+Se revisa al publicar la 0.6.0
+([[Tareas/Versión 0.6.0 - Instalador y actualización automática]]).
+
+- [ ] Clave minisign de actualizaciones generada con contraseña en el PC del
+      usuario. Copia de la clave privada y de su contraseña en su gestor de
+      contraseñas. Ninguna copia en el repo, en una carpeta de trabajo ni en un
+      log.
+- [ ] Clave pública en `packaging/minisign.pub`, con el mismo *key id* que la
+      lista de claves aceptadas compilada en la app.
+- [ ] Environment `release` restringido a la rama `main`, con los secretos
+      `TITAN_AGENT_UPDATE_KEY` y `TITAN_AGENT_UPDATE_KEY_PASSWORD`. Solo el job
+      `publicar` de `release.yml` los usa.
+- [ ] *Immutable releases* activadas en el repo.
+- [ ] Ruleset de etiquetas `v*`: sin mover ni borrar.
+- [ ] `release.yml` rechaza versiones que no sean `0.x.y` y exige el CI en
+      verde del commit.
+- [ ] La última release verifica: `minisign -V` del manifiesto con
+      `packaging/minisign.pub` y `gh attestation verify` del tar.gz.
+- [ ] La comprobación de versiones no envía datos del usuario (sin
+      autenticación, cookies ni versión en el `User-Agent`). Comprobado
+      mirando la petición.
+- [ ] Windows: el zip sale sin firmar (aviso de SmartScreen) y marcado como
+      experimental; se acepta mientras no haya daemon de Windows.
+- [ ] Rotación de la clave ensayada en los tests (lista de claves aceptadas).
 
 ## Accesibilidad
 
@@ -61,3 +84,4 @@ autoactualización) antes de la primera versión. -->
 | 2026-11-14 | diseño: titan-agent | Checklist creada; repo aún sin remoto. |
 | 2026-11-14 | titan-agent: implementación | Repo creado; sección GitHub revisada salvo el correo privado de la cuenta. Squash de la PR #1 con el correo principal: aceptado por el usuario. |
 | 2026-11-15 | titan-agent: fase 1 opus | PR #4: GitHub rechaza `--author-email` con el noreply; squash con el correo principal, permitido desde ahora por el usuario solo como autor de commits. |
+| 2026-11-17 | titan-agent: distribución | Sección Distribución rellena con los puntos de ADR-0011; sin revisar hasta la 0.6.0. |
