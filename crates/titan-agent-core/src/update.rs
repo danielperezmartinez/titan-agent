@@ -330,6 +330,15 @@ mod tests {
     }
 
     #[test]
+    fn the_app_accepts_the_project_key_of_packaging() {
+        // The release workflow verifies the manifest with this same file:
+        // a missing or broken key must fail here, not after publishing.
+        let keys = accepted_keys();
+        assert_eq!(keys.len(), 1, "packaging/minisign.pub has no key");
+        assert!(minisign_verify::PublicKey::from_base64(keys[0]).is_ok());
+    }
+
+    #[test]
     fn the_key_line_skips_the_untrusted_comment() {
         assert_eq!(
             public_key_line("untrusted comment: minisign public key 1\nRWQabc\n"),
