@@ -5,7 +5,7 @@ Resumen: 'Primera ronda de pulido tras la v1 de escritorio (v0.4.0), versión 0.
 Decisiones: 'Versión 0.5.0 sin etiqueta y nada de 1.x hasta que lo decida el usuario (regla en README → Publicación). El usuario pausó la comparación de variantes durante la ronda: solo queda la variante equipo v4, y el objetivo pasa a detectar y corregir las carencias del equipo. La transcripción se lee por el app-server de Codex (decisión del usuario).'
 Bloqueada: []
 Fecha de creación: 2026-11-16T23:15:00+01:00
-Última modificación: 2026-11-16T23:15:00+01:00
+Última modificación: 2026-11-17T15:20:00+01:00
 ---
 
 # Ronda de arreglos 0.5.0
@@ -87,6 +87,53 @@ Rama `feat/v0.5-equipo-v4`, en local el 2026-11-16 (sin push ni PR):
   la barra de sesión y los tokens; el monitor no cambia salvo las marcas
   nuevas. Queda por ver con un hilo largo que abre abajo (las capturas
   cabían enteras) y el estado del rol en la barra.
+
+## Hallazgos de la prueba manual (usuario, 2026-11-17)
+
+Con `probar-ventana.sh` (CLI reales): el usuario entró en una sesión de
+Codex, le salió la confirmación de «tomar el control», no la aceptó y cerró
+la ventana; al volver a entrar en la misma sesión ya no salió. No entendió
+por qué tenía que aceptar nada ni qué probaba. Análisis (sin cambios de
+código hasta que el usuario decida):
+
+- **Comportamiento actual.** La confirmación solo existe en la vista de
+  solo lectura que abre el clic en un rol del **monitor**, y solo aparece al
+  pulsar `[>] tomar el control`; al abrir el hilo no se pregunta nada. El
+  clic en una sesión de Codex del **árbol** sigue como en la 0.4.0: abre
+  `codex resume` directamente, sin vista de solo lectura ni confirmación. Lo
+  más probable es que la segunda vez entrara por el árbol (o por el monitor
+  sin pulsar el botón): ninguna de las dos pregunta. No es un fallo del
+  código respecto al contrato, pero sí una incoherencia: un hilo del equipo
+  abierto desde el árbol pasa a tener escritor sin aviso. Tras la prueba no
+  hay ningún hilo de Codex cargado (`thread/loaded/list` vacío), así que
+  rechazar no abrió nada.
+- **Aceptar** abre `codex resume <hilo>` en un terminal del daemon: la app
+  pasa a ser escritora y el monitor marca `[w]`. Ese terminal sigue vivo en
+  el daemon aunque se cierre la ventana, hasta cerrarlo o parar el daemon.
+  **Rechazar** (`[esc] cancelar` o cerrar) no abre nada.
+- **El texto no basta.** Dice qué pasa al aceptar pero no por qué se
+  pregunta: falta que la vista diga que lo que se ve es el hilo sin abrirlo
+  (el director puede seguir encargándole turnos) y que «tomar el control»
+  es para escribir en él, y que el escritor sigue tras cerrar la ventana.
+- **Propuestas** (decide el usuario):
+  1. El clic en una sesión de Codex del árbol abre también la vista de
+     solo lectura (o al menos la de un rol del equipo), con «tomar el
+     control» para escribir, para que haya un solo camino.
+  2. Una línea fija en la vista de solo lectura: «Estás leyendo el hilo sin
+     abrirlo: el director puede seguir encargando turnos a este rol. Para
+     escribir en él, tomar el control.»
+  3. En la confirmación, añadir que el hilo sigue abierto tras cerrar la
+     ventana y cómo soltarlo (cerrar el terminal).
+- **Carencias que destapa:**
+  - El traspaso al usuario no explicaba qué probar ni qué esperar: «probar
+    los clics» no basta. Propuesta: cada prueba manual con pasos numerados y
+    el resultado esperado de cada uno, en la nota y en el resumen.
+  - El daemon no registra peticiones, así que su log no sirve para
+    reconstruir una prueba manual. Propuesta: un log opcional de peticiones
+    (método y sesión, sin datos), activado con una variable de entorno.
+  - `probar-acentos.sh` dejó vivo su daemon al cerrar la ventana de otra
+    forma que la normal. Propuesta: `trap` que lo pare siempre (corregido en
+    el script local, que no se versiona).
 
 ## Carencias del equipo
 
