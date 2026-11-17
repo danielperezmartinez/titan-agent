@@ -11,6 +11,7 @@ Revisa:
 4. Simplicidad, legibilidad y Rust idiomático.
 5. Reglas del proyecto: código y comentarios en inglés; ningún dato real del entorno (rutas personales, usuarios, hosts, correos, secretos); nada lee credenciales de las CLI de los agentes.
 6. Estructura del código (regla del proyecto): en la interfaz, un módulo por vista bajo `crates/titan-agent/src/app/` y `app.rs` solo con el arranque, el estado compartido y el enrutado; lo compartido por varias vistas en su propio módulo; en el daemon y el núcleo, un módulo por responsabilidad. Ningún fichero `.rs` pasa de 800 líneas (`wc -l`, tests incluidos) sin dividirse o sin una justificación en su cabecera `//!`; a uno que ya las pasa no se le añade código sin dividirlo o justificarlo. Comprueba los ficheros que toca el diff y señala como hallazgo lo que lo incumpla.
+7. Lógica de interacción de la interfaz (regla del equipo): la interfaz no tiene tests de ventana, así que lo que decide qué hace una tecla, cómo se edita un texto o qué se muestra según el estado va en funciones o modelos puros con tests (en `titan_agent` o en el núcleo), y la vista solo pinta y enruta eventos. Lógica así nueva escrita dentro de una vista de `crates/titan-agent/src/app/` sin tests es un hallazgo.
 
 Sé concreto (fichero, línea, por qué, qué cambiar) y no inventes problemas: si está bien, el veredicto es "ok". Ordena los hallazgos por severidad.
 Las decisiones de diseño que no te corresponden van en questions_for_director, no en findings.
