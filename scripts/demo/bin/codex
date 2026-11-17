@@ -1,0 +1,11 @@
+#!/bin/sh
+# Fake `codex` CLI of the demo kit (scripts/demo/demo.sh): points the daemon
+# at the fake app-server and fakes `codex resume` in the terminal. It never
+# starts Codex.
+if [ "$1" = app-server ]; then
+  printf '{"status":"running","socketPath":"%s"}\n' "$TITAN_DEMO_RUN/codex.sock"
+  exit 0
+fi
+printf '\033[1m>_ Codex\033[0m (demo) %s\r\n\r\n' "$*"
+printf '› Revisando sftp.rs frente al contrato C1–C4…\r\n\r\n> '
+while IFS= read -r _; do :; done
