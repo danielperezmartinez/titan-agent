@@ -27,6 +27,11 @@ pub fn describe(request: &Request) -> Option<String> {
             format!("launch {:?} {} (token {token})", spec.agent, spec.model)
         }
         Request::Transcript { session } => format!("transcript {session}"),
+        Request::UpdateStatus => "update_status".into(),
+        Request::UpdateCheck => "update_check".into(),
+        Request::UpdateApply { force } => format!("update_apply (force {force})"),
+        Request::UpdateSettings { auto } => format!("update_settings (auto {auto})"),
+        Request::UpdateDismiss => "update_dismiss".into(),
     })
 }
 
