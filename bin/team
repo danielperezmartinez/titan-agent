@@ -34,8 +34,10 @@ pin() {
   mv "$pinned/titan-team.new" "$pinned/titan-team"
   printf '%s %s\n' "$rev" "$sha" >"$pinned/rev"
   short=$(printf %s "$sha" | cut -c1-7)
-  # Revisions before the team v6 have no --version.
-  version=$("$pinned/titan-team" --version 2>/dev/null) || version="titan-team sin --version (anterior a la v6)"
+  # Revisions before the team v6 have no --version: read it from the tree.
+  version=$("$pinned/titan-team" --version 2>/dev/null) ||
+    version="titan-team $(awk '/^\[workspace\.package\]/ { s = 1; next } /^\[/ { s = 0 }
+      s && /^[[:space:]]*version[[:space:]]*=/ { gsub(/^[^"]*"|".*$/, ""); print; exit }' "$src/Cargo.toml")"
   echo "titan-team fijado en $rev ($short): $version"
 }
 
@@ -55,9 +57,13 @@ case "${1:-}" in
 esac
 
 if [ -n "${TITAN_TEAM_BIN:-}" ]; then
-  [ -f "$TITAN_TEAM_BIN" ] && [ -x "$TITAN_TEAM_BIN" ] ||
+  bin=$TITAN_TEAM_BIN
+  # A bare name is a file here, as the checks below read it, never a
+  # command looked up in PATH.
+  case "$bin" in */*) ;; *) bin="./$bin" ;; esac
+  [ -f "$bin" ] && [ -x "$bin" ] ||
     die "TITAN_TEAM_BIN no es un ejecutable: $TITAN_TEAM_BIN"
-  exec "$TITAN_TEAM_BIN" "$@"
+  exec "$bin" "$@"
 fi
 if [ -f "$pinned/titan-team" ] && [ -x "$pinned/titan-team" ]; then
   exec "$pinned/titan-team" "$@"
