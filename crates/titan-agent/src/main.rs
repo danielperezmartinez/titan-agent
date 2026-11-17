@@ -44,7 +44,7 @@ fn demo_var<T>(name: &str, parse: impl Fn(&str) -> Result<T, String>) -> Option<
 
 /// Plays a demo key script on the window, as if the keys were pressed:
 /// 1.5 s after it opens, 20 ms between keys.
-fn play_keys(window: gpui::WindowHandle<MainView>, steps: Vec<DemoStep>, cx: &mut App) {
+fn play_keys(window: gpui::AnyWindowHandle, steps: Vec<DemoStep>, cx: &mut App) {
     cx.spawn(async move |cx| {
         let timer =
             |cx: &gpui::AsyncApp, ms| cx.background_executor().timer(Duration::from_millis(ms));
@@ -55,7 +55,9 @@ fn play_keys(window: gpui::WindowHandle<MainView>, steps: Vec<DemoStep>, cx: &mu
                     cx.background_executor().timer(wait).await;
                 }
                 DemoStep::Key(keystroke) => {
-                    let sent = window.update(cx, |_, window, cx| {
+                    // Through the window, not the view: the key handlers
+                    // update the view themselves.
+                    let sent = cx.update_window(window, |_, window, cx| {
                         window.dispatch_keystroke(keystroke, cx);
                     });
                     if sent.is_err() {
@@ -96,7 +98,7 @@ fn main() {
             )
             .expect("failed to open the main window");
         if let Some(steps) = keys.clone() {
-            play_keys(window, steps, cx);
+            play_keys(window.into(), steps, cx);
         }
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
