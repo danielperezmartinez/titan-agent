@@ -279,6 +279,24 @@ impl LaunchSpec {
         }
         line
     }
+
+    /// [`LaunchSpec::command_line`] for display, with `home` at the start
+    /// of the folder written as `~` (as the tree shows it). The shell reads
+    /// it the same way while `HOME` is `home`; what the daemon checks is
+    /// still [`LaunchSpec::command_line`].
+    pub fn display_line(&self, home: Option<&str>) -> String {
+        let line = self.command_line();
+        let folder = crate::project::tilde(&self.cwd, home);
+        let Some(rest) = folder.strip_prefix('~') else {
+            return line;
+        };
+        let cd = match rest.strip_prefix('/') {
+            Some(rest) if !rest.is_empty() => format!("cd ~/{}", shell_quote(rest)),
+            _ => "cd ~".to_string(),
+        };
+        let quoted = format!("cd {}", shell_quote(&self.cwd));
+        line.replacen(&quoted, &cd, 1)
+    }
 }
 
 impl LaunchSpec {
@@ -415,6 +433,24 @@ mod tests {
             "cd /srv/demo/kite && claude --bg -n 'kite: hola' --model haiku --effort low \
              --permission-mode plan -- hola"
         );
+    }
+
+    #[test]
+    fn the_shown_line_writes_home_as_a_tilde() {
+        let mut s = spec(AgentCli::ClaudeCode, "hola");
+        assert_eq!(s.display_line(Some("/srv/demo")), {
+            "cd ~/kite && claude --bg -n 'kite: hola' --model haiku --effort low \
+             --permission-mode plan -- hola"
+        });
+        assert_eq!(s.display_line(Some("/srv/dem")), s.command_line());
+        assert_eq!(s.display_line(None), s.command_line());
+        s.cwd = "/srv/demo/my kite".into();
+        assert!(
+            s.display_line(Some("/srv/demo/"))
+                .starts_with("cd ~/'my kite' && ")
+        );
+        s.cwd = "/srv/demo".into();
+        assert!(s.display_line(Some("/srv/demo")).starts_with("cd ~ && "));
     }
 
     #[test]

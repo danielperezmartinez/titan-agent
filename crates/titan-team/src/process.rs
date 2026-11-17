@@ -2,7 +2,7 @@
 //! and the path patterns of `allowed_paths` / `forbidden_paths`.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -54,8 +54,14 @@ pub fn git_ok(repo: &Path, args: &[&str]) -> bool {
 /// Runs `command` with the system shell in `dir`, killing it after
 /// `limit`. Returns the exit code (124 on timeout) and its whole combined
 /// output. Whatever the command left running in the background is ended
-/// with it, so its open pipes cannot outlive the limit.
-pub fn run_shell(command: &str, dir: &Path, limit: Duration) -> (i32, String) {
+/// with it, so its open pipes cannot outlive the limit. `env` is added to
+/// the inherited environment.
+pub fn run_shell(
+    command: &str,
+    dir: &Path,
+    limit: Duration,
+    env: &[(&str, PathBuf)],
+) -> (i32, String) {
     let mut shell = if cfg!(windows) {
         let mut c = Command::new("cmd");
         c.arg("/C");
@@ -68,6 +74,7 @@ pub fn run_shell(command: &str, dir: &Path, limit: Duration) -> (i32, String) {
     own_group(&mut shell);
     let child = shell
         .arg(command)
+        .envs(env.iter().map(|(key, value)| (*key, value)))
         .current_dir(dir)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -286,7 +293,12 @@ mod tests {
     #[test]
     fn the_shell_command_is_killed_at_its_limit() {
         let started = Instant::now();
-        let (code, _) = run_shell("sleep 5 & echo bg", Path::new("."), Duration::from_secs(5));
+        let (code, _) = run_shell(
+            "sleep 5 & echo bg",
+            Path::new("."),
+            Duration::from_secs(5),
+            &[],
+        );
         assert_eq!(code, 0);
         assert!(
             started.elapsed() < Duration::from_secs(3),
@@ -296,12 +308,20 @@ mod tests {
             "echo hi; sleep 5; echo late",
             Path::new("."),
             Duration::from_millis(300),
+            &[],
         );
         assert_eq!(code, 124);
         assert!(out.contains("Tests agotaron"));
         assert_eq!(
-            run_shell("exit 3", Path::new("."), Duration::from_secs(5)).0,
+            run_shell("exit 3", Path::new("."), Duration::from_secs(5), &[]).0,
             3
         );
+        let (_, out) = run_shell(
+            "echo \"$CARGO_TARGET_DIR\"",
+            Path::new("."),
+            Duration::from_secs(5),
+            &[("CARGO_TARGET_DIR", PathBuf::from("/shared/target"))],
+        );
+        assert_eq!(out.trim(), "/shared/target");
     }
 }

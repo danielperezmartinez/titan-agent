@@ -56,7 +56,7 @@ pub fn run_checks(
         };
         started(cmd);
         let clock = Instant::now();
-        let (exit, output) = run_shell(cmd, worktree, limit);
+        let (exit, output) = run_shell(cmd, worktree, limit, &team.project.build_env());
         let run = CheckRun {
             name: name.clone(),
             cmd: cmd.to_string(),
@@ -96,6 +96,7 @@ pub fn gate(team: &TeamConfig, cmd: &str, worktree: &Path) -> String {
         cmd,
         worktree,
         Duration::from_secs(team.project.test_timeout_s),
+        &team.project.build_env(),
     );
     format!(
         "# Compuerta (exit {exit})\n\n{}",

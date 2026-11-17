@@ -223,7 +223,7 @@ impl MainView {
             if spec.brief.trim().is_empty() {
                 spec.brief = "<tu encargo>".into();
             }
-            spec.command_line()
+            spec.display_line(self.home.as_deref())
         });
         let open = self.new.menu;
         let toggle = |menu: Menu| -> Pick {

@@ -232,12 +232,25 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         prompt.push_str(&format!("\n\n{block}"));
     }
     let started = Instant::now();
+    // Only a writing role builds during its turn (the read-only sandbox
+    // could not write the shared folder anyway).
+    let build_env = if role.sandbox == "workspace-write" {
+        team.project.build_env()
+    } else {
+        Vec::new()
+    };
+    for (_, dir) in &build_env {
+        if let Err(error) = std::fs::create_dir_all(dir) {
+            eprintln!("aviso: no se pudo crear {}: {error}", dir.display());
+        }
+    }
     let outcome = codex::run(
         &program,
         &argv,
         &prompt,
         &wt,
         Duration::from_secs(role.timeout_s),
+        &build_env,
         |text| {
             // Activity is best effort: losing a line must not stop the turn.
             if let Err(error) = log.append(EventKind::Activity {

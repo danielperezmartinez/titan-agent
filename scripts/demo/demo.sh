@@ -181,6 +181,9 @@ shot() {
   mkdir -p "$(dirname "$out")"
   # An old capture with this name must not survive a failed one.
   rm -f "$out"
+  # The window opens under the pointer: without hover styles a capture does
+  # not depend on where it was left (probar keeps them, for the user).
+  export TITAN_AGENT_DEMO_NO_HOVER=1
   ui "$1"
   sleep "$WAIT"
   display_env

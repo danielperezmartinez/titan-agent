@@ -148,7 +148,9 @@ pub(super) fn menu_list(
                     theme::BODY
                 }))
                 .cursor_pointer()
-                .hover(|style| style.bg(color(theme::SURFACE)))
+                .when(super::widgets::hover_enabled(), |d| {
+                    d.hover(|style| style.bg(color(theme::SURFACE)))
+                })
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| pick(this, cx)))
                 .child(
                     div()

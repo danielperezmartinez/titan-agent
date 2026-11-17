@@ -22,6 +22,11 @@ test_cmd = "cargo test --workspace"
 fmt_cmd = "cargo fmt --all"
 gate_cmd = "cargo fmt --all --check && cargo clippy --workspace --all-targets --quiet -- -D warnings && cargo test --workspace --quiet"
 test_timeout_s = 1800               # el primer build de GPUI en un worktree nuevo tarda
+# Carpeta de compilación del equipo (relativa a este checkout, que es el del
+# director): la comparten los checks, la compuerta y los roles que escriben de
+# todos sus encargos, como CARGO_TARGET_DIR. Otro checkout (otro equipo en
+# paralelo) tiene la suya, y el director compila en su propio target/.
+target_dir = ".agents/target"
 autocommit = true                  # titan-team hace commit tras cada turno que escribe
 # Lo que no se copia al worktree de cada encargo (sparse checkout; sigue en la
 # rama). Los roles trabajan solo con su prompt y el encargo: sin los punteros de

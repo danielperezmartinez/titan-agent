@@ -340,6 +340,7 @@ pub fn run_tests(team: &TeamConfig, state: &TaskState) -> Result<(i32, String), 
         command,
         &worktree(team, state),
         Duration::from_secs(team.project.test_timeout_s),
+        &team.project.build_env(),
     ))
 }
 
