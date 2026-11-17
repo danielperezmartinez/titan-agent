@@ -5,7 +5,7 @@ Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrad
 Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos).'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-17T23:45:00+01:00
+Última modificación: 2026-11-17T23:50:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -26,8 +26,13 @@ Las decisiones están en:
 - [[Decisiones visuales/Ventana principal con proyectos importados y monitor por sesión directora]];
 - [[Decisiones visuales/Conversación de sesión y campo de texto común]].
 
-Previa: `design/preview/Proyectos.dc.html`, en la rama
-`feat/v0.7-proyectos`.
+Previas:
+
+- `design/preview/Proyectos.dc.html`, en la rama `feat/v0.7-proyectos`, que
+  es de donde salen las dos PR;
+- `design/preview/Conversacion.dc.html`, del borrador y del campo, que está
+  en `feat/chat-sesion`. La PR A la trae con `git cherry-pick` de su commit
+  («Add the session conversation preview»).
 
 ## Plan y orden
 
