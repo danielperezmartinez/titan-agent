@@ -5,7 +5,7 @@ Resumen: 'Implementar ADR-0011. Hay que montar el workflow «Publicar versión»
 Decisiones: '[[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada]] y [[Decisiones visuales/Aviso de actualización en la cabecera]]. Versión 0.6.0 (minor), acordada con el usuario el 2026-11-17. Clave generada con minisign del paquete de Arch, que instala el usuario. Al instalar se retira la entrada «titan-agent (main)» del menú.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T19:05:00+01:00
+Última modificación: 2026-11-17T20:35:00+01:00
 ---
 
 # Versión 0.6.0 - Instalador y actualización automática
@@ -427,6 +427,131 @@ debajo de 1100 px para verlo.
 - La sección «Distribución» de [[Seguridad/Checklist de lanzamiento]] queda
   revisada.
 
+## Implementación
+
+- **Núcleo** (`titan_agent_core::update`, sin E/S): manifiesto y firma,
+  `Version`, elección, descarga, entradas del tar, condición segura, pasos
+  del lanzador, versiones que se conservan; tipos del protocolo en
+  `protocol.rs` y `socket_name` (debug → `agentd-dev.sock`).
+- **Lanzador** `crates/titan-agent-launcher`: `install`, `uninstall`,
+  arranque con `pending.json` y vuelta atrás.
+- **Daemon**: `update.rs` y `update/{fetch,prepare,apply}.rs`, peticiones en
+  `hub/update.rs`, `agentd.pid` junto al socket. Solo las builds de debug
+  aceptan `TITAN_AGENT_UPDATE_URL`, `TITAN_AGENT_UPDATE_KEYS` y
+  `TITAN_AGENT_UPDATE_FIRST_CHECK_S` (tests y kit); una de release, la URL
+  fija y la clave de `packaging/minisign.pub`.
+- **Interfaz**: `app/update_notice.rs` (aviso, Configuración, relanzar con el
+  lanzador, confirmar la versión), `app_id`
+  `io.github.danielperezmartinez.titanagent`, socket de desarrollo.
+- **Empaquetado y CI**: `packaging/` (`package.sh`, `manifest.sh`,
+  `install.sh`, `LEEME.txt`, `minisign.pub` aún sin clave),
+  `scripts/version-publicable.sh`, `scripts/probar-instalacion.sh` (en el job
+  `Verificar`), `.github/workflows/release.yml` y el kit
+  `scripts/demo/actualizacion.sh` (escenas `act-*` en `demo.sh`).
+
+## Revisión de Sol (high, con `--gate`)
+
+Hilo nuevo (`v06-revision`) sobre el commit `8f02603`, compuerta en verde
+(exit 0, 132 s en un worktree nuevo con la carpeta de compilación del
+equipo). Veredicto `changes_requested`, 6 mayores y 5 menores; el director
+decidió (todo corregido en `f6b7ae5` y `3bf101f`, sin revisar por Sol):
+
+| Hallazgo | Severidad | Decisión |
+| --- | --- | --- |
+| Un enlace simbólico como raíz del tar (`root` → `.`) pasaba `check_entry` | mayor | Aceptado: la raíz solo puede ser carpeta, y se comprueba antes del `rename` (tests propios) |
+| Si falla el descubrimiento de una fuente, sus sesiones desaparecen y dejan de bloquear | mayor | Aceptado: un terminal cuya sesión no se ve con su fuente caída bloquea (test propio) |
+| Aplicar no era transaccional (fallo al copiar el lanzador dejaba `current` cambiado) | mayor | Aceptado: el lanzador se copia antes y todo fallo posterior deshace (tests propios) |
+| Comprobar y aplicar a la vez: una comprobación lenta pisaba `applying` | mayor | Aceptado: ningún cambio de una comprobación sobrescribe `applying` |
+| «reiniciar» (daemon de otra versión) no mostraba la confirmación | mayor | Aceptado: misma confirmación (test propio) |
+| La confirmación de versión borraba cualquier `pending.json` | mayor | Aceptado: solo si `to` y `current` son la versión de la ventana y la conexión es la misma (test propio) |
+| Los cambios de `blocking` no se publicaban sin cambio de estado | menor | Aceptado: se publican, también al abrir y cerrar terminales; la interfaz pide el estado al recibir `confirm_needed` |
+| `uninstall` decidía por prefijo de texto del enlace | menor | Aceptado: se resuelve y normaliza el destino (test propio) |
+| `comprobar-version.sh` aceptaba 1.x si la base no tenía `Cargo.toml` | menor | Aceptado: se comprueba antes (test propio) |
+| `version-publicable.sh` más estricto que el patrón de C9 (rechaza `0.06.0`) | menor | Descartado: la app rechaza ceros a la izquierda (`Version::parse`), así que una `0.06.0` publicada no se podría instalar |
+| Comentarios en español en los scripts y workflows nuevos | menor | Aceptado: los tradujo Luna (encargo `v06-comentarios`) |
+
 ## Verificación
+
+Rama `feat/v0.6.0`, en local el 2026-11-17:
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde: **178 tests** (144 en
+  `main`). Los 9 de aceptación de Sol (commit `bd9debd`, sin tocar) pasaron
+  a la primera; propios: de punta a punta del daemon con un servidor local y
+  una clave de prueba (`update_e2e.rs`: preparar, esperar por una sesión
+  trabajando, `confirm_needed`, aplicar con `exec`, archivo manipulado y
+  privacidad de las peticiones), extracción, cambio transaccional, poda,
+  lanzador, aviso y scripts. Hooks de gitleaks en cada commit.
+- **Spike de Codex**: resultado en el §8 de ADR-0011 (el turno sigue).
+- **Paquete**: `package.sh` + `probar-instalacion.sh` sobre el tar.gz:
+  instalar dos veces (idéntico) y desinstalar conservando la configuración.
+- **Actualización de punta a punta con la ventana real**
+  (`scripts/demo/actualizacion.sh`, prefijo en `/tmp`, socket propio):
+  0.6.0 instalada → aviso `ready` → al cerrar la ventana el daemon aplicó
+  solo y se reemplazó con `exec` (mismo pid, desde `versions/0.6.1`) →
+  al reabrir, `attempts` 1 y a los 10 s `pending.json` borrado. Vuelta
+  atrás con una 0.6.1 que no arranca: dos fallos, al tercero `current` →
+  0.6.0, `bad.json`, `rolled-back.json`, `notify-send` con el texto exacto,
+  el daemon malo parado y la 0.6.1 borrada.
+- **Evaluador visual**: ronda 1 (subagente nuevo) con 2 fallos de acabado
+  (corte sin «…» en la confirmación, línea partida en Configuración) y 2
+  detalles; corregidos. Ronda 2 (otro subagente nuevo): **cumplen los 5
+  criterios**.
+- Pendiente: CI de la PR, la «Prueba a mano» del usuario, la clave y los
+  ajustes de GitHub, integrar, publicar y la primera instalación.
+
+## Métricas
+
+- **Tiempo**: de 18:01 a 20:30 del 2026-11-17, unas 2 h 30 min, con la 0.5.2
+  (PR #10) incluida y una pausa por el límite de uso. Esperas al usuario:
+  tres preguntas (PR previa, publicar la 0.5.2 y la previa).
+- **Claude** (Opus 5.5, transcript de la sesión): unas 280 respuestas y 375
+  llamadas a herramientas, unos **255 k tokens de salida, 550 k de escritura
+  en caché y 94 M de lectura de caché**; más dos evaluadores visuales (86 k y
+  78 k tokens).
+- **Codex**:
+
+  | Encargo | Rol | Entrada (caché) | Salida | Tiempo | Comprobaciones |
+  | --- | --- | --- | --- | --- | --- |
+  | `v06` | Sol, tests | 194 k (164 k) | 10,5 k | 223 s | fmt 0,8 s · test 120 s |
+  | `v06-revision` | Sol, revisión high | 1,15 M (1,04 M) | 10,7 k | 342 s | compuerta 132 s |
+  | `v06-comentarios` | Luna, traducir comentarios | 214 k (179 k) | 2,7 k | 96 s | fmt 0,5 s · compuerta 17,5 s |
+
+- **Compuerta** (0.5.2): 221 s en frío → 52 s con la carpeta del equipo
+  caliente; en esta ronda, 132 s la del revisor en un worktree nuevo (en la
+  0.5.1, unos 8 min) y 17,5 s la de Luna.
+- **Hallazgos**: Sol, 6 mayores y 5 menores (10 aceptados, 1 descartado).
+  Evaluador visual: 2 rondas.
+
+## Carencias del equipo
+
+1. **El aislamiento del worktree rechaza órdenes compuestas que nombran git**
+   (también `github` en una ruta, o `git` dentro de un mensaje de `-m`) y
+   obliga a partirlas o a editar con scripts de Python en `/tmp`. Costó
+   unas 15 llamadas y un `-m` vacío al revisor (el fichero del mensaje no
+   llegó a escribirse). *Propuesta*: que la skill diga que en una sesión en
+   segundo plano el director use una orden de git por llamada y escriba los
+   mensajes largos con la herramienta de ficheros, nunca con `printf` en una
+   orden compuesta; y que `bin/team ask` acepte `--message-file`.
+2. **El contrato nombraba el icono sin su ruta** y Sol lo preguntó.
+   *Propuesta*: en la skill, «todo fichero que nombre el contrato lleva su
+   ruta exacta».
+3. **El kit de demo no cambia el ancho de la ventana**, así que el estado
+   estrecho del aviso no se pudo capturar. *Propuesta*: una variable de la
+   app para el tamaño inicial de la ventana y escenas con otro tamaño en
+   `demo.sh`.
+4. **Las escenas del aviso son estados fijados** (`TITAN_AGENT_DEMO_UPDATE`),
+   no el flujo real; el flujo real necesitó un kit nuevo
+   (`scripts/demo/actualizacion.sh`), que ya queda versionado.
+   *Propuesta*: que la skill pida, para una tarea con estados que dependen
+   de un servicio, un kit de punta a punta además de las escenas.
+5. **Luna no puede pasar los tests de PTY dentro de su sandbox** y lo
+   reporta como fallo aunque la compuerta de titan-team (fuera del sandbox)
+   pasa. *Propuesta*: que su prompt diga que la compuerta del orquestador es
+   la que cuenta y que, si su `cargo test` falla por el sandbox, lo diga sin
+   darlo por fallido.
+6. **El evaluador visual encontró fallos reales en la ronda 1** (corte de
+   texto y línea partida) y aprobó en la 2: el reparto funcionó como se
+   esperaba.
 
 ## Resultado
