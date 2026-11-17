@@ -54,6 +54,14 @@ impl TryFrom<Value> for ClientMessage {
         {
             return Err(format!("unknown field `{unknown}` in launch"));
         }
+        let mut value = value;
+        // `update_apply` may come without params: `force` is then false.
+        if value.get("method").and_then(Value::as_str) == Some("update_apply")
+            && value.get("params").is_none_or(Value::is_null)
+            && let Some(object) = value.as_object_mut()
+        {
+            object.insert("params".into(), serde_json::json!({}));
+        }
         let wire: Wire = serde_json::from_value(value).map_err(|error| error.to_string())?;
         Ok(ClientMessage {
             id: wire.id,
@@ -105,6 +113,62 @@ pub enum Request {
     /// not, from the official app-server. Opens no writer on the thread.
     /// Answered with [`TranscriptResult`].
     Transcript { session: String },
+    /// State of the updater (ADR-0011 §6). Answered with [`UpdateStatus`].
+    UpdateStatus,
+    /// Look for a new version now, even with automatic checks off.
+    UpdateCheck,
+    /// Apply the prepared version now (the «actualizar» button) or restart
+    /// into the installed one. `force` confirms closing the terminals of
+    /// working sessions.
+    UpdateApply {
+        #[serde(default)]
+        force: bool,
+    },
+    /// Turn the automatic checks on or off. Answered with [`UpdateStatus`].
+    UpdateSettings { auto: bool },
+    /// Forget the notice of the last rollback.
+    UpdateDismiss,
+}
+
+/// State of the updater of the daemon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateState {
+    #[default]
+    Idle,
+    Checking,
+    Downloading,
+    /// A newer version is prepared and applies when it is safe.
+    Ready,
+    /// Ready, but waiting for working terminals to finish (no window).
+    Waiting,
+    Applying,
+    Failed,
+}
+
+/// Answer to the `update_*` requests and params of the `update` event.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct UpdateStatus {
+    pub state: UpdateState,
+    /// False in a build that is not installed or with
+    /// `TITAN_AGENT_NO_UPDATE`: nothing is checked nor applied.
+    pub active: bool,
+    /// Version of the daemon that answers.
+    pub installed: String,
+    /// Version `current` points to, when installed.
+    pub current: Option<String>,
+    /// The new version (downloading, ready, waiting, applying or failed).
+    pub version: Option<String>,
+    pub notes_url: Option<String>,
+    /// Sessions whose terminals would close (working, with a terminal here).
+    pub blocking: Vec<String>,
+    pub error: Option<String>,
+    /// Automatic checks are on.
+    pub auto: bool,
+    /// Unix milliseconds of the last finished check.
+    pub last_check_ms: Option<i64>,
+    /// The launcher went back from a version that did not start.
+    pub rolled_back: Option<crate::update::RolledBack>,
 }
 
 /// Answer to [`Request::Hello`].
@@ -204,6 +268,8 @@ pub enum Event {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         exit_code: Option<u32>,
     },
+    /// The updater changed state (ADR-0011 §6).
+    Update(UpdateStatus),
 }
 
 /// The events of one open team task, as written by `titan-team`.
@@ -327,15 +393,40 @@ pub fn socket_path(
     temp_dir: &str,
     user: &str,
 ) -> String {
+    socket_path_named(explicit, runtime_dir, temp_dir, user, socket_name(false))
+}
+
+/// File name of the default socket. A debug build uses its own, so a
+/// development daemon never takes the place of the installed one
+/// (ADR-0011 §4). Callers pass `cfg!(debug_assertions)` of their binary.
+pub fn socket_name(debug: bool) -> &'static str {
+    if debug {
+        "agentd-dev.sock"
+    } else {
+        "agentd.sock"
+    }
+}
+
+/// [`socket_path`] with the socket file `name`.
+pub fn socket_path_named(
+    explicit: Option<&str>,
+    runtime_dir: Option<&str>,
+    temp_dir: &str,
+    user: &str,
+    name: &str,
+) -> String {
     if let Some(path) = explicit.filter(|path| !path.is_empty()) {
         return path.to_string();
     }
     match runtime_dir.filter(|dir| !dir.is_empty()) {
-        Some(dir) => format!("{}/titan-agent/agentd.sock", dir.trim_end_matches('/')),
+        Some(dir) => format!("{}/titan-agent/{name}", dir.trim_end_matches('/')),
         None => format!(
-            "{}/titan-agent-{}/agentd.sock",
+            "{}/titan-agent-{}/{name}",
             temp_dir.trim_end_matches('/'),
             if user.is_empty() { "user" } else { user }
         ),
     }
 }
+
+/// The daemon writes its pid in this file, in the folder of its socket.
+pub const PID_FILE: &str = "agentd.pid";
