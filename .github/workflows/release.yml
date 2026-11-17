@@ -139,6 +139,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends minisign
+          # Con una clave desechable: firma con la contraseña por la entrada
+          # estándar, como abajo, antes de tocar la clave real.
+          cd "$RUNNER_TEMP"
+          printf 'prueba\nprueba\n' | minisign -G -p prueba.pub -s prueba.key >/dev/null
+          echo '{}' > prueba.json
+          printf 'prueba\n' | minisign -S -s prueba.key -m prueba.json -t prueba >/dev/null
+          minisign -V -p prueba.pub -m prueba.json >/dev/null
+          rm -f prueba.*
       - name: Manifiesto firmado y SHA256SUMS
         env:
           VERSION: ${{ needs.preparar.outputs.version }}

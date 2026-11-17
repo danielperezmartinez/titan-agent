@@ -369,6 +369,11 @@ impl MainView {
                     // Sessions started working since the status: ask.
                     Some(Pending::UpdateApply) if error.code == "confirm_needed" => {
                         self.update.confirm = true;
+                        // The fresh list of sessions it would close.
+                        let id = self
+                            .client
+                            .request(titan_agent_core::protocol::Request::UpdateStatus);
+                        self.pending.insert(id, Pending::Update);
                     }
                     _ => self.notice = Some((error.message, true)),
                 }

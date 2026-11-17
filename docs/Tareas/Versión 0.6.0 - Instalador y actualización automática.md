@@ -357,6 +357,54 @@ Criterios para el evaluador visual, fijados antes de implementar:
 5. **Acabado.** Nada desalineado en la línea base de la cabecera, ningún
    texto partido en dos líneas y nada que no sea ASCII en los marcadores.
 
+### Prueba a mano
+
+Qué se prueba: los clics del aviso `[^]` con una actualización real de la
+ventana instalada (la 0.6.0 que se actualiza a una 0.6.1 servida en local),
+porque el evaluador visual solo ve capturas. Todo vive en una carpeta de
+`/tmp`, con su propio socket, datos inventados del kit de demo, CLI falsos y
+una clave de prueba: no toca la instalación real, el daemon de cada día ni el
+menú. Builds de debug, que son las únicas que aceptan otra URL y otra clave.
+
+Preparación (compila dos veces, unos minutos):
+`scripts/demo/actualizacion.sh preparar`
+
+1. `scripts/demo/actualizacion.sh abrir` → se abre titan-agent con las
+   sesiones inventadas; en unos 10 s la cabecera muestra
+   `[^] v0.6.1 · actualizar` entre los contadores y `[i]` `[*]`.
+2. Pasa el ratón por `v0.6.1` → se subraya; clic → abre en el navegador la
+   página de la versión (no existe todavía: 404 de GitHub, es lo esperado).
+3. `[*]` → Configuración muestra el bloque «ACTUALIZACIONES»: versión
+   instalada v0.6.0, `[ok] activado`, `Buscar ahora` y «v0.6.1 lista; se
+   aplica al cerrar la ventana».
+4. Clic en `[ok] activado` → pasa a `[ ] desactivado`; otra vez → vuelve a
+   `[ok] activado`.
+5. Elige en el árbol una sesión trabajando (`[>]`, p. ej. «titan-ssh: sftp
+   renombrar») para abrir su terminal y pulsa `actualizar` → la cabecera
+   cambia a «se cerrarán los terminales de 1 sesión trabajando; siguen vivas
+   · [ok] actualizar · cancelar».
+6. Pulsa `Esc` → vuelve a `[^] v0.6.1 · actualizar`. Repite 5 y pulsa
+   `cancelar` → lo mismo.
+7. Pulsa `actualizar` y luego `[ok] actualizar` → «[^] actualizando…»; la
+   ventana se cierra y en 2 o 3 s se abre otra, ya de la 0.6.1, sin aviso.
+   La sesión del paso 5 sigue en el árbol y su terminal se vuelve a abrir al
+   elegirla.
+8. Espera 10 s y, en otra terminal, `scripts/demo/actualizacion.sh estado`
+   → `current: versions/0.6.1`, `pending.json: -`.
+9. Cierra la ventana. `scripts/demo/actualizacion.sh down`.
+
+Vuelta atrás (opcional): `preparar`, `romper` y `abrir`; espera al aviso y
+cierra la ventana (se aplica sola) → `estado` dice `current:
+versions/0.6.1`. Abre tres veces seguidas `abrir`: las dos primeras la
+ventana no aparece (la 0.6.1 «rota» falla al arrancar); la tercera sale una
+notificación del sistema «La versión 0.6.1 no arrancó; se ha vuelto a la
+0.6.0.» y se abre la 0.6.0 con `[^] v0.6.1 no arrancó; sigues en v0.6.0
+[x]` en `warning`. Clic en `[x]` → el aviso desaparece. `down` al acabar.
+
+No se puede probar en la demo: el ancho estrecho (`[^] actualizar`), porque
+el kit abre la ventana a 1440 × 900; redimensiona la ventana del paso 1 por
+debajo de 1100 px para verlo.
+
 ## Criterios de finalización
 
 - PR integrada con la versión 0.6.0, los checks en verde y la revisión de Sol

@@ -13,6 +13,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -68,8 +69,9 @@ fn archive(v: &str, daemon: &Path) -> Vec<u8> {
     tar.into_inner().unwrap().finish().unwrap()
 }
 
-/// Serves `files` (path → bytes) over HTTP/1.0 until the test ends.
-fn serve(files: Vec<(String, Vec<u8>)>) -> String {
+/// Serves `files` (path → bytes) over HTTP/1.0 until the test ends, and
+/// keeps the head of every request in `seen`.
+fn serve(files: Vec<(String, Vec<u8>)>, seen: Arc<Mutex<Vec<String>>>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}/releases", listener.local_addr().unwrap());
     std::thread::spawn(move || {
@@ -81,6 +83,7 @@ fn serve(files: Vec<(String, Vec<u8>)>) -> String {
                 request.push(byte[0]);
             }
             let line = String::from_utf8_lossy(&request);
+            seen.lock().unwrap().push(line.to_string());
             let path = line.split(' ').nth(1).unwrap_or("").to_string();
             let found = files.iter().find(|(p, _)| *p == path);
             let (status, body) = match found {
@@ -103,6 +106,8 @@ struct Install {
     root: PathBuf,
     socket: PathBuf,
     daemon: Option<Child>,
+    /// Heads of the HTTP requests the daemon made.
+    seen: Arc<Mutex<Vec<String>>>,
 }
 
 impl Install {
@@ -145,23 +150,28 @@ impl Install {
         )
         .unwrap()
         .into_string();
-        let base = serve(vec![
-            (
-                "/releases/latest/download/titan-agent-update.json".into(),
-                manifest,
-            ),
-            (
-                "/releases/latest/download/titan-agent-update.json.minisig".into(),
-                signature.into_bytes(),
-            ),
-            (format!("/releases/download/v0.6.1/{name}"), tarball),
-        ]);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let base = serve(
+            vec![
+                (
+                    "/releases/latest/download/titan-agent-update.json".into(),
+                    manifest,
+                ),
+                (
+                    "/releases/latest/download/titan-agent-update.json.minisig".into(),
+                    signature.into_bytes(),
+                ),
+                (format!("/releases/download/v0.6.1/{name}"), tarball),
+            ],
+            Arc::clone(&seen),
+        );
         let socket = dir.join("run/agentd.sock");
         let mut install = Install {
             dir,
             root,
             socket,
             daemon: None,
+            seen,
         };
         install.start(&base, &key.pk.to_base64());
         install
@@ -370,4 +380,16 @@ fn an_archive_with_another_hash_is_never_extracted() {
         .map(|dir| dir.flatten().map(|e| e.file_name()).collect())
         .unwrap_or_default();
     assert!(leftovers.is_empty(), "{leftovers:?}");
+    // Privacy (ADR-0011 §6): only GETs of the three files, with a bare
+    // User-Agent and nothing that identifies the user.
+    let seen = install.seen.lock().unwrap().clone();
+    assert_eq!(seen.len(), 3, "{seen:?}");
+    for head in &seen {
+        let lower = head.to_lowercase();
+        assert!(lower.starts_with("get /releases/"), "{head}");
+        assert!(lower.contains("\r\nuser-agent: titan-agent\r\n"), "{head}");
+        for header in ["cookie:", "authorization:"] {
+            assert!(!lower.contains(header), "{head}");
+        }
+    }
 }
