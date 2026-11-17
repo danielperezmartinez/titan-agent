@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · proyectos y monitor por directora</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+.board{width:1440px;box-sizing:border-box;background:#201d1d;color:#d8d5d5;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:14px;padding:32px 0 48px}
+.cap{padding:0 16px 8px;font-size:11px;color:#6e6e73;letter-spacing:.04em}
+.win{margin:0 0 48px;width:1440px;height:820px;border-top:1px solid rgba(253,252,252,0.12);border-bottom:1px solid rgba(253,252,252,0.12);display:flex;flex-direction:column}
+.hdr{display:flex;align-items:center;gap:16px;padding:0 16px;height:48px;border-bottom:1px solid rgba(253,252,252,0.12);flex:none}
+.hdr .t{display:flex;align-items:baseline;gap:8px;flex-grow:1}
+.hdr .t b{color:#fdfcfc;font-size:16px}.hdr .t span{color:#9a9898;font-size:12px}
+.cnt{display:flex;gap:16px;font-size:12px;color:#9a9898}
+.body{display:flex;flex-grow:1;min-height:0}
+nav{width:320px;flex:none;border-right:1px solid rgba(253,252,252,0.12);display:flex;flex-direction:column;font-size:13px}
+.top{display:flex;flex-direction:column;gap:8px;padding:12px}
+.newb{display:flex;align-items:center;gap:8px;height:36px;padding:0 12px;border:1px solid #0a84ff;border-radius:4px;background:#302c2c;color:#fdfcfc;font-weight:700}
+.newb .k{margin-left:auto;color:#9a9898;font-size:11px;font-weight:400}
+.flt{display:flex;gap:8px;align-items:center;height:32px;padding:0 8px;background:#302c2c;border-radius:4px;color:#9a9898;font-size:12px}
+.sec{display:flex;align-items:center;justify-content:space-between;padding:8px 12px 2px;font-size:12px;letter-spacing:.08em;color:#fdfcfc;font-weight:700}
+.sec .a{font-weight:400;letter-spacing:0;color:#d8d5d5}
+.sec.m{color:#9a9898}
+.proj{display:flex;align-items:center;gap:8px;height:32px;margin-top:6px;padding:0 12px;color:#9a9898}
+.proj .n{color:#fdfcfc;font-weight:500}
+.proj .rule{flex-grow:1;height:1px;background:rgba(253,252,252,0.12)}
+.proj.sel{background:#302c2c;box-shadow:inset 2px 0 0 #0a84ff}
+.proj .plus{color:#d8d5d5;border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:0 5px}
+.proj.mute .n{color:#9a9898;font-weight:400}
+.ses{display:flex;align-items:center;gap:8px;height:34px;padding:0 12px 0 24px}
+.ses.sel{background:#302c2c;box-shadow:inset 2px 0 0 #0a84ff}
+.ses .br{color:#6e6e73;white-space:pre}
+.ses .nm{flex-grow:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag{border:1px solid currentColor;border-radius:4px;padding:0 4px;font-size:11px;line-height:16px}
+.note{padding:2px 12px 2px 36px;font-size:12px;color:#9a9898}
+.leg{margin-top:auto;padding:12px;border-top:1px solid rgba(253,252,252,0.12);display:flex;flex-wrap:wrap;gap:12px;font-size:11px;color:#9a9898}
+main{flex-grow:1;min-width:0;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px;border-bottom:1px solid rgba(253,252,252,0.12);font-size:13px;flex:none}
+.bar .nm{color:#fdfcfc;font-weight:700}
+.bar>*{white-space:nowrap}
+.btn{border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:3px 9px;font-size:12px;color:#d8d5d5;background:#201d1d}
+.btn.on{border-color:#0a84ff;color:#fdfcfc;background:#302c2c}
+.btn.dan{border-color:#ff453a;color:#ff453a}
+.cl{color:#da8fff}.cx{color:#5ac8fa}.g{color:#30d158}.w{color:#ff9f0a}.r{color:#ff453a}.m{color:#9a9898}.s{color:#6e6e73}.i{color:#fdfcfc}.b{color:#d8d5d5}.a{color:#0a84ff}
+.grow{flex-grow:1}
+.sum{padding:20px 24px;display:flex;flex-direction:column;gap:20px;font-size:13px;max-width:880px}
+.sum h3{margin:0;font-size:12px;letter-spacing:.08em;color:#9a9898;font-weight:400}
+.rowx{display:flex;align-items:center;gap:12px;padding:8px 10px;border-bottom:1px solid rgba(253,252,252,0.12)}
+.rowx:last-child{border-bottom:0}
+.box{border:1px solid rgba(253,252,252,0.12);border-radius:4px}
+.cards{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;padding:16px}
+.card{border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:10px 12px;font-size:12px;display:flex;flex-direction:column;gap:4px;background:#201d1d}
+.card.wide{grid-column:1 / span 3}
+.strip{margin:16px 16px 0;padding:8px 12px;background:#302c2c;border-radius:4px;font-size:12px}
+.dd{position:absolute;background:#3a3636;border:1px solid #646262;border-radius:4px;padding:4px 0;font-size:12px;width:380px}
+.dd div{padding:5px 12px}
+.dd .on{background:#302c2c;box-shadow:inset 2px 0 0 #0a84ff}
+.term{flex-grow:1;background:#161313;padding:16px;font-size:13px;line-height:1.5;color:#9a9898}
+.comp{margin:4px 16px 14px;border:1px solid #0a84ff;border-radius:4px;background:#302c2c;padding:10px 12px;font-size:13px;line-height:1.55;min-height:44px;white-space:pre}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px 6px}
+.chip{border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:5px 8px;background:#201d1d;color:#d8d5d5;font-size:12px}
+.chip.on{border-color:#0a84ff}
+.cmd{padding:4px 16px 2px;font-size:11px;color:#9a9898}
+.caret{display:inline-block;width:8px;height:15px;background:#fdfcfc;vertical-align:-2px}
+</style>
+</helmet>
+<div class="board">
+
+  <!-- ================= 1 · ÁRBOL + RESUMEN ================= -->
+  <div class="cap">1 · PROYECTOS IMPORTADOS Y RESUMEN — clic en la cabecera de «titan-agent»: su resumen (dos equipos, cada uno con su [m]). titan-ssh importado sin sesiones; recetas-web con la carpeta borrada; «otras carpetas» al final</div>
+  <div class="win">
+    <header class="hdr"><div class="t"><b>titan-agent</b><span>torre de control</span></div><div class="cnt"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 2 en espera</span></div><span>[i]</span><span>[*]</span></header>
+    <div class="body">
+      <nav>
+        <div class="top">
+          <div class="newb">[+] Nueva sesión<span class="k">ctrl+n</span></div>
+          <div class="flt">[/] <span>filtrar</span></div>
+        </div>
+        <div class="sec">PROYECTOS <span class="a">[+] importar</span></div>
+        <div class="proj sel"><span>[#]</span><span class="n">titan-agent</span><span class="rule"></span><span>5</span><span class="plus">+</span></div>
+        <div class="ses"><span class="g">[&gt;]</span><span class="nm i">v07-conversacion <span class="g">[*]</span></span><span class="tag cl">cl opus</span></div>
+        <div class="ses"><span class="br">|- </span><span class="g">[&gt;]</span><span class="nm">sol · tests</span><span class="tag cx">cx sol</span></div>
+        <div class="ses"><span class="br">`- </span><span class="m">[+]</span><span class="nm">luna · mecánico</span><span class="tag cx">cx luna</span></div>
+        <div class="ses"><span class="w">[?]</span><span class="nm i">v08-spike <span class="g">[*]</span></span><span class="tag cl">cl opus</span></div>
+        <div class="ses"><span class="m">[+]</span><span class="nm">control</span><span class="tag cl">cl opus</span></div>
+        <div class="proj"><span>[#]</span><span class="n">titan-ssh</span><span class="rule"></span><span>0</span></div>
+        <div class="note">sin sesiones · <span class="b">[+]</span> nueva</div>
+        <div class="proj"><span>[#]</span><span class="n">recetas-web</span><span class="rule"></span><span class="w">[!]</span></div>
+        <div class="note"><span class="w">[!]</span> carpeta no encontrada · <span class="b">[x]</span> quitar</div>
+        <div class="sec m" style="margin-top:14px">OTRAS CARPETAS</div>
+        <div class="proj mute"><span>[#]</span><span class="n">sandbox</span><span class="rule"></span><span>1</span><span class="b">[+] importar</span></div>
+        <div class="ses"><span class="g">[&gt;]</span><span class="nm m">prueba-rapida</span><span class="tag cx">cx gpt</span></div>
+        <div class="leg"><span><span class="cl">cl</span> Claude Code</span><span><span class="cx">cx</span> Codex</span><span><span class="g">[&gt;]</span> trabajando</span><span><span class="w">[?]</span> te necesita</span><span>[+] en espera</span><span><span class="g">[*]</span> equipo en vivo</span></div>
+      </nav>
+      <main>
+        <div class="bar"><span>[#]</span><span class="nm">titan-agent</span><span class="m">~/proyectos/titan-agent</span><span class="grow"></span><span class="btn on">[+] nueva sesión</span><span class="btn">[d] abrir carpeta</span><span class="btn dan">[x] quitar</span></div>
+        <div class="sum">
+          <div><h3>EQUIPOS · 2 encargos abiertos</h3>
+            <div class="box" style="margin-top:8px">
+              <div class="rowx"><span class="g">[&gt;]</span><span class="i">v07-conversacion</span><span class="m">ronda 1 de 2</span><span class="m">directora</span><span class="a">v07-conversacion</span><span class="grow"></span><span class="m">sol escribe los tests · 4 min</span><span class="btn">[m] monitor</span></div>
+              <div class="rowx"><span class="w">[?]</span><span class="i">v08-spike</span><span class="m">sin revisión</span><span class="m">directora</span><span class="a">v08-spike</span><span class="grow"></span><span class="w">te necesita · 2 min</span><span class="btn">[m] monitor</span></div>
+              <div class="rowx"><span class="m">[+]</span><span class="i">limpieza-docs</span><span class="m">ronda 2 de 2</span><span class="m">sin sesión directora</span><span class="grow"></span><span class="m">último evento hace 3 h</span><span class="btn">[m] monitor</span></div>
+            </div>
+          </div>
+          <div><h3>SESIONES · 5 vivas</h3>
+            <div class="box" style="margin-top:8px">
+              <div class="rowx"><span class="g">[&gt;]</span><span class="i">v07-conversacion</span><span class="tag cl">cl opus</span><span class="grow"></span><span class="m">trabajando desde hace 12 min</span></div>
+              <div class="rowx"><span class="g">[&gt;]</span><span>sol · tests</span><span class="tag cx">cx sol</span><span class="grow"></span><span class="m">trabajando desde hace 4 min</span></div>
+              <div class="rowx"><span class="m">[+]</span><span>luna · mecánico</span><span class="tag cx">cx luna</span><span class="grow"></span><span class="m">en espera desde hace 20 min</span></div>
+              <div class="rowx"><span class="w">[?]</span><span class="i">v08-spike</span><span class="tag cl">cl opus</span><span class="grow"></span><span class="w">te necesita desde hace 2 min</span></div>
+              <div class="rowx"><span class="m">[+]</span><span>control</span><span class="tag cl">cl opus</span><span class="grow"></span><span class="m">en espera desde hace 1 h</span></div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ================= 2 · MONITOR DESDE LA DIRECTORA ================= -->
+  <div class="cap">2 · MONITOR DESDE LA SESIÓN DIRECTORA — [m] en la barra de «v07-conversacion» cambia el cuerpo por su monitor (las tres vistas de siempre). Miga [#] proyecto › directora y selector de encargo abierto (lleva dos)</div>
+  <div class="win" style="position:relative">
+    <header class="hdr"><div class="t"><b>titan-agent</b><span>torre de control</span></div><div class="cnt"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 2 en espera</span></div><span>[i]</span><span>[*]</span></header>
+    <div class="body">
+      <nav>
+        <div class="top">
+          <div class="newb" style="border-color:rgba(253,252,252,0.12)">[+] Nueva sesión<span class="k">ctrl+n</span></div>
+          <div class="flt">[/] <span>filtrar</span></div>
+        </div>
+        <div class="sec">PROYECTOS <span class="a">[+] importar</span></div>
+        <div class="proj"><span>[#]</span><span class="n">titan-agent</span><span class="rule"></span><span>5</span></div>
+        <div class="ses sel"><span class="g">[&gt;]</span><span class="nm i">v07-conversacion <span class="g">[*]</span></span><span class="tag cl">cl opus</span></div>
+        <div class="ses"><span class="br">|- </span><span class="g">[&gt;]</span><span class="nm">sol · tests</span><span class="tag cx">cx sol</span></div>
+        <div class="ses"><span class="br">`- </span><span class="m">[+]</span><span class="nm">luna · mecánico</span><span class="tag cx">cx luna</span></div>
+        <div class="ses"><span class="w">[?]</span><span class="nm i">v08-spike <span class="g">[*]</span></span><span class="tag cl">cl opus</span></div>
+        <div class="ses"><span class="m">[+]</span><span class="nm">control</span><span class="tag cl">cl opus</span></div>
+        <div class="proj"><span>[#]</span><span class="n">titan-ssh</span><span class="rule"></span><span>0</span></div>
+        <div class="note">sin sesiones · <span class="b">[+]</span> nueva</div>
+        <div class="leg"><span><span class="cl">cl</span> Claude Code</span><span><span class="cx">cx</span> Codex</span><span><span class="g">[&gt;]</span> trabajando</span><span><span class="w">[?]</span> te necesita</span><span>[+] en espera</span><span><span class="g">[*]</span> equipo en vivo</span></div>
+      </nav>
+      <main>
+        <div class="bar"><span class="nm">v07-conversacion</span><span class="g">[&gt;] trabajando</span><span class="cl">cl opus</span><span class="m">~/proyectos/titan-agent</span><span class="grow"></span><span class="btn on">[m] monitor</span><span class="btn">[t] terminal</span><span class="btn">[d] carpeta</span><span class="btn dan">[x] detener</span></div>
+        <div class="bar" style="font-size:12px"><span class="m">[#] titan-agent ›</span><span class="i">v07-conversacion</span><span class="btn on">encargo [v]</span><span class="m">ronda 1 de 2</span><span class="g">[*] en vivo</span><span class="grow"></span><span class="btn">[grafo]</span><span class="btn">[carriles]</span><span class="btn on">[mesa de control]</span><span class="m">[&lt;] conversación</span></div>
+        <div class="strip"><span class="m">hablando</span> <span class="cl">opus</span> <span class="s">----*---&gt;</span> <span class="cx">sol</span> · <span class="m">trabajando</span> <span class="cx">sol</span> · <span class="m">te necesitan</span> nadie</div>
+        <div class="cards">
+          <div class="card wide"><span><span class="g">[&gt;]</span> <span class="cl">opus · director</span> <span class="m">· implementa la parte 2 del contrato · 12 min</span></span><span class="m">turnos 9 · 210 k tokens · cuota de Claude no disponible</span></div>
+          <div class="card"><span><span class="g">[&gt;]</span> <span class="cx">sol · tests</span></span><span class="m">escribe tests de aceptación · 4 min</span><span class="s">▁▂▅▇▆▃▂▅</span><span class="m">cuota 5 h: 62 %</span></div>
+          <div class="card"><span><span class="m">[+]</span> <span class="cx">luna · mecánico</span></span><span class="m">en espera · 20 min</span><span class="s">▁▁▃▁▁▁▁▁</span><span class="m">cuota 5 h: 88 %</span></div>
+          <div class="card"><span><span class="m">[+]</span> <span class="cx">sol · revisor</span></span><span class="m">aún sin turno</span><span class="s">▁▁▁▁▁▁▁▁</span><span class="m">cuota 5 h: 62 %</span></div>
+        </div>
+      </main>
+    </div>
+    <div class="dd" style="left:560px;top:134px">
+      <div class="on"><span class="i">v07-conversacion</span> <span class="m">· ronda 1 · hace 1 min</span></div>
+      <div><span class="i">v07-retoques</span> <span class="m">· sin revisión · hace 2 h</span></div>
+    </div>
+  </div>
+
+  <!-- ================= 3 · BORRADOR DESDE EL + ================= -->
+  <div class="cap">3 · BORRADOR DESDE EL «+» DE UN PROYECTO — «+» en la cabecera de titan-ssh (importado, sin sesiones): la conversación en borrador con el proyecto puesto. Para otra carpeta, [d] en el chip del proyecto (lanzar en ella la importa)</div>
+  <div class="win" style="height:600px">
+    <header class="hdr"><div class="t"><b>titan-agent</b><span>torre de control</span></div><div class="cnt"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 2 en espera</span></div><span>[i]</span><span>[*]</span></header>
+    <div class="body">
+      <nav>
+        <div class="top">
+          <div class="newb" style="border-color:rgba(253,252,252,0.12)">[+] Nueva sesión<span class="k">ctrl+n</span></div>
+          <div class="flt">[/] <span>filtrar</span></div>
+        </div>
+        <div class="sec">PROYECTOS <span class="a">[+] importar</span></div>
+        <div class="proj"><span>[#]</span><span class="n">titan-agent</span><span class="rule"></span><span>5</span></div>
+        <div class="proj sel"><span>[#]</span><span class="n">titan-ssh</span><span class="rule"></span><span>0</span><span class="plus">+</span></div>
+        <div class="leg"><span><span class="cl">cl</span> Claude Code</span><span><span class="cx">cx</span> Codex</span><span><span class="g">[&gt;]</span> trabajando</span><span><span class="w">[?]</span> te necesita</span><span>[+] en espera</span></div>
+      </nav>
+      <main>
+        <div class="bar"><span class="i">[+]</span><span class="nm">Nueva sesión</span><span class="m">en</span><span class="b">[#] titan-ssh</span><span class="grow"></span><span class="m">[esc] cerrar</span></div>
+        <div class="grow" style="display:flex;align-items:center;justify-content:center;color:#6e6e73;font-size:13px">la conversación empieza aquí</div>
+        <div class="chips"><span class="chip"><span class="cx">cx</span> Codex <span class="m">[v]</span></span><span class="chip">gpt-6.1-sol <span class="m">[v]</span></span><span class="chip">esfuerzo medium <span class="m">[v]</span></span><span class="chip">sandbox workspace-write <span class="m">[v]</span></span><span class="chip on">[#] titan-ssh <span class="m">[v]</span></span><span class="chip">[d] otra carpeta</span></div>
+        <div class="cmd">$ cd ~/proyectos/titan-ssh &amp;&amp; codex --remote unix:// -m gpt-6.1-sol -c model_reasoning_effort=medium -s workspace-write -- "Prepara la tarea del plugin de titan-agent…"</div>
+        <div class="comp">Prepara la tarea del plugin de titan-agent:
+- lee la ADR-0032 de plugins
+- propón cómo habla el plugin con el daemon<span class="caret"></span></div>
+        <div style="padding:0 16px 12px;font-size:12px;color:#6e6e73">enter lanzar · shift+enter nueva línea · «- » lista</div>
+      </main>
+    </div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":2400}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
