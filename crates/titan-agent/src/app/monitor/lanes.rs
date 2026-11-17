@@ -12,7 +12,7 @@ use titan_agent_core::monitor::Board;
 use crate::theme::{self, color, hairline, hsla};
 
 use super::super::MainView;
-use super::{LANE_WINDOWS, agent_hex, look, with_alpha};
+use super::{LANE_WINDOWS, agent_hex, look, target, with_alpha};
 
 const LANE_H: f32 = 72.;
 /// Width of the session tree on the left of the window.
@@ -31,9 +31,10 @@ impl MainView {
 
         let rows = board.agents.iter().map(|agent| {
             let l = look(board, agent, now);
-            let session = agent.session.clone();
+            let target = target(board, agent);
             div()
                 .id(SharedString::from(format!("lane-{}", agent.id)))
+                .relative()
                 .flex()
                 .flex_col()
                 .justify_center()
@@ -42,10 +43,23 @@ impl MainView {
                 .px(px(12.))
                 .border_b_1()
                 .border_color(with_alpha(theme::INK, 0.08))
-                .when(session.is_some(), |d| d.cursor_pointer())
+                .when(target.is_some(), |d| d.cursor_pointer())
+                // Its thread is open as a writer in the app: a warning bar
+                // like the selection of the tree.
+                .when(agent.writer_open, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(2.))
+                            .bg(color(theme::WARNING)),
+                    )
+                })
                 .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    if session.is_some() {
-                        this.open_agent(session.clone(), window, cx);
+                    if let Some(target) = target.clone() {
+                        this.open_agent(target, window, cx);
                     }
                 }))
                 .child(
@@ -333,7 +347,7 @@ impl MainView {
                             .child(legend_box(0xff9f0a47, theme::WARNING))
                             .child("te necesita"),
                     )
-                    .child("el tiempo corre hacia la izquierda · clic en un carril: abre su sesión")
+                    .child("el tiempo corre hacia la izquierda · clic en un carril: su hilo o su sesión")
                     .child(
                         div()
                             .id("lane-window")

@@ -1,8 +1,9 @@
 //! Read-only client of the shared `codex app-server` daemon.
 //!
 //! The daemon listens on a Unix socket and speaks JSON-RPC over WebSocket.
-//! titan-agentd only lists threads and, when the user presses `[x] detener`,
-//! interrupts the running turn: it never starts turns nor sends text.
+//! titan-agentd only lists and reads threads and, when the user presses
+//! `[x] detener`, interrupts the running turn: it never starts turns nor
+//! sends text, and reading a thread does not load it (no writer is opened).
 
 use std::collections::HashSet;
 use std::io;
@@ -14,6 +15,29 @@ use serde_json::{Value, json};
 use titan_agent_core::discovery::codex_session;
 use titan_agent_core::quota::{Quota, parse_codex_rate_limits};
 use titan_agent_core::session::Session;
+use titan_agent_core::transcript::{
+    TRANSCRIPT_ITEMS, TranscriptItem, transcript_from_items_page, transcript_from_thread,
+};
+
+/// A thread read for the interface: its items (oldest first), whether older
+/// ones remain, and its working folder.
+pub struct Transcript {
+    pub items: Vec<TranscriptItem>,
+    pub more: bool,
+    pub cwd: Option<String>,
+}
+
+/// Why a transcript could not be read, with the protocol error code.
+#[derive(Debug)]
+pub enum ReadError {
+    /// `thread/read` refused the thread (`not_found`).
+    NotFound(String),
+    /// An error answer of Codex while reading the items (`codex_error`).
+    Codex(String),
+    /// The app-server closed the connection or stopped answering
+    /// (`codex_unavailable`).
+    Transport(String),
+}
 
 /// Threads that are not loaded are still shown for this long after their last
 /// update, so a team run that just ended stays visible under its director.
@@ -85,6 +109,12 @@ impl CodexClient {
 
     /// Sends a request and waits for its answer, skipping notifications.
     pub fn request(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.call(method, params)?
+    }
+
+    /// Like [`CodexClient::request`], keeping apart a transport failure
+    /// (outer error) from an error answer of Codex (inner error).
+    fn call(&mut self, method: &str, params: Value) -> Result<Result<Value, String>, String> {
         let id = self.next_id;
         self.next_id += 1;
         let text = json!({"id": id, "method": method, "params": params}).to_string();
@@ -111,13 +141,13 @@ impl CodexClient {
                 continue;
             }
             if let Some(error) = value.get("error") {
-                return Err(error
+                return Ok(Err(error
                     .get("message")
                     .and_then(Value::as_str)
                     .unwrap_or("error de Codex")
-                    .to_string());
+                    .to_string()));
             }
-            return Ok(value.get("result").cloned().unwrap_or(Value::Null));
+            return Ok(Ok(value.get("result").cloned().unwrap_or(Value::Null)));
         }
     }
 
@@ -173,6 +203,49 @@ impl CodexClient {
         Ok(sessions)
     }
 
+    /// A thread as `thread/read` reports it, without its turns. Reading
+    /// does not load the thread.
+    pub fn thread(&mut self, thread: &str) -> Result<Value, ReadError> {
+        let read = self
+            .call("thread/read", json!({"threadId": thread}))
+            .map_err(ReadError::Transport)?
+            .map_err(ReadError::NotFound)?;
+        read.get("thread")
+            .cloned()
+            .ok_or_else(|| ReadError::Codex("thread/read no devolvió el hilo".into()))
+    }
+
+    /// The last items of a thread: `thread/items/list` (newest first), or
+    /// `thread/read` with its turns when Codex does not list the items of
+    /// that thread. Nothing here writes to the thread.
+    pub fn transcript(&mut self, thread: &str) -> Result<Transcript, ReadError> {
+        let cwd = self
+            .thread(thread)?
+            .get("cwd")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let page = self
+            .call(
+                "thread/items/list",
+                json!({"threadId": thread, "limit": TRANSCRIPT_ITEMS, "sortDirection": "desc"}),
+            )
+            .map_err(ReadError::Transport)?;
+        let (items, more) = match page {
+            Ok(page) => transcript_from_items_page(&page),
+            Err(_) => {
+                let read = self
+                    .call(
+                        "thread/read",
+                        json!({"threadId": thread, "includeTurns": true}),
+                    )
+                    .map_err(ReadError::Transport)?
+                    .map_err(ReadError::Codex)?;
+                transcript_from_thread(&read)
+            }
+        };
+        Ok(Transcript { items, more, cwd })
+    }
+
     /// Remaining quota of the account (`account/rateLimits/read`, the
     /// variant meant for periodic reads). Nothing else of the account is
     /// asked for or kept.
@@ -226,5 +299,17 @@ impl CodexClient {
 
     pub fn interrupt(&mut self, _thread: &str) -> Result<bool, String> {
         Ok(false)
+    }
+
+    pub fn thread(&mut self, _thread: &str) -> Result<Value, ReadError> {
+        Err(ReadError::Codex(
+            "el daemon de Codex aún no se lee en Windows".into(),
+        ))
+    }
+
+    pub fn transcript(&mut self, _thread: &str) -> Result<Transcript, ReadError> {
+        Err(ReadError::Codex(
+            "el daemon de Codex aún no se lee en Windows".into(),
+        ))
     }
 }

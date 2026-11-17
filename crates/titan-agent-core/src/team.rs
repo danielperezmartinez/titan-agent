@@ -253,6 +253,9 @@ pub struct Member {
     pub tokens: u64,
     pub activity: Option<String>,
     pub since_ms: Option<i64>,
+    /// Its last finished turn was refused because the thread was open
+    /// elsewhere (`status = "busy"`) and no turn started since.
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -310,6 +313,7 @@ impl TeamRun {
                     tokens: 0,
                     activity: None,
                     since_ms: None,
+                    busy: false,
                 })
                 .collect(),
             messages: Vec::new(),
@@ -358,6 +362,7 @@ impl TeamRun {
                     }
                     let member = run.member(role);
                     member.working = true;
+                    member.busy = false;
                     member.activity = None;
                     member.since_ms = Some(at);
                     // A new thread (`--new`) starts with no id: forget the
@@ -391,6 +396,7 @@ impl TeamRun {
                     }
                     let member = run.member(role);
                     member.working = false;
+                    member.busy = busy;
                     member.activity = None;
                     if !busy {
                         member.turns += 1;
@@ -469,6 +475,7 @@ impl TeamRun {
                     tokens: 0,
                     activity: None,
                     since_ms: None,
+                    busy: false,
                 });
                 self.members.len() - 1
             }

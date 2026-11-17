@@ -1,5 +1,11 @@
 //! Translation of GPUI keystrokes into the bytes an xterm-compatible terminal
 //! expects.
+//!
+//! Only special keys and control or alt combinations are sent from the key
+//! handler. Typed text is left to the platform input handler, which delivers
+//! it already composed (dead keys, compose sequences and IME), as the
+//! terminal of Zed does: a dead key arrives as a keystroke with no
+//! `key_char`, and sending its key would write the wrong character.
 
 use gpui::Keystroke;
 
@@ -75,14 +81,18 @@ pub fn keystroke_bytes(keystroke: &Keystroke, modes: KeyModes) -> Option<Vec<u8>
         "f10" => csi_tilde(21),
         "f11" => csi_tilde(23),
         "f12" => csi_tilde(24),
-        "space" if m.control => vec![0],
-        "space" => {
+        "space" if m.control => {
             if m.alt {
-                b"\x1b ".to_vec()
+                vec![0x1b, 0]
             } else {
-                b" ".to_vec()
+                vec![0]
             }
         }
+        "space" if m.alt && !m.platform => b"\x1b ".to_vec(),
+        "space" => return None,
+        // Windows reports AltGr as control + alt: the character it gives is
+        // text, not a control code.
+        _ if m.control && m.alt && is_alt_text(keystroke) => return None,
         _ if m.control && !m.platform => {
             let c = key.chars().next()?;
             if key.chars().count() != 1 {
@@ -101,24 +111,27 @@ pub fn keystroke_bytes(keystroke: &Keystroke, modes: KeyModes) -> Option<Vec<u8>
             };
             if m.alt { vec![0x1b, code] } else { vec![code] }
         }
-        _ => {
-            let text = keystroke
-                .key_char
-                .clone()
-                .or_else(|| (key.chars().count() == 1).then(|| key.to_string()))?;
-            if m.platform {
-                return None;
-            }
-            if m.alt && keystroke.key_char.as_deref() == Some(key) {
-                let mut bytes = vec![0x1b];
-                bytes.extend(text.as_bytes());
-                bytes
-            } else {
-                text.into_bytes()
-            }
+        // Alt as meta: ESC and the key, when alt does not give another
+        // character.
+        _ if m.alt && !m.platform && keystroke.key_char.as_deref() == Some(key) => {
+            let mut bytes = vec![0x1b];
+            bytes.extend(key.as_bytes());
+            bytes
         }
+        // Typed text (and dead keys, window shortcuts, lone modifiers): the
+        // input handler delivers the text, already composed.
+        _ => return None,
     };
     Some(bytes)
+}
+
+/// Whether the keystroke gives a character other than its key (alt or AltGr
+/// text, such as `@` on a Spanish `2`).
+fn is_alt_text(keystroke: &Keystroke) -> bool {
+    keystroke
+        .key_char
+        .as_deref()
+        .is_some_and(|text| text != keystroke.key)
 }
 
 #[cfg(test)]
@@ -160,19 +173,31 @@ mod tests {
     }
 
     #[test]
-    fn text_is_sent_as_typed() {
+    fn typed_text_is_left_to_the_input_handler() {
         let mut keystroke = Keystroke::parse("a").unwrap();
         keystroke.key_char = Some("a".into());
-        assert_eq!(
-            keystroke_bytes(&keystroke, KeyModes::default()),
-            Some(b"a".to_vec())
-        );
+        assert_eq!(keystroke_bytes(&keystroke, KeyModes::default()), None);
         let mut accented = Keystroke::parse("e").unwrap();
         accented.key_char = Some("é".into());
-        assert_eq!(
-            keystroke_bytes(&accented, KeyModes::default()),
-            Some("é".as_bytes().to_vec())
-        );
+        assert_eq!(keystroke_bytes(&accented, KeyModes::default()), None);
+        // A dead key: no character yet, and its key is not what it writes.
+        assert_eq!(bytes("'", false), None, "dead keys send nothing");
+        assert_eq!(bytes("space", false), None, "space is text too");
         assert_eq!(bytes("shift", false), None, "lone modifiers send nothing");
+    }
+
+    #[test]
+    fn alt_sends_escape_only_for_its_own_key() {
+        let mut meta = Keystroke::parse("alt-b").unwrap();
+        meta.key_char = Some("b".into());
+        assert_eq!(
+            keystroke_bytes(&meta, KeyModes::default()),
+            Some(b"\x1bb".to_vec())
+        );
+        let mut altgr = Keystroke::parse("ctrl-alt-2").unwrap();
+        altgr.key_char = Some("@".into());
+        assert_eq!(keystroke_bytes(&altgr, KeyModes::default()), None);
+        assert_eq!(bytes("ctrl-alt-space", false), Some(vec![0x1b, 0]));
+        assert_eq!(bytes("alt-space", false), Some(b"\x1b ".to_vec()));
     }
 }

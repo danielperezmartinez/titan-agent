@@ -8,7 +8,7 @@ Consecuencias: Cualquier cambio incompatible sube PROTOCOL_VERSION y el daemon r
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-15T11:36:00+01:00
-Última modificación: 2026-11-15T11:36:00+01:00
+Última modificación: 2026-11-16T23:05:00+01:00
 ---
 
 # ADR-0007 · Protocolo local de titan-agentd en NDJSON versionado
@@ -76,3 +76,22 @@ debe poder ir por stdio sin cambios.
   irrelevante). En Windows falta el named pipe: el daemon compila pero no
   escucha. El historial de repetición puede empezar a mitad de una secuencia de
   escape; el redibujado forzado lo corrige en los TUI de Claude Code y Codex.
+
+## Ampliaciones compatibles
+
+No cambian la decisión ni `PROTOCOL_VERSION` (1): son peticiones o campos
+nuevos que un cliente anterior no usa.
+
+- **`transcript`** (ronda 0.5.0, 2026-11-16,
+  [[Tareas/Abrir los hilos del equipo en solo lectura desde la app]]):
+  `{"method":"transcript","params":{"session":"cx:<thread>"}}` devuelve la
+  transcripción en solo lectura de un hilo de Codex, lo liste el daemon o no
+  (`TranscriptResult`: `session`, `items` en orden cronológico, `more` y
+  `cwd`; tipos en `titan_agent_core::transcript`). El daemon la lee del
+  app-server oficial de Codex (`thread/read` y `thread/items/list`, con
+  `thread/read` y sus turnos como respaldo) y nunca llama a nada que escriba
+  ni carga el hilo. Errores: `not_codex`, `codex_unavailable`, `not_found` y
+  `codex_error`. El contrato completo está en la tarea.
+- **`attach` de un hilo de Codex no listado**: el daemon lo resuelve con
+  `thread/read` y lo abre con el mismo `codex resume` que uno listado; si Codex
+  tampoco lo conoce, sigue saliendo `unknown_session`.

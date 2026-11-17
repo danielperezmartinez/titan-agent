@@ -6,7 +6,8 @@
 //! routing (daemon messages, selection, keys, which view goes in the centre).
 //! Each view lives in its own submodule: `header`, `nav` (tree and filter),
 //! `session_view` (terminal), `detail` (session detail), `monitor` (project
-//! monitor and its three views), `new_session`, `settings`; `menu` and
+//! monitor and its three views), `thread_view` (a team role's thread,
+//! read-only), `new_session`, `settings`; `menu` and
 //! `widgets` are pieces they share.
 
 use std::collections::HashMap;
@@ -20,7 +21,8 @@ use gpui::{
 };
 use titan_agent_core::launch::LaunchDefaults;
 use titan_agent_core::protocol::{
-    AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, TeamTask, decode_bytes,
+    AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, TeamTask, TerminalRef,
+    TranscriptResult, decode_bytes,
 };
 use titan_agent_core::quota::Quota;
 use titan_agent_core::session::{AgentCli, Session};
@@ -38,11 +40,13 @@ mod nav;
 mod new_session;
 mod session_view;
 mod settings;
+mod thread_view;
 mod widgets;
 
 use menu::Menu;
 use monitor::MonitorTab;
 use new_session::NewSession;
+use thread_view::ThreadState;
 use widgets::placeholder;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +56,8 @@ enum Selection {
     Project(String),
     New,
     Settings,
+    /// A team role's Codex thread, read-only (`cx:<thread>`).
+    Thread(String),
 }
 
 enum Pending {
@@ -59,6 +65,7 @@ enum Pending {
     Stop,
     Open,
     Launch,
+    Transcript(String),
 }
 
 pub struct MainView {
@@ -96,6 +103,10 @@ pub struct MainView {
     /// Open team tasks and CLI quotas, from the last snapshot.
     teams: Vec<TeamTask>,
     quotas: Vec<Quota>,
+    /// Terminals alive in the daemon, from the last snapshot.
+    daemon_terminals: Vec<TerminalRef>,
+    /// The thread shown read-only (or last shown).
+    thread: Option<ThreadState>,
     monitor_tab: MonitorTab,
     /// Time window of the monitor's lanes, in seconds.
     lane_window_s: i64,
@@ -135,6 +146,7 @@ impl MainView {
                 if this
                     .update(cx, |view, cx| {
                         view.now_ms = now_ms();
+                        view.refresh_thread();
                         cx.notify();
                     })
                     .is_err()
@@ -235,6 +247,8 @@ impl MainView {
             resolved: HashMap::new(),
             teams: Vec::new(),
             quotas: Vec::new(),
+            daemon_terminals: Vec::new(),
+            thread: None,
             monitor_tab: MonitorTab::from_env(),
             lane_window_s: monitor::LANE_WINDOWS[0],
             viewport_w: 1440.,
@@ -247,6 +261,7 @@ impl MainView {
             Incoming::Connected => {
                 self.connected = true;
                 self.status = None;
+                self.thread_connection(None);
                 // A new connection has no terminals attached: attach again
                 // the ones that were open.
                 let open: Vec<String> = self
@@ -260,6 +275,7 @@ impl MainView {
                 }
             }
             Incoming::Disconnected(reason) => {
+                self.thread_connection(Some(&reason));
                 self.connected = false;
                 self.status = Some(reason);
                 // The answer will never come: say so instead of waiting, and
@@ -303,6 +319,15 @@ impl MainView {
                         Err(error) => self.new.error = Some(error.to_string()),
                     }
                 }
+                Some(Pending::Transcript(key)) => self.transcript_answer(
+                    &key,
+                    serde_json::from_value::<TranscriptResult>(result).map_err(|error| {
+                        titan_agent_core::protocol::ErrorBody {
+                            code: "bad_answer".into(),
+                            message: error.to_string(),
+                        }
+                    }),
+                ),
                 Some(Pending::Open) | None => {}
             },
             ServerMessage::Error { id, error } => {
@@ -322,6 +347,7 @@ impl MainView {
                         self.new.sent = None;
                         self.new.error = Some(error.message);
                     }
+                    Some(Pending::Transcript(key)) => self.transcript_answer(&key, Err(error)),
                     _ => self.notice = Some((error.message, true)),
                 }
             }
@@ -331,8 +357,9 @@ impl MainView {
                 launches,
                 teams,
                 quotas,
-                ..
+                terminals,
             }) => {
+                self.daemon_terminals = terminals;
                 self.sessions = sessions;
                 self.sources = sources;
                 self.teams = teams;
@@ -358,6 +385,7 @@ impl MainView {
                 {
                     self.selection = Selection::Project(root);
                 }
+                self.preselect_thread(cx);
             }
             ServerMessage::Event(Event::Output { terminal, data }) => {
                 if let (Some(view), Some(bytes)) =
@@ -429,6 +457,8 @@ impl MainView {
         } else if keystroke.key == "escape" && self.new.menu.is_some() {
             self.new.menu = None;
             cx.notify();
+        } else if keystroke.key == "escape" && self.cancel_take_control() {
+            cx.notify();
         }
     }
 
@@ -438,7 +468,12 @@ impl MainView {
 
     fn center(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match self.selection.clone() {
-            Selection::Session(key) => match self.session(&key).cloned() {
+            Selection::Thread(_) => self.thread_view(cx),
+            Selection::Session(key) => match self
+                .session(&key)
+                .cloned()
+                .or_else(|| self.thread_session(&key))
+            {
                 Some(session) => self.session_view(&session, window, cx).into_any_element(),
                 None => placeholder(
                     "La sesión ya no aparece",

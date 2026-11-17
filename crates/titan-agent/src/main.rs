@@ -4,7 +4,6 @@ mod app;
 mod brief;
 mod client;
 mod config;
-mod keys;
 mod terminal;
 mod theme;
 

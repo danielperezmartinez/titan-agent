@@ -4,7 +4,7 @@
 //! draw a [`Board`].
 
 use crate::project::project_root;
-use crate::protocol::TeamTask;
+use crate::protocol::{TeamTask, TerminalRef};
 use crate::session::{AgentCli, Session, SessionState, short_model};
 use crate::team::{EventKind, FeedItem, TeamRun, USER, parse_event};
 
@@ -33,6 +33,14 @@ pub struct Agent {
     pub is_director: bool,
     /// Start of the director's session, for «en esta sesión N min».
     pub started_at_ms: Option<i64>,
+    /// Codex thread of the role, even when the daemon does not list its
+    /// session: a click opens it read-only.
+    pub thread: Option<String>,
+    /// Its thread is open as a writer in the app (a terminal of the daemon
+    /// for `cx:<thread>`); see [`Board::mark_writers`].
+    pub writer_open: bool,
+    /// Its last turn was refused because the thread was open elsewhere.
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -172,6 +180,9 @@ pub fn board(task: &TeamTask, run: &TeamRun, sessions: &[Session], now_ms: i64) 
         tokens: 0,
         is_director: false,
         started_at_ms: None,
+        thread: None,
+        writer_open: false,
+        busy: false,
     }];
     let mut spans: Vec<Span> = run
         .spans
@@ -250,6 +261,9 @@ pub fn board(task: &TeamTask, run: &TeamRun, sessions: &[Session], now_ms: i64) 
             tokens: 0,
             is_director: true,
             started_at_ms: director_session.and_then(|s| s.started_at_ms),
+            thread: None,
+            writer_open: false,
+            busy: false,
         });
     }
     for member in run.workers() {
@@ -293,6 +307,12 @@ pub fn board(task: &TeamTask, run: &TeamRun, sessions: &[Session], now_ms: i64) 
             tokens: member.tokens,
             is_director: false,
             started_at_ms: None,
+            thread: member
+                .thread_id
+                .clone()
+                .filter(|_| member.cli == AgentCli::Codex),
+            writer_open: false,
+            busy: member.busy,
         });
     }
     messages.sort_by_key(|m| m.at_ms);
@@ -313,6 +333,19 @@ pub fn board(task: &TeamTask, run: &TeamRun, sessions: &[Session], now_ms: i64) 
 impl Board {
     pub fn agent(&self, id: &str) -> Option<&Agent> {
         self.agents.iter().find(|a| a.id == id)
+    }
+
+    /// Marks the agents whose thread has a terminal open in the daemon
+    /// (`cx:<thread>`): the app is a writer of that thread, so the director
+    /// cannot give the role a turn until it is closed.
+    pub fn mark_writers(&mut self, terminals: &[TerminalRef]) {
+        for agent in &mut self.agents {
+            agent.writer_open = agent.thread.as_ref().is_some_and(|thread| {
+                terminals
+                    .iter()
+                    .any(|t| t.session.strip_prefix("cx:") == Some(thread.as_str()))
+            });
+        }
     }
 
     /// The message travelling now: the director asking for the user while

@@ -1,5 +1,8 @@
 //! Terminal of a session: the bytes come from the PTY that titan-agentd keeps
 //! alive, `alacritty_terminal` turns them into a grid and GPUI paints it.
+//! Typed text comes through the platform input handler ([`input`]).
+
+mod input;
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -11,15 +14,15 @@ use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Config, TermMode};
 use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, Rgb};
 use gpui::{
-    App, Bounds, ClipboardItem, Context, FocusHandle, Focusable, Font, FontStyle, FontWeight,
-    KeyDownEvent, MouseButton, MouseDownEvent, Pixels, ScrollEvent, TextAlign, TextRun, Window,
-    canvas, div, fill, font, point, prelude::*, px, size,
+    App, Bounds, ClipboardItem, Context, ElementInputHandler, FocusHandle, Focusable, Font,
+    FontStyle, FontWeight, KeyDownEvent, MouseButton, MouseDownEvent, Pixels, ScrollEvent,
+    TextAlign, TextRun, Window, canvas, div, fill, font, point, prelude::*, px, size,
 };
 use titan_agent_core::protocol::{Request, encode_bytes};
 
 use crate::client::DaemonClient;
-use crate::keys::{KeyModes, keystroke_bytes};
 use crate::theme;
+use titan_agent::keys::{KeyModes, keystroke_bytes};
 
 /// Terminal text size and line height (design: 13 px, line-height 1.45).
 pub const FONT_SIZE: f32 = 13.0;
@@ -64,6 +67,9 @@ pub struct TerminalView {
     /// Set when the terminal's process ended.
     pub ended: Option<String>,
     scroll_rest: f32,
+    /// Text being composed (a dead key or an IME), shown at the cursor
+    /// until the input handler commits it.
+    marked: Option<String>,
 }
 
 impl TerminalView {
@@ -88,6 +94,7 @@ impl TerminalView {
             focus: cx.focus_handle(),
             ended: None,
             scroll_rest: 0.0,
+            marked: None,
         }
     }
 
@@ -223,6 +230,26 @@ impl TerminalView {
             cx.stop_propagation();
             cx.notify();
         }
+    }
+
+    /// Sends text the input handler committed, as typed.
+    fn type_text(&mut self, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        self.term.scroll_display(Scroll::Bottom);
+        self.send(text.as_bytes());
+    }
+
+    /// Row and column of the cursor on screen (the origin when it is
+    /// scrolled out of view).
+    fn cursor_cell(&self) -> (usize, usize) {
+        let content = self.term.renderable_content();
+        let row = content.cursor.point.line.0 + content.display_offset as i32;
+        if row < 0 || row as usize >= self.size.rows {
+            return (0, 0);
+        }
+        (row as usize, content.cursor.point.column.0)
     }
 
     fn paste(&mut self, text: &str) {
@@ -388,6 +415,7 @@ impl TerminalView {
             rows,
             cursor,
             size: self.size,
+            marked: self.marked.clone(),
         }
     }
 }
@@ -479,6 +507,7 @@ struct Snapshot {
     rows: Vec<Row>,
     cursor: Option<Cursor>,
     size: GridSize,
+    marked: Option<String>,
 }
 
 fn text_font(style: &CellStyle) -> Font {
@@ -513,6 +542,8 @@ impl Render for TerminalView {
         let focused = self.focus.is_focused(window);
         let snapshot = self.snapshot(focused);
         let view = cx.entity();
+        let focus = self.focus.clone();
+        let input = view.clone();
         div()
             .id("terminal")
             .key_context("Terminal")
@@ -541,6 +572,7 @@ impl Render for TerminalView {
                         (cw, snapshot)
                     },
                     move |bounds, (cw, snapshot), window, cx| {
+                        window.handle_input(&focus, ElementInputHandler::new(bounds, input), cx);
                         paint_grid(bounds, cw, &snapshot, window, cx);
                     },
                 )
@@ -626,4 +658,53 @@ fn paint_grid(
             );
         }
     }
+    if let (Some(text), Some(cursor)) = (&snapshot.marked, &snapshot.cursor) {
+        paint_marked(text, cursor, origin, cw, window, cx);
+    }
+}
+
+/// Paints the text being composed over the cursor cell, underlined like the
+/// composition of an editor.
+fn paint_marked(
+    text: &str,
+    cursor: &Cursor,
+    origin: gpui::Point<Pixels>,
+    cw: Pixels,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    let lh = px(LINE_HEIGHT);
+    let at = point(
+        origin.x + cw * cursor.col as f32,
+        origin.y + lh * cursor.row as f32,
+    );
+    let cells = text.chars().count().max(1);
+    window.paint_quad(fill(
+        Bounds::new(at, size(cw * cells as f32, lh)),
+        theme::hsla(theme::TERMINAL_BG),
+    ));
+    let style = CellStyle {
+        fg: theme::INK,
+        bold: false,
+        italic: false,
+        underline: true,
+        strike: false,
+    };
+    let run = TextRun {
+        len: text.len(),
+        font: text_font(&style),
+        color: theme::hsla(style.fg),
+        background_color: None,
+        underline: Some(gpui::UnderlineStyle {
+            thickness: px(1.0),
+            color: Some(theme::hsla(theme::ACCENT)),
+            wavy: false,
+        }),
+        strikethrough: None,
+    };
+    let line =
+        window
+            .text_system()
+            .shape_line(text.to_string().into(), px(FONT_SIZE), &[run], Some(cw));
+    let _ = line.paint(at, lh, TextAlign::Left, None, window, cx);
 }

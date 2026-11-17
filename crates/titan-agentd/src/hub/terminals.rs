@@ -23,6 +23,9 @@ impl Hub {
     ) -> Result<(), (&'static str, String)> {
         let cols = cols.clamp(20, 1000);
         let rows = rows.clamp(5, 500);
+        // A Codex thread the daemon does not list (a finished `codex exec`
+        // of the team): Codex still knows it, so it is opened the same way.
+        let unlisted = self.unlisted_codex_session(key);
         let mut state = self.lock();
         let existing = state
             .terminals
@@ -81,6 +84,7 @@ impl Hub {
             .iter()
             .find(|s| s.key == key)
             .cloned()
+            .or(unlisted)
             .ok_or(("unknown_session", "sesión desconocida".to_string()))?;
         let argv = session.attach.clone().ok_or((
             "not_attachable",

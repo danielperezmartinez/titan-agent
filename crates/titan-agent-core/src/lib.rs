@@ -10,4 +10,5 @@ pub mod quota;
 pub mod session;
 pub mod team;
 pub mod time;
+pub mod transcript;
 pub mod tree;

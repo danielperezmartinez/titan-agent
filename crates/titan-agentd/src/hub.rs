@@ -1,7 +1,8 @@
 //! Shared state of the daemon: known sessions, connected clients and the
 //! terminals it keeps alive.
 //!
-//! Launches live in `hub/launch.rs` and terminals in `hub/terminals.rs`.
+//! Launches live in `hub/launch.rs`, terminals in `hub/terminals.rs` and the
+//! reading of Codex threads by key in `hub/threads.rs`.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -27,6 +28,7 @@ use crate::codex::{CodexClient, socket_path as codex_socket_path};
 
 mod launch;
 mod terminals;
+mod threads;
 
 #[derive(Clone)]
 pub struct Config {
@@ -391,6 +393,7 @@ impl Hub {
                 spec,
                 command,
             } => self.launch(client, id, token, spec, command),
+            Request::Transcript { session } => self.transcript(client, id, session),
         }
     }
 
