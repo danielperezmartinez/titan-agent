@@ -20,26 +20,24 @@ case "$from$to$after" in *[!0-9]*) die "las líneas son números" ;; esac
 [ "$from" -ge 1 ] && [ "$from" -le "$to" ] || die "rango no válido: $from..$to"
 total=$(wc -l <"$src")
 [ "$to" -le "$total" ] || die "$src tiene $total líneas; no llega a la $to"
-if [ -e "$dst" ]; then
-  [ "$(cd "$(dirname "$src")" && pwd)/$(basename "$src")" != "$(cd "$(dirname "$dst")" && pwd)/$(basename "$dst")" ] ||
-    die "origen y destino son el mismo fichero"
-else
-  : >"$dst"
-fi
-dst_total=$(wc -l <"$dst")
-[ -z "$after" ] || [ "$after" -le "$dst_total" ] || die "$dst tiene $dst_total líneas; no hay línea $after"
-
+# -ef: the same file on disk, also through a symbolic or hard link.
+if [ -e "$dst" ] && [ "$src" -ef "$dst" ]; then die "origen y destino son el mismo fichero"; fi
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-cat "$src" "$dst" | sort >"$tmp/before"
+# A missing destination is an empty file until every check has passed.
+if [ -e "$dst" ]; then cat "$dst" >"$tmp/old"; else : >"$tmp/old"; fi
+dst_total=$(wc -l <"$tmp/old")
+[ -z "$after" ] || [ "$after" -le "$dst_total" ] || die "$dst tiene $dst_total líneas; no hay línea $after"
+
+cat "$src" "$tmp/old" | sort >"$tmp/before"
 sed -n "${from},${to}p" "$src" >"$tmp/block"
 sed "${from},${to}d" "$src" >"$tmp/src"
 if [ -z "$after" ]; then
-  cat "$dst" "$tmp/block" >"$tmp/dst"
+  cat "$tmp/old" "$tmp/block" >"$tmp/dst"
 elif [ "$after" -eq 0 ]; then
-  cat "$tmp/block" "$dst" >"$tmp/dst"
+  cat "$tmp/block" "$tmp/old" >"$tmp/dst"
 else
-  { head -n "$after" "$dst"; cat "$tmp/block"; tail -n +"$((after + 1))" "$dst"; } >"$tmp/dst"
+  { head -n "$after" "$tmp/old"; cat "$tmp/block"; tail -n +"$((after + 1))" "$tmp/old"; } >"$tmp/dst"
 fi
 cat "$tmp/src" "$tmp/dst" | sort >"$tmp/after"
 cmp -s "$tmp/before" "$tmp/after" || die "las líneas no cuadran; no se cambió nada"

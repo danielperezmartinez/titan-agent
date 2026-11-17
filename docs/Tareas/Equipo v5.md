@@ -152,7 +152,8 @@ Ampliación compatible de
   en `<state_dir>/<encargo>/NN-<rol>.checks.txt` (mismo `NN` que el resto
   de ficheros del turno): por comprobación, una línea
   `## <nombre> · exit <código>`, la línea `$ <orden>` y sus últimas 400
-  líneas. La entrada del historial (`<state_dir>/<encargo>.json`) y la salida
+  líneas (el `text` del `activity` se recorta a 200 caracteres, como todo
+  `activity` de ADR-0010). La entrada del historial (`<state_dir>/<encargo>.json`) y la salida
   de `ask --json` llevan `checks`: lista ordenada de
   `{"name", "cmd", "exit", "duration_s"}`. Cada una que falla (exit ≠ 0)
   añade el aviso `comprobación <nombre> falló (exit <código>)` a `warnings`
@@ -247,6 +248,26 @@ Encontradas al hacer esta tarea con el equipo (v4 y, desde la revisión, v5):
    GPUI. *Propuesta*: medirlo en la 0.6.0 y, si pesa, un `CARGO_TARGET_DIR`
    compartido por los encargos (sin compartirlo con el del director, para no
    volver a la espera del bloqueo de Cargo de la 0.5.0).
+
+## Revisión de Sol (high, con `--gate`)
+
+Un hilo nuevo (`equipo-v5-revision`) sobre el commit `fb46aa8`, con la
+compuerta pasada por `--gate` (exit 0). Veredicto `changes_requested`; el
+director decidió:
+
+| Hallazgo | Severidad | Decisión |
+| --- | --- | --- |
+| La ventana de la demo no hereda los CLI falsos: si el daemon privado muere, la app lo relanza con los reales | mayor | Aceptado: `ui` exporta también `TITAN_AGENTD_CLAUDE`/`CODEX` falsos |
+| `mover-lineas.sh` acepta un enlace (simbólico o duro) al mismo fichero | mayor | Aceptado: se rechaza con `-ef` |
+| `--allow --dry-run` toma `--dry-run` como patrón y ejecuta el turno | mayor | Aceptado: `--allow` no admite una opción como valor (test propio) |
+| `mover-lineas.sh` crea el destino antes de validar | menor | Aceptado: se crea solo tras pasar las comprobaciones |
+| Una captura fallida deja la anterior con ese nombre | menor | Aceptado: `shot` la borra al empezar |
+| El `activity` de una comprobación recorta la orden a 200 | menor | Descartado: es el límite común de los `activity` (ADR-0010); se aclara en C2 |
+| ¿Escenas de hilo sin la 0.5.0? | pregunta | Esta PR se integra después de la 0.5.0: se comprueban tras el rebase |
+
+Tras la revisión (sin revisar por Sol): la compuerta de `--gate` corre ya
+dentro del turno con su `activity` (test propio) y C11–C13 de la sesión de
+control.
 
 ## Verificación
 

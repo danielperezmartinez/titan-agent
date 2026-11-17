@@ -133,6 +133,9 @@ ui() {
     display_env
     scene_env "$1"
     export HOME="$DIR/home" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENT_CONFIG_DIR="$DIR/config"
+    # If the private daemon dies, the window starts another one with its
+    # own environment: it must also get the fake CLIs, never the real ones.
+    export TITAN_AGENTD_CLAUDE="$KIT/bin/claude" TITAN_AGENTD_CODEX="$KIT/bin/codex" TITAN_AGENTD_POLL_MS=1000
     nohup "$BIN/titan-agent" >"$DIR/ui.log" 2>&1 &
     echo $! >"$RUN/ui.pid"
   )
@@ -176,6 +179,8 @@ shot() {
   miss() { echo "demo: $*" >&2; return 1; }
   out=${2:-$SHOTS/$1.png}
   mkdir -p "$(dirname "$out")"
+  # An old capture with this name must not survive a failed one.
+  rm -f "$out"
   ui "$1"
   sleep "$WAIT"
   display_env

@@ -187,6 +187,13 @@ fn parse_args(raw: Vec<String>) -> Result<Args, Failure> {
             let value = iter
                 .next()
                 .ok_or_else(|| Failure::usage(format!("{arg} necesita un valor")))?;
+            // A pattern is never an option: `--allow --dry-run` must not
+            // swallow the dry run (use `--allow=-x` for a pattern like that).
+            if arg == "--allow"
+                && (FLAGS.contains(&value.as_str()) || VALUE_OPTIONS.contains(&value.as_str()))
+            {
+                return Err(Failure::usage("--allow necesita un valor"));
+            }
             args.options.push((arg, value));
         } else if let Some((key, value)) = arg.split_once('=')
             && VALUE_OPTIONS.contains(&key)
@@ -300,6 +307,13 @@ mod tests {
         assert!(check_args(&allow).is_ok());
         assert_eq!(allow.options("--allow"), ["a/", "b.rs"]);
         assert_eq!(parse_args(vec!["--allow".into()]).unwrap_err().code, 2);
+        let swallowed = parse_args(
+            ["ask", "r", "t", "--allow", "--dry-run"]
+                .map(String::from)
+                .to_vec(),
+        );
+        assert_eq!(swallowed.unwrap_err().code, 2);
+        assert!(parse_args(vec!["--allow=--odd".into()]).is_ok());
         assert_eq!(check_args(&words("show t --gate")).unwrap_err().code, 2);
         assert_eq!(check_args(&words("fly")).unwrap_err().code, 2);
     }
