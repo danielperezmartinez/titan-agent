@@ -154,10 +154,10 @@ fn braced(inner: &str) -> Result<DemoStep, String> {
         *flag = true;
     }
     let mut chars = rest.chars();
-    let single = match (chars.next(), chars.next()) {
-        (Some(c), None) if !c.is_control() && !c.is_whitespace() => true,
-        _ => false,
-    };
+    let single = matches!(
+        (chars.next(), chars.next()),
+        (Some(c), None) if !c.is_control() && !c.is_whitespace()
+    );
     if !single && !NAMED_KEYS.contains(&rest) {
         return Err(unknown());
     }
