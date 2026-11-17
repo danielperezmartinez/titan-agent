@@ -8,7 +8,7 @@ Consecuencias: 'La clave privada de minisign pasa a ser el secreto más crítico
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T17:00:00+01:00
+Última modificación: 2026-11-17T19:05:00+01:00
 ---
 
 # ADR-0011 · Distribución en GitHub Releases con instalación por usuario y actualización firmada
@@ -326,6 +326,18 @@ Las versiones en carpetas aparte evitan sustituir un `.exe` en uso.
   sigue corriendo en el `codex app-server` cuando su TUI muere. Si sigue, sus
   terminales dejan de bloquear la aplicación igual que los de Claude. El
   resultado se anota aquí.
+
+  **Resultado (2026-11-17, Codex CLI 0.169.0): sigue.** Se lanzó un
+  `codex app-server --listen unix://<socket>` propio y, en un PTY y una
+  carpeta de prueba, `codex --remote unix://<socket> -m gpt-6-luna -s
+  read-only -- <encargo>` con un encargo inofensivo (`sleep 60; echo <marca>`
+  y responder con una palabra). Con el comando ya en marcha en la rollout del
+  hilo, se mató la TUI de dos formas: cerrando el PTY (SIGHUP, lo que pasa
+  cuando el daemon se cierra o hace `exec`) y con SIGKILL. En los dos casos
+  el turno terminó en el app-server (`task_complete` y la respuesta
+  esperada), unos 53 s después de morir la TUI. Así que un terminal de
+  Codex bloquea la aplicación igual que uno de Claude: solo mientras su
+  sesión está trabajando (`[>]`).
 - Las dependencias concretas, a elegir con criterio de tamaño y sin OpenSSL:
   cliente HTTP con rustls (p. ej. `ureq`), `tar` + `flate2`, `sha2` y
   `minisign-verify`.

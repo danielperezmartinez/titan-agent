@@ -1,12 +1,11 @@
 ---
 Nombre: Versión 0.6.0 - Instalador y actualización automática
-Estado: Pendiente
+Estado: En curso
 Resumen: 'Implementar ADR-0011. Hay que montar el workflow «Publicar versión» (tar.gz de Linux, zip experimental de Windows, manifiesto firmado con minisign y atestaciones) y titan-agent-launcher (instalar, desinstalar, lanzar y volver atrás). El actualizador va en el daemon (comprobar cada 6 h, descargar, verificar, preparar y aplicar cuando sea seguro, con exec), y el aviso [^] en la cabecera con su bloque de Configuración. Las builds de debug pasan al socket agentd-dev.sock. Lo hace el equipo v5 y termina publicando la v0.6.0 e instalándola en el PC del usuario.'
 Decisiones: '[[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada]] y [[Decisiones visuales/Aviso de actualización en la cabecera]]. Versión 0.6.0 (minor), acordada con el usuario el 2026-11-17. Clave generada con minisign del paquete de Arch, que instala el usuario. Al instalar se retira la entrada «titan-agent (main)» del menú.'
-Bloqueada:
-  - '[[Acentos y teclas muertas en el terminal integrado]]'
+Bloqueada: []
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T17:45:00+01:00
+Última modificación: 2026-11-17T19:05:00+01:00
 ---
 
 # Versión 0.6.0 - Instalador y actualización automática
@@ -133,6 +132,202 @@ Configuración vigente descrita en [[Equipo v5]].
   interacción la prueba el usuario con una «Prueba a mano» de pasos y
   resultado esperado.
 - **Luna** solo para ediciones repetitivas; su turno pasa la compuerta.
+
+## Diseño
+
+Lanzada desde la sesión de control `control-3b` el 2026-11-17; rama `feat/v0.6.0`, que sale de `main` con la [[Equipo v5.1 - Compilación compartida por equipo|0.5.2]] integrada. La 0.5.0 ya está en `main`, así que el bloqueo está resuelto.
+
+Firmas, CLI falsos y ficheros de los tests: en la especificación del encargo `v06` (fuera del repo); aquí queda el contrato que fija el comportamiento.
+
+### Contrato (para los tests de aceptación)
+
+#### C1. Verificación del manifiesto (`titan_agent_core::update::verify_manifest`)
+
+`verify_manifest(manifest, signature, keys)` recibe los bytes del manifiesto
+(`titan-agent-update.json`), el texto del fichero de firma minisign (`.minisig`) y las claves
+públicas aceptadas (cada una, la clave en base64 tal como la da minisign: la segunda línea de un
+`.pub`, p. ej. `RWQ…`). Devuelve el manifiesto si y solo si:
+
+1. la firma verifica los bytes exactos del manifiesto con **alguna** de las claves (con cualquier
+   otra clave, o con los bytes cambiados, o con una firma que no se puede leer → error `signature`);
+2. el manifiesto es JSON con la forma de abajo (si no → `manifest`);
+3. `format` es 1 (si no → `format`);
+4. el comentario de confianza de la firma es exactamente
+   `titan-agent-update format=1 version=<version del manifiesto>` (si no → `signature`).
+
+Forma del manifiesto (formato 1; campos desconocidos se ignoran):
+
+```json
+{"format":1,"version":"0.6.1","published":"2026-11-20T10:00:00Z",
+ "notes_url":"https://github.com/danielperezmartinez/titan-agent/releases/tag/v0.6.1",
+ "artifacts":[{"target":"linux-x86_64","name":"titan-agent-0.6.1-linux-x86_64.tar.gz",
+               "sha256":"<64 hex>","size":12345678}]}
+```
+
+#### C2. Elección del artefacto (`titan_agent_core::update::select`)
+
+`select(manifest, installed, bad, target, base_url)` decide si hay que instalar. En este orden:
+
+1. `version` del manifiesto se lee como SemVer estricto `MAYOR.MENOR.PARCHE` (solo dígitos, sin
+   pre-release ni build; si no → `manifest`);
+2. tiene que ser **estrictamente mayor** que `installed` (si no → `not_newer`; así nunca baja);
+3. no puede estar en `bad` (→ `bad_version`);
+4. hay un artefacto con ese `target` (→ `no_artifact`);
+5. su `name` no está vacío y no contiene `/`, `\` ni `..` (→ `bad_name`);
+6. su `size` no pasa de `MAX_ARTIFACT_BYTES` = 256 MiB = 268 435 456 (→ `too_big`; justo 256 MiB
+   vale).
+
+Devuelve `Selected` con la versión, el artefacto, `notes_url` y la URL de descarga **construida**
+como `<base_url>/download/v<version>/<name>` (nunca una URL leída del manifiesto).
+`manifest_url(base_url)` es `<base_url>/latest/download/titan-agent-update.json` y
+`signature_url(base_url)` lo mismo con `.minisig` al final. `RELEASES_URL` es
+`https://github.com/danielperezmartinez/titan-agent/releases`.
+
+`Version::parse` acepta solo `^[0-9]+\.[0-9]+\.[0-9]+$` (sin ceros a la izquierda salvo el propio
+`0`, sin `v`, sin espacios); se ordena numéricamente (0.10.0 > 0.9.9) y `Display` escribe `0.6.1`.
+
+#### C3. Integridad de la descarga (`titan_agent_core::update::check_download`)
+
+`check_download(size, sha256_hex, artifact)`: `size` y el SHA-256 calculado del fichero bajado
+deben coincidir exactamente con los del artefacto (el hex se compara sin distinguir mayúsculas).
+Tamaño distinto → `size_mismatch` (se comprueba antes que el hash); hash distinto →
+`hash_mismatch`. `sha256_hex(bytes)` devuelve el SHA-256 en hex minúscula (64 caracteres).
+
+#### C4. Contenido del tar.gz (`check_entry`, `check_bundle`, `bundle_root`)
+
+El tar.gz de la versión `<v>` contiene una sola carpeta `bundle_root(v, target)` =
+`titan-agent-<v>-<target>` (p. ej. `titan-agent-0.6.1-linux-x86_64`) con `bin/` y `share/`.
+
+`check_entry(root, path, kind, link)` valida **cada entrada** antes de extraerla
+(`root` = esa carpeta; `path` = ruta de la entrada tal como viene en el tar, con `/`):
+
+- válida: `root`, `root/`, o `root/<algo>`; relativa; ningún componente `..`; sin `\`;
+- `kind`: `File` y `Dir` valen; `Symlink`: su destino `link` debe ser relativo y, resuelto desde
+  la carpeta de la entrada, quedarse dentro de `root`; `Hardlink`: su `link` es otra ruta del
+  archivo y cumple las mismas reglas que `path`; `Other` (dispositivo, fifo…) nunca vale;
+- cualquier otra cosa → `unsafe_entry` (p. ej. `/etc/x`, `../x`, `otra-carpeta/x`,
+  `root/../x`, un enlace a `../../etc/passwd` o a `/etc/passwd`).
+
+`check_bundle(files)` recibe las rutas de ficheros extraídos **relativas a `root`**
+(`bin/titan-agent`…) y exige los cuatro de `BINARIES`
+(`titan-agent`, `titan-agentd`, `titan-team`, `titan-agent-launcher`) en `bin/`; si falta
+alguno → `incomplete`.
+
+#### C5. Condición segura para aplicar (`apply_blockers`, `safe_to_apply`)
+
+`apply_blockers(sessions, terminals)` devuelve las claves (`key`) de las sesiones que tienen un
+terminal en el daemon (aparecen en `terminals` como `TerminalRef.session`) **y** están
+trabajando (`SessionState::Working`), ordenadas y sin repetir. Una sesión trabajando sin
+terminal en el daemon no bloquea; una con terminal que está en espera, te necesita o terminada,
+tampoco. (Da igual que sea de Claude Code o de Codex: un turno de Codex sigue en su app-server
+aunque muera su TUI.)
+
+`safe_to_apply(windows, blockers)` es `true` solo si no hay ninguna ventana conectada
+(`windows == 0`) y `blockers` está vacío.
+
+#### C6. Lanzador: arrancar y volver atrás (`titan-agent-launcher` sin argumentos)
+
+Sin argumentos (lo que ejecutan el menú y `~/.local/bin/titan-agent`), el lanzador usa
+`root = <data>/titan-agent` (de `HOME`/`XDG_DATA_HOME`) y lee `root/update/pending.json`:
+
+```json
+{"from":"0.6.0","to":"0.6.1","attempts":0}
+```
+
+- sin `pending.json`: ejecuta `root/current/bin/titan-agent`;
+- con `attempts < 2`: reescribe `pending.json` con `attempts + 1` y ejecuta
+  `root/current/bin/titan-agent`;
+- con `attempts >= 2` (**vuelta atrás**):
+  1. `current` pasa a apuntar a `versions/<from>`;
+  2. añade `<to>` a `root/update/bad.json` (array JSON de textos de versión, sin repetir; lo crea
+     si no existe);
+  3. detiene el daemon de la versión mala: lee el pid de `agentd.pid`, junto al socket del daemon
+     (mismo directorio que el socket; ver C8), y le envía SIGTERM **solo si** ese proceso es un
+     ejecutable de `root/versions/<to>/` (si no existe o es otro, no hace nada);
+  4. borra `pending.json`;
+  5. escribe `root/update/rolled-back.json` con `{"from":"<from>","to":"<to>"}`;
+  6. ejecuta `notify-send` (el que haya en `PATH`; si no hay, sigue) con dos argumentos:
+     `titan-agent` y `La versión <to> no arrancó; se ha vuelto a la <from>.`;
+  7. ejecuta `root/current/bin/titan-agent` (ya la de `<from>`).
+
+La interfaz se ejecuta (`exec`, en Unix) con los argumentos que recibió el lanzador y con la
+variable `TITAN_AGENT_LAUNCHER` = ruta absoluta de `root/titan-agent-launcher`. Si no hay
+`root/current/bin/titan-agent` → mensaje en stderr y salida 1.
+
+#### C7. Lanzador: instalar y desinstalar
+
+- `titan-agent-launcher --version` imprime `titan-agent-launcher <versión del workspace>` y sale 0.
+- `titan-agent-launcher install`: la carpeta a instalar es la que contiene el `bin/` del propio
+  lanzador (el lanzador está en `<carpeta>/bin/titan-agent-launcher`). Exige en `<carpeta>/bin/`
+  los cuatro binarios (si falta alguno: salida 1 y no instala nada). Instala la versión
+  `<v>` = la del propio lanzador:
+  - copia `<carpeta>` a `root/versions/<v>` pasando por una carpeta temporal en `root/versions/`
+    y un `rename` (si `versions/<v>` ya existe, no la toca);
+  - apunta `root/current` a `versions/<v>` (enlace simbólico relativo, cambiado con `rename`);
+  - copia `root/titan-agent-launcher` desde `versions/<v>/bin/` (si no existe, o si el instalado
+    es de una versión menor; uno de versión mayor no se toca);
+  - crea los enlaces `$HOME/.local/bin/titan-agent` → `root/titan-agent-launcher` y
+    `$HOME/.local/bin/titan-team` → `root/current/bin/titan-team` (rutas absolutas; reemplaza un
+    enlace anterior);
+  - escribe `<data>/applications/io.github.danielperezmartinez.titanagent.desktop` con, entre
+    otras, las líneas `Exec=<HOME>/.local/bin/titan-agent` (ruta absoluta) y
+    `StartupWMClass=io.github.danielperezmartinez.titanagent`;
+  - sale 0. **Idempotente**: repetir `install` sale 0 y deja exactamente lo mismo.
+- `titan-agent-launcher uninstall`: borra `root` entero, el `.desktop`, el icono y los dos
+  enlaces de `$HOME/.local/bin` (solo si son enlaces que apuntan dentro de `root`); **nunca**
+  `$XDG_CONFIG_HOME/titan-agent` ni `$HOME/.config/titan-agent`. Sale 0, también si no había nada.
+- Una orden desconocida: salida 2.
+
+#### C8. Daemon: protocolo de actualización, pid y socket de desarrollo
+
+Protocolo NDJSON ya existente (`{"id":N,"method":…,"params":…}`; primero `hello`). Cambios
+aditivos, sin subir `PROTOCOL_VERSION` (sigue en 1):
+
+- `hello` ya devuelve `{"protocol":1,"daemon":"<versión>"}` (ya existe).
+- Peticiones nuevas: `update_status` (sin params), `update_check` (sin params),
+  `update_apply` (`{"force":bool}`, `force` por defecto `false`), `update_settings`
+  (`{"auto":bool}`), `update_dismiss` (sin params).
+- `update_status` responde un `UpdateStatus` (abajo). `update_settings` guarda
+  `{"auto":<bool>}` en `<config>/update.json` y responde el `UpdateStatus` ya con ese `auto`
+  (`<config>` = `$TITAN_AGENT_CONFIG_DIR` si está, si no `$XDG_CONFIG_HOME/titan-agent`, si no
+  `$HOME/.config/titan-agent`). `auto` vale `true` si el fichero no existe.
+- El actualizador solo está **activo** si el ejecutable del daemon está dentro de
+  `<algo>/titan-agent/versions/<versión>/bin/` y no está definida `TITAN_AGENT_NO_UPDATE`. Si no
+  está activo: `update_status` responde `active: false`, `state: "idle"`; `update_check` y
+  `update_apply` responden el error `update_inactive`.
+- `update_apply` con algo que aplicar y sesiones bloqueantes (C5) y `force: false` → error
+  `confirm_needed`; sin nada preparado → error `nothing_to_apply`.
+- Evento nuevo `{"event":"update","params":<UpdateStatus>}`, a los clientes suscritos, cada vez
+  que cambia el estado.
+- Al arrancar, el daemon escribe su pid (texto decimal) en `agentd.pid` **en el mismo directorio
+  que su socket**, sea cual sea el nombre del socket.
+- Socket por defecto: una build de debug (`cfg(debug_assertions)`, lo que compilan los tests)
+  usa `<XDG_RUNTIME_DIR>/titan-agent/agentd-dev.sock`; una de release, `agentd.sock`.
+  `TITAN_AGENTD_SOCKET` manda sobre ambos (ya existe). `titan-agentd --print-socket` imprime la
+  ruta (ya existe).
+
+`UpdateStatus` en JSON:
+
+```json
+{"state":"idle","active":false,"installed":"0.6.0","current":null,"version":null,
+ "notes_url":null,"blocking":[],"error":null,"auto":true,"last_check_ms":null,
+ "rolled_back":null}
+```
+
+`state` ∈ `idle`, `checking`, `downloading`, `ready`, `waiting`, `applying`, `failed`;
+`installed` = versión del daemon que responde; `rolled_back` = `{"from","to"}` o `null`.
+
+#### C9. Scripts de versión
+
+- `scripts/comprobar-version.sh <sha base>` (ya existe: falla si la versión de `Cargo.toml` no
+  supera la del commit base) además **falla (exit 1) si la versión es 1.0.0 o mayor**, aunque
+  supere la base, con un mensaje que menciona `1.x`.
+- `scripts/version-publicable.sh` (nuevo; lo usa el workflow «Publicar versión»): lee
+  `version` de `[workspace.package]` del `Cargo.toml` del directorio actual; si cumple
+  `^0\.[0-9]+\.[0-9]+$` la imprime y sale 0; si no (1.x, pre-release `0.6.0-rc.1`, vacía), sale
+  1 con un mensaje en stderr.
+
+Ambos se ejecutan con `sh <script>` desde la raíz de un repo git; leen `./Cargo.toml`.
 
 ## Criterios de finalización
 

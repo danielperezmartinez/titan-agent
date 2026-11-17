@@ -1,0 +1,17 @@
+[package]
+name = "titan-agent-launcher"
+description = "Stable launcher of an installed titan-agent: install, uninstall, start the current version and roll back a version that does not start."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+titan-agent-core.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true
