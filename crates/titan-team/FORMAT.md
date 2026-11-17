@@ -43,6 +43,7 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
 | `test_timeout_s` | entero > 0 | `300` | Tope de los tests, en segundos. |
 | `autocommit` | booleano | `false` | Commit tras cada turno de un rol que escribe. |
 | `hidden_paths` | lista de patrones | `[]` | Lo que no se copia al worktree (sparse checkout); sigue en la rama. |
+| `target_dir` | ruta (no vacía) | — | Carpeta de compilación del equipo, relativa a la carpeta que contiene `.agents/`. `test_cmd`, las comprobaciones y `ask --gate` la reciben como `CARGO_TARGET_DIR` en todos los encargos, y un rol `workspace-write` también (con la carpeta en `sandbox_workspace_write.writable_roots`). Sin ella, cada worktree compila en el suyo. |
 
 ### `[codex]`
 

@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-17T15:20:00+01:00
+Última modificación: 2026-11-17T18:10:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -362,6 +362,18 @@ completo (C1–C5) está en la nota de la tarea; en resumen:
   ni escribir eventos.
 - `ask --allow <patrón>` (repetible): esas rutas no avisan en ese turno; el
   historial guarda `allowed`.
+
+### Ampliación compatible del equipo v5.1 (2026-11-17)
+
+De [[Tareas/Equipo v5.1 - Compilación compartida por equipo]]. Clave
+opcional, sin cambiar `version`:
+
+- `[project] target_dir`: ruta no vacía (si no, `bad_type` en
+  `project.target_dir`), relativa a la carpeta que contiene `.agents/`.
+  `test_cmd`, las `checks` y `ask --gate` la reciben como
+  `CARGO_TARGET_DIR`, y un rol `workspace-write` también, con la carpeta en
+  `sandbox_workspace_write.writable_roots` de Codex. Sin la clave, nada
+  cambia.
 
 ## Alternativas consideradas
 

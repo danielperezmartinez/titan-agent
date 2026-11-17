@@ -16,7 +16,7 @@ use titan_agent_core::transcript::{TranscriptItem, TranscriptKind};
 use crate::terminal::TerminalView;
 use crate::theme::{self, color, hairline};
 
-use super::widgets::button;
+use super::widgets::{button, hover_enabled};
 use super::{MainView, Pending, Selection};
 
 /// The transcript is asked again this often while it is on screen.
@@ -240,7 +240,9 @@ impl MainView {
                         .flex_none()
                         .whitespace_nowrap()
                         .cursor_pointer()
-                        .hover(|d| d.text_color(color(theme::INK)))
+                        .when(hover_enabled(), |d| {
+                            d.hover(|d| d.text_color(color(theme::INK)))
+                        })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.selection = Selection::Project(root.clone());
                             cx.notify();
@@ -290,9 +292,11 @@ impl MainView {
                 )
                 .flex_none()
                 .min_h(px(30.))
-                .hover(|d| {
-                    d.border_color(color(theme::ACCENT))
-                        .text_color(color(theme::INK))
+                .when(hover_enabled(), |d| {
+                    d.hover(|d| {
+                        d.border_color(color(theme::ACCENT))
+                            .text_color(color(theme::INK))
+                    })
                 })
                 .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                     if let Some(state) = this.thread.as_mut() {

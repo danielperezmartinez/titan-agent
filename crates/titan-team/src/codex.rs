@@ -3,7 +3,7 @@
 //! last answer, and `item.started` as live activity).
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -59,6 +59,20 @@ pub fn argv(
             worktree.to_string_lossy().into_owned(),
         ]),
     }
+    // A writing role builds in the team's shared folder too, which lies
+    // outside its worktree: its sandbox must let it write there.
+    if let Some(dir) = team
+        .project
+        .target_dir
+        .as_ref()
+        .filter(|_| role.sandbox == "workspace-write")
+    {
+        let root = serde_json::to_string(&dir.to_string_lossy()).unwrap_or_default();
+        args.extend([
+            "-c".into(),
+            format!("sandbox_workspace_write.writable_roots=[{root}]"),
+        ]);
+    }
     if let Some(schema) = &role.output_schema {
         args.extend([
             "--output-schema".into(),
@@ -93,11 +107,13 @@ pub fn run(
     prompt: &str,
     cwd: &Path,
     limit: Duration,
+    env: &[(&str, PathBuf)],
     mut on_activity: impl FnMut(String),
 ) -> Result<TurnOutput, String> {
     let mut command = Command::new(program);
     command
         .args(args)
+        .envs(env.iter().map(|(key, value)| (*key, value)))
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -394,6 +410,7 @@ mod tests {
             "hi",
             Path::new("."),
             Duration::from_millis(300),
+            &[],
             |_| {},
         )
         .unwrap();
@@ -409,6 +426,7 @@ mod tests {
             "hi",
             Path::new("."),
             Duration::from_millis(300),
+            &[],
             |_| {},
         )
         .unwrap();
@@ -427,6 +445,7 @@ mod tests {
             "hi",
             Path::new("."),
             Duration::from_secs(5),
+            &[],
             |_| {},
         )
         .unwrap();
@@ -442,6 +461,7 @@ mod tests {
             "hi",
             Path::new("."),
             Duration::from_secs(5),
+            &[],
             |_| {},
         )
         .unwrap();
@@ -453,6 +473,7 @@ mod tests {
             "hi",
             Path::new("."),
             Duration::from_secs(5),
+            &[],
             |_| {},
         )
         .unwrap();

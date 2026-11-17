@@ -9,6 +9,8 @@ docs/.obsidian/cache
 # Worktrees locales (sesiones de Claude Code y encargos del equipo)
 .claude/worktrees/
 .agents/worktrees/
+# Carpeta de compilación compartida por los encargos del equipo
+.agents/target/
 # Estado del equipo: sus salidas pueden contener datos del entorno
 .agents/state/
 __pycache__/

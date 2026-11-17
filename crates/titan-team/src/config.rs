@@ -43,6 +43,10 @@ pub struct Project {
     pub test_timeout_s: u64,
     pub autocommit: bool,
     pub hidden_paths: Vec<String>,
+    /// Build folder shared by every task of this team (absolute): the
+    /// commands titan-team runs and the writing Codex roles get it as
+    /// `CARGO_TARGET_DIR`.
+    pub target_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -84,7 +88,7 @@ const TOP_KEYS: [&str; 7] = [
     "flow",
     "roles",
 ];
-const PROJECT_KEYS: [&str; 10] = [
+const PROJECT_KEYS: [&str; 11] = [
     "repo",
     "base",
     "worktrees_dir",
@@ -95,6 +99,7 @@ const PROJECT_KEYS: [&str; 10] = [
     "test_timeout_s",
     "autocommit",
     "hidden_paths",
+    "target_dir",
 ];
 const CODEX_KEYS: [&str; 1] = ["config"];
 const FLOW_KEYS: [&str; 4] = ["steps", "review_role", "fix_role", "max_review_rounds"];
@@ -130,6 +135,15 @@ impl Project {
             "gate" => self.gate_cmd.as_deref(),
             _ => None,
         }
+    }
+
+    /// Environment of the commands that build in a task's worktree: the
+    /// team's shared build folder, if it has one.
+    pub fn build_env(&self) -> Vec<(&'static str, PathBuf)> {
+        self.target_dir
+            .iter()
+            .map(|dir| ("CARGO_TARGET_DIR", dir.clone()))
+            .collect()
     }
 }
 
@@ -273,6 +287,14 @@ pub fn parse(text: &str, base: &Path) -> Result<TeamConfig, Vec<ConfigError>> {
             .unwrap_or(300),
         autocommit: c.boolean(project_table, p, "autocommit").unwrap_or(false),
         hidden_paths: c.list(project_table, p, "hidden_paths"),
+        target_dir: match c.text(project_table, p, "target_dir", false) {
+            Some(dir) if dir.trim().is_empty() => {
+                c.error("project.target_dir", "bad_type", "no puede estar vacío");
+                None
+            }
+            Some(dir) => Some(resolve(base, Path::new(&dir))),
+            None => None,
+        },
     };
 
     let codex_table = c.table(&table, "", "codex").unwrap_or(&empty);

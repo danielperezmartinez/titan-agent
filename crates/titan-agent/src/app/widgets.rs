@@ -23,6 +23,14 @@ pub(super) fn marked(marker: &str, marker_color: u32, text: impl Into<SharedStri
         .child(text.into())
 }
 
+/// Whether hover styles are drawn. The demo kit turns them off
+/// (`TITAN_AGENT_DEMO_NO_HOVER`) so a capture never depends on where the
+/// pointer was left: the window opens under it.
+pub(super) fn hover_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("TITAN_AGENT_DEMO_NO_HOVER").is_none())
+}
+
 pub(super) fn caret() -> Div {
     div().w(px(1.)).h(px(14.)).bg(color(theme::ACCENT))
 }

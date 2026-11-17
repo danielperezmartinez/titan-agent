@@ -8,7 +8,7 @@ use titan_agent_core::tree::{TreeRow, build_rows};
 
 use crate::theme::{self, color, hairline};
 
-use super::widgets::{agent_pill, caret, marked, state_marker};
+use super::widgets::{agent_pill, caret, hover_enabled, marked, state_marker};
 use super::{MainView, Selection};
 
 impl MainView {
@@ -232,7 +232,7 @@ impl MainView {
                         gpui::transparent_black().into()
                     })
                     .when(selected, |d| d.bg(color(theme::SURFACE)))
-                    .when(!selected, |d| {
+                    .when(!selected && hover_enabled(), |d| {
                         d.hover(|style| style.bg(color(theme::CANVAS).blend(hairline())))
                     })
                     .text_size(px(12.))
@@ -292,7 +292,7 @@ impl MainView {
                         gpui::transparent_black().into()
                     })
                     .when(selected, |d| d.bg(color(theme::SURFACE)))
-                    .when(!selected, |d| {
+                    .when(!selected && hover_enabled(), |d| {
                         d.hover(|style| style.bg(color(theme::CANVAS).blend(hairline())))
                     })
                     .text_size(px(13.))

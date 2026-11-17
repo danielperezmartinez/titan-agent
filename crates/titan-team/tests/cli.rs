@@ -1,8 +1,8 @@
 //! Own end-to-end tests of titan-team (the acceptance tests are in
 //! `phase3_acceptance.rs`): what must not run, the task lock, a turn that is
 //! recorded even when its commit fails, a thread open elsewhere, the
-//! director's session, `init`/`doc` and the gate inside the turn. Fake
-//! Codex, temporary repo.
+//! director's session, `init`/`doc`, the gate inside the turn and the
+//! team's shared build folder. Fake Codex, temporary repo.
 #![cfg(unix)]
 
 use std::fs;
@@ -111,6 +111,8 @@ impl Repo {
             .current_dir(&self.0)
             .env("TITAN_TEAM_CODEX", self.0.join("codex"))
             .env_remove("CLAUDE_CODE_SESSION_ID")
+            // The build folder the tests run with is not the fixture's.
+            .env_remove("CARGO_TARGET_DIR")
             .args(args);
         if let Some(session) = session {
             command.env("CLAUDE_CODE_SESSION_ID", session);
@@ -312,4 +314,78 @@ fn the_gate_runs_inside_the_turn_so_the_monitor_shows_it() {
     assert!(started < gate && gate < finished, "{kinds:?}");
     let saved = fs::read_to_string(repo.0.join(".agents/state/kite/01-writer.gate.txt")).unwrap();
     assert_eq!(saved, "# Compuerta (exit 0)\n\ngate-ran");
+}
+
+/// A Codex that writes down, next to itself, its arguments and the build
+/// folder it got.
+const RECORDER: &str = r#"#!/bin/sh
+cat > /dev/null
+root=$(dirname "$TITAN_TEAM_CODEX")
+printf '%s\n' "$@" > "$root/codex-args"
+printf '%s' "${CARGO_TARGET_DIR-unset}" > "$root/codex-target"
+out=''
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = '-o' ]; then shift; out="$1"; fi
+  shift
+done
+printf 'done\n' > "$out"
+echo '{"type":"thread.started","thread_id":"t-1"}'
+"#;
+
+#[test]
+fn the_team_shares_one_build_folder_in_its_commands_and_writing_roles() {
+    let repo = Repo::new();
+    let record = |name: &str| {
+        format!("'printf %s \"$CARGO_TARGET_DIR\" > \"$(dirname \"$TITAN_TEAM_CODEX\")/{name}\"'")
+    };
+    let team = TEAM
+        .replace(
+            "test_cmd = \"touch ran-tests\"",
+            &format!(
+                "test_cmd = {}\ngate_cmd = {}\ntarget_dir = \".agents/target\"",
+                record("test-target"),
+                record("gate-target")
+            ),
+        )
+        .replace(
+            "sandbox = \"workspace-write\"",
+            "sandbox = \"workspace-write\"\nchecks = [\"test\"]",
+        );
+    fs::write(repo.0.join(".agents/team.toml"), team).unwrap();
+    fs::write(repo.0.join("codex"), RECORDER).unwrap();
+    let shared = repo.0.join(".agents/target");
+    let shared_text = shared.to_string_lossy().into_owned();
+    let read = |name: &str| fs::read_to_string(repo.0.join(name)).unwrap();
+
+    let out = repo.run(&["ask", "writer", "kite", "--gate"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(read("gate-target"), shared_text, "the gate");
+    assert_eq!(
+        read("test-target"),
+        shared_text,
+        "the checks after the turn"
+    );
+    assert_eq!(read("codex-target"), shared_text, "a writing role");
+    assert!(shared.is_dir(), "created before the writing role runs");
+    let args = read("codex-args");
+    assert!(
+        args.contains(&format!(
+            "sandbox_workspace_write.writable_roots=[\"{shared_text}\"]"
+        )),
+        "{args}"
+    );
+
+    // A read-only role could not write there: it gets neither.
+    let out = repo.run(&["ask", "checker", "kite", "--force"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(read("codex-target"), "unset");
+    assert!(!read("codex-args").contains("writable_roots"));
+
+    // An empty folder is an error of the file.
+    let team =
+        read(".agents/team.toml").replace("target_dir = \".agents/target\"", "target_dir = \" \"");
+    fs::write(repo.0.join(".agents/team.toml"), team).unwrap();
+    let check = repo.run(&["check", "--json"]);
+    assert_ne!(check.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&check.stdout).contains("project.target_dir"));
 }
