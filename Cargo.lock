@@ -5176,6 +5176,7 @@ dependencies = [
 name = "titan-agent-launcher"
 version = "0.6.0"
 dependencies = [
+ "serde",
  "serde_json",
  "titan-agent-core",
 ]

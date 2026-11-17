@@ -1,5 +1,6 @@
 #!/bin/sh
-# Falla si la versión del Cargo.toml raíz no supera la de la rama principal.
+# Falla si la versión del Cargo.toml raíz no supera la de la rama principal
+# o si es 1.0.0 o mayor.
 # Lee [workspace.package] o, si no existe, [package]. Ignora las etiquetas de prerelease.
 # Uso: comprobar-version.sh <sha base>
 set -e
@@ -19,6 +20,11 @@ actual=$(version < Cargo.toml)
 [ -n "$actual" ] || { echo "No encuentro la versión en Cargo.toml." >&2; exit 1; }
 n() { echo "$1" | sed 's/[-+].*//' | awk -F. '{ printf "%d %d %d", $1, $2, $3 }'; }
 set -- $(n "$base") $(n "$actual")
+# Nada de 1.x hasta que lo decida el usuario (docs/README.md, Publicación).
+if [ "$4" -ge 1 ]; then
+  echo "La versión $actual es 1.x o mayor: las versiones son 0.x hasta que el usuario decida la 1.0.0." >&2
+  exit 1
+fi
 if [ "$4" -gt "$1" ] || { [ "$4" -eq "$1" ] && { [ "$5" -gt "$2" ] || { [ "$5" -eq "$2" ] && [ "$6" -gt "$3" ]; }; }; }; then
   exit 0
 fi
