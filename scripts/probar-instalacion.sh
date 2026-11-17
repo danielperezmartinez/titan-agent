@@ -1,8 +1,8 @@
 #!/bin/sh
-# Prueba el tar.gz de Linux sin tocar la instalación del usuario: lo
-# descomprime, ejecuta install.sh dos veces y uninstall en un HOME temporal y
-# comprueba lo que dejan (docs/Decisiones/ADR-0011, §4). Lo usa el CI.
-# Uso: scripts/probar-instalacion.sh <titan-agent-<v>-linux-x86_64.tar.gz>
+# Test the Linux tar.gz without touching the user's installation: extract it,
+# run install.sh twice and uninstall in a temporary HOME, then check the result
+# (docs/Decisiones/ADR-0011, §4). Used by CI.
+# Usage: scripts/probar-instalacion.sh <titan-agent-<v>-linux-x86_64.tar.gz>
 set -eu
 [ $# -eq 1 ] || { echo "uso: probar-instalacion.sh <tar.gz>" >&2; exit 2; }
 tarball=$(CDPATH='' cd -- "$(dirname -- "$1")" && pwd)/$(basename -- "$1")

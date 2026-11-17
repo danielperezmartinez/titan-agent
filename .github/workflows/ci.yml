@@ -82,8 +82,8 @@ jobs:
           cargo fmt --all --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
-      # Empaqueta el tar.gz de Linux (con la build de debug de los tests) y lo
-      # instala y desinstala en un HOME temporal, sin publicar nada.
+      # Package the Linux tar.gz (using the tests' debug build) and
+      # install and uninstall it in a temporary HOME, without publishing anything.
       - name: Paquete de Linux e instalación
         if: hashFiles('Cargo.toml') != ''
         run: |

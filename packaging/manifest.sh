@@ -1,7 +1,7 @@
 #!/bin/sh
-# Escribe el manifiesto de una versión, titan-agent-update.json (formato 1,
-# docs/Decisiones/ADR-0011, §3), a partir de los artefactos de una carpeta.
-# Uso: packaging/manifest.sh <versión> <carpeta de artefactos>
+# Write a version manifest, titan-agent-update.json (format 1,
+# docs/Decisiones/ADR-0011, §3), from the artifacts in a directory.
+# Usage: packaging/manifest.sh <versión> <carpeta de artefactos>
 set -eu
 [ $# -eq 2 ] || { echo "uso: manifest.sh <versión> <carpeta>" >&2; exit 2; }
 version=$1 dir=$2

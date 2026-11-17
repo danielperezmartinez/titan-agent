@@ -1,9 +1,9 @@
 #!/bin/sh
-# Imprime la versión de [workspace.package] del Cargo.toml del directorio
-# actual si se puede publicar: solo 0.x.y, sin pre-release ni build
-# (docs/Decisiones/ADR-0011, §2). Si no, sale con 1. Lo usa el workflow
-# «Publicar versión».
-# Uso: version-publicable.sh
+# Print the [workspace.package] version from the current directory's Cargo.toml
+# if it is publishable: only 0.x.y, with no pre-release or build metadata
+# (docs/Decisiones/ADR-0011, §2). Otherwise, exit with 1. Used by the workflow
+# «Publish version».
+# Usage: version-publicable.sh
 set -e
 [ -f Cargo.toml ] || { echo "No hay Cargo.toml en $(pwd)." >&2; exit 1; }
 v=$(awk '
