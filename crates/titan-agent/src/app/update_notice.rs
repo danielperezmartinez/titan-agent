@@ -35,6 +35,9 @@ pub(super) struct UpdateUi {
     pub daemon: Option<String>,
     /// The inline confirmation is open.
     pub confirm: bool,
+    /// Counts the connections to the daemon: a confirmation timer only
+    /// counts for the connection that started it.
+    pub connection: u64,
     /// Screenshots only (`TITAN_AGENT_DEMO_UPDATE`): a fixed status.
     demo: Option<(UpdateStatus, Option<String>, bool)>,
 }
@@ -84,6 +87,10 @@ pub(super) fn notice(
         UpdateState::Idle | UpdateState::Checking => {}
     }
     match daemon {
+        // Restarting the daemon closes its terminals too: same confirmation.
+        Some(_) if status.active && confirm => Some(Notice::Confirm {
+            sessions: status.blocking.len(),
+        }),
         Some(daemon) if status.active && daemon != ui => Some(Notice::OtherDaemon(daemon.into())),
         _ => None,
     }
@@ -158,6 +165,7 @@ impl MainView {
     pub(super) fn update_hello(&mut self, daemon: String, cx: &mut Context<Self>) {
         let same = daemon == env!("CARGO_PKG_VERSION");
         self.update.daemon = Some(daemon);
+        let connection = self.update.connection;
         let id = self.client.request(Request::UpdateStatus);
         self.pending.insert(id, Pending::Update);
         if !same {
@@ -168,6 +176,7 @@ impl MainView {
             let still = this
                 .update(cx, |view, _| {
                     view.connected
+                        && view.update.connection == connection
                         && view.update.daemon.as_deref() == Some(env!("CARGO_PKG_VERSION"))
                 })
                 .unwrap_or(false);
@@ -519,7 +528,30 @@ fn confirm_version() {
     else {
         return;
     };
-    let _ = std::fs::remove_file(root.join("update/pending.json"));
+    let path = root.join("update/pending.json");
+    let pending: Option<titan_agent_core::update::Pending> = std::fs::read(&path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+    let current = std::fs::read_link(root.join("current")).ok();
+    if confirms(
+        pending.as_ref(),
+        current.as_deref(),
+        env!("CARGO_PKG_VERSION"),
+    ) {
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Only the version that is pending, installed as `current`, confirms
+/// itself: an older window still open must not confirm a version that has
+/// not started yet.
+fn confirms(
+    pending: Option<&titan_agent_core::update::Pending>,
+    current: Option<&std::path::Path>,
+    ui: &str,
+) -> bool {
+    let current = current.and_then(|c| c.file_name()).and_then(|c| c.to_str());
+    pending.is_some_and(|p| p.to == ui) && current == Some(ui)
 }
 
 /// Starts the launcher a moment later (the daemon replaces itself first),
@@ -591,6 +623,34 @@ mod tests {
             n(&back, false, false),
             Some(Notice::RolledBack { .. })
         ));
+    }
+
+    #[test]
+    fn only_the_pending_version_running_as_current_confirms() {
+        let pending = titan_agent_core::update::Pending {
+            from: "0.6.0".into(),
+            to: "0.6.1".into(),
+            attempts: 1,
+        };
+        let current = std::path::Path::new("versions/0.6.1");
+        assert!(confirms(Some(&pending), Some(current), "0.6.1"));
+        assert!(
+            !confirms(Some(&pending), Some(current), "0.6.0"),
+            "an older window"
+        );
+        let other = std::path::Path::new("versions/0.6.0");
+        assert!(!confirms(Some(&pending), Some(other), "0.6.1"));
+        assert!(!confirms(None, Some(current), "0.6.1"));
+    }
+
+    #[test]
+    fn restarting_another_daemon_asks_first_too() {
+        let mut idle = status(UpdateState::Idle);
+        idle.blocking = vec!["cl:a".into()];
+        assert_eq!(
+            notice(&idle, Some("0.5.2"), "0.6.0", true, false),
+            Some(Notice::Confirm { sessions: 1 })
+        );
     }
 
     #[test]

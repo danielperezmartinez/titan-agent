@@ -56,6 +56,8 @@ struct Inner {
     status: UpdateStatus,
     /// The version extracted to `versions/<v>`, ready to apply.
     prepared: Option<Version>,
+    /// `blocking` of the last status sent, to send it again when it changes.
+    published_blocking: Vec<String>,
 }
 
 impl Updater {
@@ -120,7 +122,7 @@ impl Updater {
             first_check,
             inner: Mutex::new(Inner {
                 status,
-                prepared: None,
+                ..Inner::default()
             }),
             wake: Mutex::new(None),
         }
@@ -153,7 +155,26 @@ impl Updater {
 
     fn set(&self, hub: &Hub, change: impl FnOnce(&mut Inner)) {
         change(&mut self.lock());
-        hub.broadcast_update(self.status(hub));
+        self.publish(hub);
+    }
+
+    fn publish(&self, hub: &Hub) {
+        let status = self.status(hub);
+        self.lock().published_blocking = status.blocking.clone();
+        hub.broadcast_update(status);
+    }
+
+    /// A change of a check: never over a version being applied, which a
+    /// check that was waiting on the network must not undo.
+    fn set_checking(&self, hub: &Hub, change: impl FnOnce(&mut Inner)) {
+        {
+            let mut inner = self.lock();
+            if inner.status.state == UpdateState::Applying {
+                return;
+            }
+            change(&mut inner);
+        }
+        self.publish(hub);
     }
 
     /// Turns the automatic checks on or off and saves it in `update.json`.
@@ -219,14 +240,14 @@ impl Updater {
             return;
         }
         let previous = self.lock().status.state;
-        self.set(hub, |inner| {
+        self.set_checking(hub, |inner| {
             inner.status.state = UpdateState::Checking;
             inner.status.error = None;
         });
         let result = self.find(install);
         let now = now_ms();
         match result {
-            Ok(None) => self.set(hub, |inner| {
+            Ok(None) => self.set_checking(hub, |inner| {
                 inner.status.last_check_ms = Some(now);
                 inner.status.state = if inner.prepared.is_some() {
                     previous
@@ -236,13 +257,13 @@ impl Updater {
             }),
             Ok(Some(selected)) => {
                 let version = selected.version;
-                self.set(hub, |inner| {
+                self.set_checking(hub, |inner| {
                     inner.status.version = Some(version.to_string());
                     inner.status.notes_url = Some(selected.notes_url.clone());
                     inner.status.state = UpdateState::Downloading;
                 });
                 let prepared = prepare::prepare(&install.root, &selected, fetch::agent());
-                self.set(hub, |inner| {
+                self.set_checking(hub, |inner| {
                     inner.status.last_check_ms = Some(now);
                     match prepared {
                         Ok(()) => {
@@ -260,7 +281,7 @@ impl Updater {
             }
             Err(error) => {
                 eprintln!("titan-agentd: comprobación de actualizaciones: {error}");
-                self.set(hub, |inner| {
+                self.set_checking(hub, |inner| {
                     inner.status.last_check_ms = Some(now);
                     inner.status.error = Some(error.to_string());
                     inner.status.state = if inner.prepared.is_some() {
@@ -321,7 +342,8 @@ impl Updater {
             } else {
                 UpdateState::Ready
             };
-            if next != state {
+            let moved = self.lock().published_blocking != blockers;
+            if next != state || moved {
                 self.set(hub, |inner| inner.status.state = next);
             }
         }

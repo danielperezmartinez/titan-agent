@@ -343,14 +343,15 @@ fn a_signed_version_is_prepared_waits_for_working_terminals_and_applies_with_exe
     });
     let socket = install.socket.clone();
     wait_for("socket again", || {
-        UnixStream::connect(&socket).is_ok_and(|s| {
-            let mut c = Connection {
-                reader: BufReader::new(s.try_clone().unwrap()),
-                writer: s,
-                next_id: 0,
-            };
-            c.writer.set_read_timeout(Some(Duration::from_secs(5))).ok();
-            c.request("hello", json!({"protocol": 1, "client": "e2e"}))["result"].is_object()
+        // A connection made during the exec is reset: that is "not yet".
+        UnixStream::connect(&socket).is_ok_and(|mut s| {
+            s.set_read_timeout(Some(Duration::from_secs(5))).ok();
+            let hello =
+                json!({"id": 1, "method": "hello", "params": {"protocol": 1, "client": "e2e"}});
+            let mut line = String::new();
+            writeln!(s, "{hello}").is_ok()
+                && BufReader::new(&s).read_line(&mut line).is_ok_and(|n| n > 0)
+                && line.contains("\"result\"")
         })
     });
     let mut window = install.connect();

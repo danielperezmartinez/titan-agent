@@ -50,7 +50,15 @@ impl Hub {
                 terminal: terminal.clone(),
             })
             .collect();
-        (windows, apply_blockers(&state.sessions, &terminals))
+        let mut blockers = apply_blockers(&state.sessions, &terminals);
+        blockers.extend(unknown_blockers(
+            &state.sessions,
+            &terminals,
+            &state.sources,
+        ));
+        blockers.sort();
+        blockers.dedup();
+        (windows, blockers)
     }
 
     /// Sends the `update` event to every subscribed client.
@@ -69,5 +77,59 @@ impl Hub {
         for terminal in state.terminals.values_mut() {
             let _ = terminal.killer.kill();
         }
+    }
+}
+
+/// Terminals whose session the daemon no longer sees while its CLI cannot
+/// be read: whether that agent works is unknown, so they block applying
+/// alone (a failed `claude agents` must not let an update cut a working
+/// agent).
+fn unknown_blockers(
+    sessions: &[Session],
+    terminals: &[TerminalRef],
+    sources: &[SourceStatus],
+) -> Vec<String> {
+    let failing = |agent: AgentCli| sources.iter().any(|s| s.agent == agent && !s.ok);
+    terminals
+        .iter()
+        .filter(|t| !sessions.iter().any(|s| s.key == t.session))
+        .filter(|t| {
+            let agent = if t.session.starts_with("cx:") {
+                AgentCli::Codex
+            } else {
+                AgentCli::ClaudeCode
+            };
+            failing(agent)
+        })
+        .map(|t| t.session.clone())
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_terminal_of_a_source_that_failed_blocks() {
+        let terminal = |session: &str| TerminalRef {
+            session: session.into(),
+            terminal: format!("t-{session}"),
+        };
+        let source = |agent, ok| SourceStatus {
+            agent,
+            ok,
+            detail: None,
+        };
+        let terminals = [terminal("cl:gone"), terminal("cx:gone")];
+        let sources = [
+            source(AgentCli::ClaudeCode, false),
+            source(AgentCli::Codex, true),
+        ];
+        assert_eq!(unknown_blockers(&[], &terminals, &sources), ["cl:gone"]);
+        let healthy = [
+            source(AgentCli::ClaudeCode, true),
+            source(AgentCli::Codex, true),
+        ];
+        assert!(unknown_blockers(&[], &terminals, &healthy).is_empty());
     }
 }

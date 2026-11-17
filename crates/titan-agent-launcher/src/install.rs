@@ -191,7 +191,7 @@ pub fn uninstall() -> Result<(), String> {
     let bin = home()?.join(".local/bin");
     for name in ["titan-agent", "titan-team"] {
         let path = bin.join(name);
-        if std::fs::read_link(&path).is_ok_and(|target| target.starts_with(&root)) {
+        if std::fs::read_link(&path).is_ok_and(|target| points_inside(&path, &target, &root)) {
             std::fs::remove_file(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         }
     }
@@ -207,9 +207,41 @@ pub fn uninstall() -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the link at `link` with target `target` points inside `root`,
+/// resolving a relative target from the link's folder and `..` lexically.
+fn points_inside(link: &Path, target: &Path, root: &Path) -> bool {
+    let joined = match link.parent() {
+        Some(dir) if target.is_relative() => dir.join(target),
+        _ => target.to_path_buf(),
+    };
+    let mut normal = PathBuf::new();
+    for part in joined.components() {
+        match part {
+            std::path::Component::ParentDir => {
+                normal.pop();
+            }
+            std::path::Component::CurDir => {}
+            other => normal.push(other),
+        }
+    }
+    normal.starts_with(root) && normal != root
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_links_that_resolve_inside_the_install_are_ours() {
+        let root = Path::new("/h/.local/share/titan-agent");
+        let link = Path::new("/h/.local/bin/titan-agent");
+        let inside = |target: &str| points_inside(link, Path::new(target), root);
+        assert!(inside("/h/.local/share/titan-agent/titan-agent-launcher"));
+        assert!(inside("../share/titan-agent/current/bin/titan-team"));
+        assert!(!inside("/h/.local/share/titan-agent/../other-app/bin/x"));
+        assert!(!inside("../share/other-app/x"));
+        assert!(!inside("/h/.local/share/titan-agent"));
+    }
 
     #[test]
     fn the_menu_entry_runs_the_stable_link_with_the_wayland_id() {

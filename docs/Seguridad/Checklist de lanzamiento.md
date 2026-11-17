@@ -4,7 +4,7 @@ Tipo: Checklist
 Estado: Pendiente
 Resumen: Estado de la configuración fuera del código (ajustes del repo en GitHub, hooks en cada clon, firma y canales de distribución) que ningún test del repo comprueba. Sección GitHub revisada el 2026-11-14 salvo el correo privado de la cuenta; distribución (puntos de ADR-0011, a revisar al publicar la 0.6.0) y accesibilidad pendientes.
 Última revisión: 2026-11-15
-Última modificación: 2026-11-17T10:00:00+01:00
+Última modificación: 2026-11-17T20:50:00+01:00
 ---
 
 # Checklist de lanzamiento
@@ -61,16 +61,19 @@ Se revisa al publicar la 0.6.0
       `publicar` de `release.yml` los usa.
 - [ ] *Immutable releases* activadas en el repo.
 - [ ] Ruleset de etiquetas `v*`: sin mover ni borrar.
-- [ ] `release.yml` rechaza versiones que no sean `0.x.y` y exige el CI en
-      verde del commit.
+- [x] `release.yml` rechaza versiones que no sean `0.x.y` y exige el CI en
+      verde del commit (`scripts/version-publicable.sh`, con su test C9, y
+      los checks `Cambios`, `Verificar` y `Fugas` del commit; 0.6.0).
 - [ ] La última release verifica: `minisign -V` del manifiesto con
       `packaging/minisign.pub` y `gh attestation verify` del tar.gz.
-- [ ] La comprobación de versiones no envía datos del usuario (sin
+- [x] La comprobación de versiones no envía datos del usuario (sin
       autenticación, cookies ni versión en el `User-Agent`). Comprobado
-      mirando la petición.
+      mirando las peticiones en `crates/titan-agentd/tests/update_e2e.rs`
+      (0.6.0).
 - [ ] Windows: el zip sale sin firmar (aviso de SmartScreen) y marcado como
       experimental; se acepta mientras no haya daemon de Windows.
-- [ ] Rotación de la clave ensayada en los tests (lista de claves aceptadas).
+- [x] Rotación de la clave ensayada en los tests (lista de claves aceptadas:
+      el test C1 verifica con la segunda clave de la lista; 0.6.0).
 
 ## Accesibilidad
 

@@ -283,6 +283,7 @@ impl MainView {
                 }
             }
             Incoming::Disconnected(reason) => {
+                self.update.connection += 1;
                 self.thread_connection(Some(&reason));
                 self.connected = false;
                 self.status = Some(reason);

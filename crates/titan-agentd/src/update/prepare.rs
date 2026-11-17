@@ -93,7 +93,13 @@ pub fn extract(archive: &Path, root: &Path, version: Version) -> Result<(), Upda
         let refs: Vec<&str> = files.iter().map(String::as_str).collect();
         check_bundle(&refs)?;
         let target = versions.join(version.to_string());
-        std::fs::rename(temp.join(&name), &target).map_err(|e| io(&target, e))
+        let extracted = temp.join(&name);
+        if !std::fs::symlink_metadata(&extracted).is_ok_and(|m| m.is_dir()) {
+            return Err(UpdateError::UnsafeEntry(format!(
+                "{name} no es una carpeta"
+            )));
+        }
+        std::fs::rename(&extracted, &target).map_err(|e| io(&target, e))
     })();
     let _ = std::fs::remove_dir_all(&temp);
     result

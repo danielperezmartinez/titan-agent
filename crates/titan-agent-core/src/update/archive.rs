@@ -30,6 +30,10 @@ pub fn check_entry(
 ) -> Result<(), UpdateError> {
     let unsafe_entry = || UpdateError::UnsafeEntry(path.to_string());
     let inside = components_inside(root, path).ok_or_else(unsafe_entry)?;
+    // The root itself can only be a real folder.
+    if inside.is_empty() && kind != EntryKind::Dir {
+        return Err(unsafe_entry());
+    }
     match kind {
         EntryKind::File | EntryKind::Dir => Ok(()),
         EntryKind::Hardlink => {
@@ -107,5 +111,10 @@ mod tests {
         assert!(!ok("r/a", EntryKind::Symlink, None));
         assert!(!ok("r/a", EntryKind::Symlink, Some("")));
         assert!(!ok("rx/a", EntryKind::File, None));
+        // The root as a link (to its own parent, or anywhere) or a file.
+        assert!(!ok("r", EntryKind::Symlink, Some(".")));
+        assert!(!ok("r/", EntryKind::Symlink, Some("r")));
+        assert!(!ok("r", EntryKind::File, None));
+        assert!(ok("r/a", EntryKind::Symlink, Some(".")));
     }
 }
