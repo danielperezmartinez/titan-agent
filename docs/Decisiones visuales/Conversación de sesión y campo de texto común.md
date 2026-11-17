@@ -1,13 +1,13 @@
 ---
 Nombre: Conversación de sesión y campo de texto común
-Estado: Propuesta
+Estado: Aceptada
 Ámbito: Layout
 Resumen: '«Nueva sesión» y el chat son la misma vista «conversación» en la zona central, con dos estados: borrador (ajustes, comando exacto y campo de texto) y sesión (barra de sesión, conversación, estado del turno, cola, peticiones al usuario y el mismo campo). El campo es un componente único que se comporta como el de Claude Code Desktop: Enter envía, Shift+Enter hace salto de línea, admite tabulaciones y listas «- », y abre un menú contextual con `/` y `@`. Sin burbujas: bloques planos con hairlines y prefijos por autor. El terminal se abre con `[t]`.'
 Decisión: Una vista «conversación» con estado borrador y estado sesión, y un único componente de campo de texto al estilo de Claude Code Desktop, con menú `/` y `@`, para «Nueva sesión» y el chat.
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-17T23:25:00+01:00
-Última modificación: 2026-11-17T23:25:00+01:00
+Última modificación: 2026-11-17T23:55:00+01:00
 ---
 
 # Conversación de sesión y campo de texto común
@@ -104,7 +104,7 @@ cambiar de pantalla, como en Claude Code Desktop.
   - **Tab** inserta una tabulación;
   - «- » al principio de línea empieza una lista, y Shift+Enter en una
     línea de lista continúa con «- ».
-- **Propuestas** (el usuario las puede quitar al revisar la previa):
+- **Propuestas** (aceptadas con la previa el 2026-11-17):
   - Shift+Enter en un elemento vacío quita la viñeta y acaba la lista;
   - Tab y Shift+Tab sangran y quitan la sangría de un elemento de lista;
   - ↑ con el campo vacío recupera el último mensaje enviado a esa sesión;
