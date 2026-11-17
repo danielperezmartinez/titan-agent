@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · conversación de sesión</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+.board{width:1440px;box-sizing:border-box;background:#201d1d;color:#d8d5d5;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:14px;padding:32px 0 48px}
+.cap{padding:0 16px 8px;font-size:11px;color:#6e6e73;letter-spacing:.04em}
+.view{position:relative;margin:0 16px 40px;width:1100px;border:1px solid rgba(253,252,252,0.12);display:flex;flex-direction:column;background:#201d1d}
+.bar{display:flex;align-items:center;gap:12px;min-height:44px;padding:0 16px;border-bottom:1px solid rgba(253,252,252,0.12);font-size:13px}
+.bar .name{color:#fdfcfc;font-weight:700}
+.pill{border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:1px 6px;font-size:12px}
+.cl{color:#da8fff}.cx{color:#5ac8fa}
+.g{color:#30d158}.w{color:#ff9f0a}.r{color:#ff453a}.m{color:#9a9898}.s{color:#6e6e73}.i{color:#fdfcfc}.b{color:#d8d5d5}.a{color:#0a84ff}
+.grow{flex-grow:1}
+.act{color:#d8d5d5;font-size:13px;white-space:nowrap}
+.conv{padding:8px 0}
+.blk{padding:10px 16px;border-bottom:1px solid rgba(253,252,252,0.12);font-size:13px;line-height:1.55}
+.blk:last-child{border-bottom:0}
+.who{font-size:12px;margin-bottom:2px}
+.line{font-size:12px;padding:2px 0;color:#9a9898}
+.diff{margin:6px 0 2px;background:#161313;border:1px solid rgba(253,252,252,0.12);padding:6px 10px;font-size:12px;line-height:1.5;white-space:pre}
+.diff .p{color:#30d158}.diff .n{color:#ff453a}.diff .h{color:#6e6e73}
+.req{margin:8px 16px;padding:10px 12px;border-left:2px solid #ff9f0a;background:#302c2c;font-size:13px}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.btn{border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:4px 10px;background:#201d1d;color:#d8d5d5;font-size:12px}
+.btn.pri{border-color:#0a84ff;color:#fdfcfc;background:#302c2c}
+.btn.dan{color:#ff453a}
+.opt{display:flex;gap:10px;padding:6px 8px;border:1px solid rgba(253,252,252,0.12);border-radius:4px;margin-top:6px;background:#201d1d;font-size:12px}
+.opt.sel{border-color:#0a84ff}
+.queue{padding:6px 16px;font-size:12px;color:#9a9898;border-top:1px solid rgba(253,252,252,0.12)}
+.status{display:flex;gap:12px;padding:6px 16px 4px;font-size:12px;color:#9a9898}
+.comp{margin:4px 16px 14px;border:1px solid #0a84ff;border-radius:4px;background:#302c2c;padding:10px 12px;font-size:13px;line-height:1.55;min-height:44px;white-space:pre}
+.comp.idle{border-color:rgba(253,252,252,0.12)}
+.ph{color:#6e6e73}
+.caret{display:inline-block;width:8px;height:15px;background:#fdfcfc;vertical-align:-2px}
+.menu{position:absolute;left:16px;width:560px;background:#3a3636;border:1px solid #646262;border-radius:4px;padding:4px 0;font-size:12px}
+.menu .it{display:flex;gap:12px;padding:5px 12px}
+.menu .it.on{background:#302c2c;box-shadow:inset 2px 0 0 #0a84ff}
+.menu .k{width:150px;color:#fdfcfc}
+.menu .d{color:#9a9898;flex-grow:1}
+.menu .tag{color:#9a9898}
+.menu .sep{padding:6px 12px 2px;color:#6e6e73;font-size:11px;letter-spacing:.06em}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:14px 16px 6px}
+.chip{border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:5px 8px;background:#201d1d;color:#d8d5d5;font-size:12px}
+.cmd{padding:4px 16px 2px;font-size:11px;color:#9a9898}
+.empty{padding:120px 16px 80px;text-align:center;color:#6e6e73;font-size:13px}
+</style>
+</helmet>
+<div class="board">
+
+  <!-- 1 · BORRADOR -->
+  <div class="cap">1 · BORRADOR — lo que hoy es «Nueva sesión»: ajustes, comando exacto y el campo común. Enter lanza y la vista pasa al estado sesión (4)</div>
+  <div class="view">
+    <div class="bar"><span class="i">[+]</span><span class="name">Nueva sesión</span><span class="m">en</span><span class="b">[#] titan-ssh</span><span class="grow"></span><span class="act m">[esc] cerrar</span></div>
+    <div class="empty">la conversación empieza aquí</div>
+    <div class="chips">
+      <span class="chip"><span class="cl">cl</span> Claude Code <span class="m">[v]</span></span>
+      <span class="chip">opus <span class="m">[v]</span></span>
+      <span class="chip">esfuerzo high <span class="m">[v]</span></span>
+      <span class="chip">permisos auto <span class="m">[v]</span></span>
+      <span class="chip">[#] titan-ssh <span class="m">[v]</span></span>
+    </div>
+    <div class="cmd">$ claude --bg -n "previa-sync" --model opus --effort high --permission-mode auto --settings &lt;ajustes-de-titan&gt;/claude-hooks.json "Revisa la sincronización de…"</div>
+    <div class="comp">Revisa la sincronización de hosts al volver de segundo plano:
+- reproduce el fallo con dos hosts
+- propón el arreglo antes de tocar código<span class="caret"></span></div>
+    <div class="status" style="padding-top:0;margin-top:-8px;padding-bottom:12px"><span class="s">enter lanzar · shift+enter nueva línea · «- » lista · / comandos · @ ficheros</span></div>
+  </div>
+
+  <!-- 2 · CODEX LIBRE -->
+  <div class="cap">2 · CHAT DE UN ROL DE CODEX LIBRE — por el app-server compartido; el director puede seguir encargándole turnos. Razonamiento plegado, órdenes compactas, cambios con [v]</div>
+  <div class="view">
+    <div class="bar"><span class="name">sol · revisor</span><span class="pill"><span class="cx">cx</span> sol</span><span class="m">[+] en espera</span><span class="m">encargo previa-sync</span><span class="grow"></span><span class="act">[t] terminal</span><span class="act">[d] carpeta</span><span class="act">[x] detener</span></div>
+    <div class="conv">
+      <div class="blk"><div class="who"><span class="cl">cl opus</span> <span class="m">· director · turno 3 (titan-team)</span></div><span class="m">Revisa el diff de la ronda 2 contra la especificación…</span> <span class="a">[v]</span></div>
+      <div class="blk"><div class="who"><span class="cx">cx sol ›</span></div>
+        <div class="line">[v] pensando…</div>
+        <div class="line"><span class="g">$</span> <span class="b">cargo test -p sync</span> · código 0</div>
+        <div class="line">edita <span class="b">src/sync/resume.rs</span> <span class="a">[v]</span></div>
+        <span class="b">Cambios pedidos: 1 mayor. Al volver de segundo plano se reprograma el temporizador dos veces; el segundo pisa el estado del primero.</span>
+      </div>
+      <div class="blk"><div class="who"><span class="i">tú ›</span></div><span class="i">¿El doble temporizador pasa también con un solo host?</span></div>
+      <div class="blk"><div class="who"><span class="cx">cx sol ›</span></div><span class="b">Sí: no depende del número de hosts, sino de que se llame a `resume()` desde los dos observadores de ciclo de vida.</span></div>
+    </div>
+    <div class="status"><span>[+] libre · se envía ya</span></div>
+    <div class="comp idle"><span class="ph">escribe a sol… · / comandos · @ ficheros · shift+enter nueva línea</span></div>
+  </div>
+
+  <!-- 3 · EN COLA -->
+  <div class="cap">3 · ROL TRABAJANDO — el chat nunca dirige el turno del director: el mensaje va a la cola oficial de Codex y arranca al acabar. titan-team se lo cuenta al director en su siguiente orden (user_turn)</div>
+  <div class="view">
+    <div class="bar"><span class="name">luna · implementa</span><span class="pill"><span class="cx">cx</span> luna</span><span class="g">[&gt;] trabajando</span><span class="m">encargo previa-sync</span><span class="grow"></span><span class="act">[t] terminal</span><span class="act">[d] carpeta</span><span class="act">[x] detener</span></div>
+    <div class="conv">
+      <div class="blk"><div class="who"><span class="cl">cl opus</span> <span class="m">· director · turno 4 (titan-team)</span></div><span class="m">Aplica el arreglo del revisor: un solo observador llama a resume()…</span> <span class="a">[v]</span></div>
+      <div class="blk"><div class="who"><span class="cx">cx luna ›</span> <span class="g">[&gt;]</span></div>
+        <div class="line"><span class="g">$</span> <span class="b">rg -n "resume\(" src/</span> · código 0</div>
+        <div class="line">edita <span class="b">src/sync/lifecycle.rs</span> <span class="a">[v]</span></div>
+        <div class="line"><span class="g">|</span> <span class="b">cargo test -p sync</span></div>
+      </div>
+    </div>
+    <div class="queue"><span class="m">[+] en cola</span> · <span class="b">Cuando acabes, añade un test con dos observadores.</span> <span class="b">[x] quitar</span></div>
+    <div class="status"><span><span class="g">[&gt;]</span> trabajando · irá a la cola</span><span class="grow"></span><span class="b">[x] detener</span></div>
+    <div class="comp idle"><span class="ph">escribe a luna… · se enviará al acabar el turno</span></div>
+  </div>
+
+  <!-- 4 · MENÚ / -->
+  <div class="cap">4 · MENÚ «/» — sesión de Claude Code: las skills se envían como mensaje; los comandos del CLI llevan [t] porque se ejecutan en el terminal. En Codex, todo por el app-server (modelo, permisos, plan, compactar, revisar…)</div>
+  <div class="view" style="min-height:420px">
+    <div class="bar"><span class="name">previa-sync</span><span class="pill"><span class="cl">cl</span> opus</span><span class="m">[+] en espera</span><span class="m">[#] titan-ssh</span><span class="grow"></span><span class="act">[m] monitor</span><span class="act">[t] terminal</span><span class="act">[x] detener</span></div>
+    <div class="conv">
+      <div class="blk"><div class="who"><span class="cl">cl opus ›</span></div><span class="b">He reproducido el fallo con dos hosts. Propongo un único observador de ciclo de vida; detalle en el plan.</span></div>
+    </div>
+    <div class="menu" style="top:150px">
+      <div class="sep">SKILLS · se envían como mensaje</div>
+      <div class="it on"><span class="k">equipo</span><span class="d">encargar al equipo con tests de aceptación y revisión</span></div>
+      <div class="it"><span class="k">security-review</span><span class="d">revisión de seguridad de los cambios</span></div>
+      <div class="sep">COMANDOS DE CLAUDE CODE · en el terminal</div>
+      <div class="it"><span class="k">/compact</span><span class="d">resumir la conversación</span><span class="tag">[t]</span></div>
+      <div class="it"><span class="k">/model</span><span class="d">cambiar de modelo</span><span class="tag">[t]</span></div>
+      <div class="it"><span class="k">/clear</span><span class="d">empezar de cero</span><span class="tag">[t]</span></div>
+    </div>
+    <div class="grow" style="min-height:150px"></div>
+    <div class="status"><span>[+] libre · se envía ya</span><span class="grow"></span><span class="s">↑↓ elegir · tab/enter aceptar · esc cerrar</span></div>
+    <div class="comp">/eq<span class="caret"></span></div>
+  </div>
+
+  <!-- 5 · APROBACIÓN CODEX -->
+  <div class="cap">5 · APROBACIÓN DE CODEX CON SU DIFF — petición del app-server; gana la primera respuesta y las demás pantallas la cierran. Al responder queda una línea mute con la respuesta</div>
+  <div class="view">
+    <div class="bar"><span class="name">sesión suelta · migración</span><span class="pill"><span class="cx">cx</span> gpt</span><span class="w">[?] te necesita</span><span class="m">[#] titan-ssh</span><span class="grow"></span><span class="act">[t] terminal</span><span class="act">[x] detener</span></div>
+    <div class="conv">
+      <div class="blk"><div class="who"><span class="i">tú ›</span></div><span class="i">Sube el límite de reintentos a 5 y documenta por qué.</span></div>
+      <div class="blk"><div class="who"><span class="cx">cx gpt ›</span></div><div class="line">[v] pensando…</div><span class="b">Cambio la constante y añado el comentario.</span></div>
+    </div>
+    <div class="req"><span class="w">[?]</span> <span class="i">quiere editar</span> <span class="b">src/net/retry.rs</span> <span class="a">[^]</span>
+      <div class="diff"><span class="h">@@ -12,7 +12,9 @@</span>
+<span class="n">-const MAX_RETRIES: u32 = 3;</span>
+<span class="p">+/// Five retries cover a mobile network switch (about 8 s with backoff).</span>
+<span class="p">+const MAX_RETRIES: u32 = 5;</span></div>
+      <div class="btns"><span class="btn pri">[ok] permitir</span><span class="btn">permitir en esta sesión</span><span class="btn">denegar</span><span class="btn dan">cancelar el turno</span></div>
+    </div>
+    <div class="status"><span><span class="w">[?]</span> te necesita · responde arriba</span></div>
+    <div class="comp idle"><span class="ph">escribe… · se enviará cuando respondas</span></div>
+  </div>
+
+  <!-- 6 · PREGUNTA DE CLAUDE -->
+  <div class="cap">6 · PREGUNTA DE CLAUDE CODE (AskUserQuestion) — llega por el hook de la sesión (lanzada con --settings); si el chat no estuviera abierto, saldría en el terminal como siempre</div>
+  <div class="view">
+    <div class="bar"><span class="name">previa-sync</span><span class="pill"><span class="cl">cl</span> opus</span><span class="w">[?] te necesita</span><span class="m">[#] titan-ssh</span><span class="grow"></span><span class="act">[m] monitor</span><span class="act">[t] terminal</span><span class="act">[x] detener</span></div>
+    <div class="conv">
+      <div class="blk"><div class="who"><span class="cl">cl opus ›</span></div>
+        <div class="line">edita <span class="b">src/sync/lifecycle.rs</span> <span class="a">[v]</span></div>
+        <span class="b">El arreglo funciona. Antes de seguir necesito una decisión.</span></div>
+    </div>
+    <div class="req"><span class="w">[?]</span> <span class="i">¿Cómo publicamos el arreglo?</span>
+      <div class="opt sel"><span class="a">(*)</span><span><span class="i">Versión de parche</span> <span class="m">· solo el arreglo, 0.6.1</span></span></div>
+      <div class="opt"><span class="m">( )</span><span><span class="i">Con la 0.7.0</span> <span class="m">· esperar a la siguiente funcionalidad</span></span></div>
+      <div class="opt"><span class="m">( )</span><span><span class="i">otra</span> <span class="m">· escribe la respuesta</span></span></div>
+      <div class="btns"><span class="btn pri">[ok] responder</span></div>
+    </div>
+    <div class="blk"><div class="line">[ok] respondiste «Versión de parche» a una pregunta anterior · hace 5 min</div></div>
+    <div class="status"><span><span class="w">[?]</span> te necesita · responde arriba</span></div>
+    <div class="comp idle"><span class="ph">escribe… · se enviará cuando respondas</span></div>
+  </div>
+
+  <!-- 7 · FORMATO NO RECONOCIDO -->
+  <div class="cap">7 · SIN LECTURA — transcripción de Claude con un formato que el parser no reconoce, o sesión interactiva en otro terminal (solo lectura): el chat lo dice y ofrece el terminal; nunca inventa</div>
+  <div class="view">
+    <div class="bar"><span class="name">migración-db</span><span class="pill"><span class="cl">cl</span> sonnet</span><span class="g">[&gt;] trabajando</span><span class="m">[#] titan-ssh</span><span class="grow"></span><span class="act">[t] terminal</span><span class="act">[x] detener</span></div>
+    <div class="empty" style="padding:60px 16px">no se puede leer la conversación con esta versión de Claude Code · <span class="a">[t] abrir el terminal</span></div>
+    <div class="status"><span class="s">el envío sigue funcionando; las respuestas solo se ven en el terminal</span></div>
+    <div class="comp idle"><span class="ph">escribe a migración-db…</span></div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":3400}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

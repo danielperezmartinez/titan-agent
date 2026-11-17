@@ -68,6 +68,14 @@
       "h": 1500,
       "title": "4 · Aviso de actualización [^] y bloque «Actualizaciones» (0.6.0)",
       "is_interactive": false
+    },
+    "Conversacion.dc.html": {
+      "x": 6080,
+      "y": 0,
+      "w": 1440,
+      "h": 3400,
+      "title": "5 · Conversación de sesión: borrador, chat, cola, menú /, peticiones (chat)",
+      "is_interactive": true
     }
   },
   "order": [
@@ -77,7 +85,8 @@
     "MonitorA.dc.html",
     "MonitorB.dc.html",
     "MonitorC.dc.html",
-    "Actualizacion.dc.html"
+    "Actualizacion.dc.html",
+    "Conversacion.dc.html"
   ],
   "notes": {
     "titulo": {
