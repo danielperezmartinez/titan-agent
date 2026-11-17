@@ -329,6 +329,34 @@ aditivos, sin subir `PROTOCOL_VERSION` (sigue en 1):
 
 Ambos se ejecutan con `sh <script>` desde la raíz de un repo git; leen `./Cargo.toml`.
 
+### Previa y criterios visuales
+
+Previa en `design/preview/Actualizacion.dc.html` (tablero 4 de `canvas.json`),
+**aprobada por el usuario el 2026-11-17 sin el icono propuesto**: el
+`.desktop` usa `utilities-terminal` hasta que haya otro.
+
+Criterios para el evaluador visual, fijados antes de implementar:
+
+1. **Sitio y jerarquía.** El aviso va en una sola línea a la derecha de la
+   cabecera, entre los contadores y `[i]` `[*]`, con la misma tipografía
+   (12 px) y separación (16 px) que los contadores. Sin nada que decir no
+   ocupa sitio, y nunca empuja ni parte el título.
+2. **Disciplina de color.** `[^]` y la versión en `mute`; `actualizar` y
+   `reiniciar` en `accent`; solo «2 sesiones trabajando» y el `[^]` de la
+   vuelta atrás en `warning`. Ningún otro color, sin fondos ni insignias.
+3. **Estados.** Cada estado de la previa (`ready`, descargando,
+   confirmación, actualizando, fallo, vuelta atrás con `[x]`, daemon de otra
+   versión) dice exactamente su texto. La confirmación lleva `[ok]
+   actualizar` como botón primario con hairline `accent` y `cancelar` en
+   `mute`, y si falta sitio se corta el texto explicativo, no los botones.
+4. **Configuración.** El bloque «ACTUALIZACIONES» sigue la forma del de
+   «Nueva sesión» (panel `surface`, título en mayúsculas de 12 px, etiquetas
+   de la misma anchura, chips). Muestra la versión instalada, el interruptor,
+   `Buscar ahora` y una línea `mute` con el resultado de la última
+   comprobación.
+5. **Acabado.** Nada desalineado en la línea base de la cabecera, ningún
+   texto partido en dos líneas y nada que no sea ASCII en los marcadores.
+
 ## Criterios de finalización
 
 - PR integrada con la versión 0.6.0, los checks en verde y la revisión de Sol

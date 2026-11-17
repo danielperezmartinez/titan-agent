@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>titan-agent · aviso de actualización</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#201d1d}
+.board{width:1440px;box-sizing:border-box;background:#201d1d;color:#d8d5d5;font-family:'JetBrains Mono',ui-monospace,monospace;font-size:14px;padding:32px 0 48px}
+.cap{padding:0 16px 6px;font-size:11px;color:#6e6e73;letter-spacing:.04em}
+.hdr{display:flex;align-items:center;gap:16px;padding:0 16px;height:48px;border-top:1px solid rgba(253,252,252,0.12);border-bottom:1px solid rgba(253,252,252,0.12);margin-bottom:28px}
+.title{display:flex;align-items:baseline;gap:8px;flex-grow:1;flex-shrink:0;white-space:nowrap}
+.title b{color:#fdfcfc;font-size:16px}
+.title span{color:#9a9898;font-size:12px}
+.counts,.upd{display:flex;gap:16px;font-size:12px;color:#9a9898;white-space:nowrap}
+.upd{gap:8px;align-items:center;min-width:0}
+.g{color:#30d158}.w{color:#ff9f0a}.m{color:#9a9898}.b{color:#d8d5d5}
+.lnk{color:#0a84ff;cursor:pointer}
+.ver{color:#9a9898;text-decoration:none}
+.ver.hover{text-decoration:underline}
+.btn{border:1px solid #0a84ff;border-radius:4px;padding:3px 8px;color:#fdfcfc;background:#302c2c}
+.ic{display:flex;align-items:center;min-height:32px;padding:0 4px;color:#d8d5d5;font-size:14px}
+.why{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sec{padding:0 16px;margin:40px 0 12px;font-size:12px;color:#fdfcfc;font-weight:700;letter-spacing:.04em}
+.panel{margin:0 140px;border:1px solid rgba(253,252,252,0.12);border-radius:4px;background:#302c2c}
+.panel h4{margin:0;padding:12px 12px 8px;font-size:12px;color:#fdfcfc;letter-spacing:.04em}
+.row{display:flex;align-items:center;gap:4px;padding:6px 12px;font-size:13px}
+.lab{width:184px;flex:none;font-size:12px;color:#9a9898}
+.chip{border:1px solid rgba(253,252,252,0.12);border-radius:4px;padding:5px 8px;background:#201d1d;color:#d8d5d5;font-size:13px}
+.note{padding:4px 12px 12px 200px;font-size:11px;color:#9a9898}
+.narrow{width:900px}
+</style>
+</helmet>
+<div class="board">
+
+  <div class="cap">1 · READY — hay versión nueva preparada (también WAITING: se reabrió la ventana antes de aplicarla)</div>
+  <header class="hdr">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd"><span class="m">[^]</span><a class="ver hover">v0.6.1</a><span class="m">·</span><span class="lnk">actualizar</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="cap">2 · DOWNLOADING — todo en mute, sin acciones</div>
+  <header class="hdr">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd m"><span>[^]</span><span>v0.6.1</span><span>·</span><span>descargando</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="cap">3 · CONFIRMACIÓN — tras pulsar «actualizar» con sesiones trabajando con terminal en el daemon (Esc = cancelar)</div>
+  <header class="hdr">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd b"><span class="m">[^]</span><span class="why">se cerrarán los terminales de <span class="w">2 sesiones trabajando</span>; siguen vivas</span><span class="m">·</span><span class="btn">[ok] actualizar</span><span class="m">·</span><span class="m">cancelar</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="cap">4 · APPLYING — el daemon aplica y la ventana se vuelve a abrir con el lanzador</div>
+  <header class="hdr">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd m"><span>[^]</span><span>actualizando…</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="cap">5 · FAILED — no se repite como error: se reintenta solo en la siguiente comprobación</div>
+  <header class="hdr">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd m"><span>[^]</span><span>v0.6.1 no se pudo verificar</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="cap">6 · VUELTA ATRÁS RECIENTE — el lanzador volvió a la versión anterior; [x] lo descarta</div>
+  <header class="hdr">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd m"><span class="w">[^]</span><span>v0.6.1 no arrancó; sigues en v0.6.0</span><span class="b">[x]</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="cap">7 · DAEMON DE OTRA VERSIÓN — p. ej. tras volver atrás con el daemon nuevo vivo</div>
+  <header class="hdr">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd"><span class="m">[^]</span><span class="m">daemon v0.6.0</span><span class="m">·</span><span class="lnk">reiniciar</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="cap">8 · POCO ANCHO (900 px) — se acorta primero a «[^] actualizar»</div>
+  <header class="hdr narrow">
+    <div class="title"><b>titan-agent</b><span>torre de control</span></div>
+    <div class="counts"><span><span class="g">[&gt;]</span> 3 trabajando</span><span><span class="w">[?]</span> 1 te necesita</span><span>[+] 4 en espera</span></div>
+    <div class="upd"><span class="m">[^]</span><span class="lnk">actualizar</span></div>
+    <span class="ic">[i]</span><span class="ic">[*]</span>
+  </header>
+
+  <div class="sec">9 · CONFIGURACIÓN ([*]) — bloque nuevo bajo «Nueva sesión · valores por defecto»</div>
+  <div class="panel" style="margin-bottom:16px">
+    <h4>NUEVA SESIÓN · VALORES POR DEFECTO</h4>
+    <div class="row"><span class="lab">agente por defecto</span><span class="chip"><span style="color:#da8fff">cl</span> Claude Code <span class="m">[v]</span></span></div>
+    <div style="height:8px"></div>
+  </div>
+  <div class="panel">
+    <h4>ACTUALIZACIONES</h4>
+    <div class="row"><span class="lab">versión instalada</span><span class="b">v0.6.0</span></div>
+    <div class="row"><span class="lab">buscar actualizaciones</span><span class="chip">[ok] activado</span><span class="chip">Buscar ahora</span></div>
+    <div class="note">última comprobación: hoy 14:02 · hay una versión nueva (v0.6.1), se aplicará al cerrar la ventana</div>
+  </div>
+  <div class="panel" style="margin-top:16px">
+    <h4>ACTUALIZACIONES · variantes</h4>
+    <div class="row"><span class="lab">buscar actualizaciones</span><span class="chip"><span class="m">[ ]</span> desactivado</span><span class="chip">Buscar ahora</span></div>
+    <div class="note">última comprobación: hoy 08:00 · estás en la última versión</div>
+    <div class="note">última comprobación: hoy 14:02 · error: no se pudo descargar el manifiesto (sin conexión)</div>
+    <div class="note">versión de desarrollo: no busca actualizaciones</div>
+  </div>
+
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1500}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
