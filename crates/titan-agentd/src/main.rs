@@ -7,6 +7,7 @@ mod claude;
 mod codex;
 mod hub;
 mod teams;
+mod update;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,7 +17,7 @@ use hub::{Config, Hub};
 
 /// Codex quota is read at most this often.
 const QUOTA_INTERVAL: Duration = Duration::from_secs(60);
-use titan_agent_core::protocol::socket_path;
+use titan_agent_core::protocol::{socket_name, socket_path_named};
 use titan_agent_core::session::AgentCli;
 
 fn main() {
@@ -63,8 +64,12 @@ fn main() {
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(PathBuf::from),
     };
-    let hub = Hub::new(config);
+    let hub = Hub::with_updater(config, update::Updater::from_env());
     spawn_claude_poller(Arc::clone(&hub));
+    {
+        let hub = Arc::clone(&hub);
+        std::thread::spawn(move || update::Updater::run(hub));
+    }
     spawn_codex_poller(Arc::clone(&hub));
     spawn_team_reader(Arc::clone(&hub));
     if let Err(error) = server::serve(&socket, hub) {
@@ -79,11 +84,14 @@ fn resolve_socket(explicit: Option<&str>) -> PathBuf {
     let user = std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_default();
-    PathBuf::from(socket_path(
+    // A debug build has its own socket, so it never takes the place of the
+    // installed daemon (ADR-0011 §4).
+    PathBuf::from(socket_path_named(
         explicit,
         runtime.as_deref(),
         &temp.to_string_lossy(),
         &user,
+        socket_name(cfg!(debug_assertions)),
     ))
 }
 
@@ -171,6 +179,14 @@ mod server {
             .map_err(|error| format!("no se pudo abrir {}: {error}", lock_path.display()))?;
         if lock.try_lock().is_err() {
             return Err(format!("ya hay un titan-agentd en {}", socket.display()));
+        }
+        // The launcher finds the daemon of a bad version by this pid.
+        let pid_path = socket.with_file_name(titan_agent_core::protocol::PID_FILE);
+        if let Err(error) = std::fs::write(&pid_path, std::process::id().to_string()) {
+            eprintln!(
+                "titan-agentd: no se pudo escribir {}: {error}",
+                pid_path.display()
+            );
         }
         let _ = std::fs::remove_file(socket);
         let listener = UnixListener::bind(socket)

@@ -56,7 +56,7 @@ impl MainView {
         };
         let label = |text: String, text_color: u32| {
             div()
-                .w(px(160.))
+                .w(px(super::update_notice::LABEL_W))
                 .flex_none()
                 .text_size(px(12.))
                 .text_color(color(text_color))
@@ -109,7 +109,7 @@ impl MainView {
                     .gap(px(4.))
                     .child(
                         div()
-                            .w(px(160.))
+                            .w(px(super::update_notice::LABEL_W))
                             .flex_none()
                             .flex()
                             .gap(px(8.))
@@ -231,7 +231,8 @@ impl MainView {
                                     .child("NUEVA SESIÓN · VALORES POR DEFECTO"),
                             )
                             .children(rows),
-                    ),
+                    )
+                    .child(self.update_settings(cx)),
             )
     }
 }

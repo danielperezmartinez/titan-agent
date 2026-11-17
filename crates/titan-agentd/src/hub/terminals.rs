@@ -123,6 +123,9 @@ impl Hub {
             )));
         }
         broadcast_snapshot(&mut state, true);
+        drop(state);
+        // A working session may now block a ready version.
+        self.updater.changed(self);
         Ok(())
     }
 
@@ -236,7 +239,7 @@ impl Hub {
         }
     }
 
-    fn closed(&self, terminal: &str, exit_code: Option<u32>) {
+    fn closed(self: &Arc<Self>, terminal: &str, exit_code: Option<u32>) {
         let mut state = self.lock();
         let Some(t) = state.terminals.remove(terminal) else {
             return;
@@ -264,6 +267,9 @@ impl Hub {
         }
         rebuild(&mut state);
         broadcast_snapshot(&mut state, true);
+        drop(state);
+        // Its session may have been the last blocker.
+        self.updater.changed(self);
     }
 }
 

@@ -60,6 +60,14 @@
       "title": "3 · Ventana principal: monitor del proyecto",
       "expand": "fill",
       "is_interactive": true
+    },
+    "Actualizacion.dc.html": {
+      "x": 4560,
+      "y": 0,
+      "w": 1440,
+      "h": 1500,
+      "title": "4 · Aviso de actualización [^] y bloque «Actualizaciones» (0.6.0)",
+      "is_interactive": false
     }
   },
   "order": [
@@ -68,7 +76,8 @@
     "MonitorProyecto.dc.html",
     "MonitorA.dc.html",
     "MonitorB.dc.html",
-    "MonitorC.dc.html"
+    "MonitorC.dc.html",
+    "Actualizacion.dc.html"
   ],
   "notes": {
     "titulo": {

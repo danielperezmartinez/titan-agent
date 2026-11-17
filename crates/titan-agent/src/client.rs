@@ -147,11 +147,13 @@ fn socket_path() -> std::path::PathBuf {
     let explicit = std::env::var("TITAN_AGENTD_SOCKET").ok();
     let runtime = std::env::var("XDG_RUNTIME_DIR").ok();
     let user = std::env::var("USER").unwrap_or_default();
-    std::path::PathBuf::from(titan_agent_core::protocol::socket_path(
+    // A debug build talks to the development daemon (ADR-0011 §4).
+    std::path::PathBuf::from(titan_agent_core::protocol::socket_path_named(
         explicit.as_deref(),
         runtime.as_deref(),
         &std::env::temp_dir().to_string_lossy(),
         &user,
+        titan_agent_core::protocol::socket_name(cfg!(debug_assertions)),
     ))
 }
 

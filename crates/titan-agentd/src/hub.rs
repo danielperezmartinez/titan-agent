@@ -30,6 +30,7 @@ mod launch;
 pub(crate) mod requests;
 mod terminals;
 mod threads;
+mod update;
 
 #[derive(Clone)]
 pub struct Config {
@@ -41,6 +42,8 @@ pub struct Config {
 
 pub struct Hub {
     pub config: Config,
+    /// The updater (ADR-0011); inactive outside an install.
+    pub updater: crate::update::Updater,
     state: Mutex<State>,
     /// Follows the team events. Never locked while waiting for `state`
     /// (the other order is used by [`Hub::set_source`]).
@@ -50,6 +53,8 @@ pub struct Hub {
 struct Client {
     tx: Sender<String>,
     subscribed: bool,
+    /// Past `hello`: a window, for the safe condition of the updater.
+    hello: bool,
 }
 
 struct Terminal {
@@ -113,9 +118,15 @@ pub fn now_ms() -> i64 {
 }
 
 impl Hub {
+    #[cfg(test)]
     pub fn new(config: Config) -> Arc<Hub> {
+        Hub::with_updater(config, crate::update::Updater::inactive())
+    }
+
+    pub fn with_updater(config: Config, updater: crate::update::Updater) -> Arc<Hub> {
         Arc::new(Hub {
             config,
+            updater,
             teams: Mutex::new(TeamScanner::default()),
             state: Mutex::new(State {
                 claude: Vec::new(),
@@ -157,7 +168,13 @@ impl Hub {
 
     /// Stores what a discovery source found and tells the clients if the
     /// snapshot changed.
-    pub fn set_source(&self, agent: AgentCli, found: Result<Vec<Session>, String>) {
+    pub fn set_source(self: &Arc<Self>, agent: AgentCli, found: Result<Vec<Session>, String>) {
+        self.set_source_inner(agent, found);
+        // A working session that stopped may let a ready version apply.
+        self.updater.changed(self);
+    }
+
+    fn set_source_inner(&self, agent: AgentCli, found: Result<Vec<Session>, String>) {
         let mut state = self.lock();
         let index = match agent {
             AgentCli::ClaudeCode => 0,
@@ -229,16 +246,21 @@ impl Hub {
             Client {
                 tx,
                 subscribed: false,
+                hello: false,
             },
         );
     }
 
-    pub fn remove_client(&self, id: u64) {
-        let mut state = self.lock();
-        state.clients.remove(&id);
-        for terminal in state.terminals.values_mut() {
-            terminal.viewers.remove(&id);
+    pub fn remove_client(self: &Arc<Self>, id: u64) {
+        {
+            let mut state = self.lock();
+            state.clients.remove(&id);
+            for terminal in state.terminals.values_mut() {
+                terminal.viewers.remove(&id);
+            }
         }
+        // The last window closed: a ready version may apply now.
+        self.updater.changed(self);
     }
 
     /// Handles one request line from a client.
@@ -259,7 +281,7 @@ impl Hub {
         }
         match message.request {
             Request::Hello { protocol, .. } => {
-                let state = self.lock();
+                let mut state = self.lock();
                 if protocol != PROTOCOL_VERSION {
                     if let Some(id) = id {
                         reply(
@@ -276,6 +298,9 @@ impl Hub {
                     return;
                 }
                 *hello_done = true;
+                if let Some(c) = state.clients.get_mut(&client) {
+                    c.hello = true;
+                }
                 if let Some(id) = id {
                     reply(
                         &state,
@@ -392,6 +417,11 @@ impl Hub {
                 command,
             } => self.launch(client, id, token, spec, command),
             Request::Transcript { session } => self.transcript(client, id, session),
+            request @ (Request::UpdateStatus
+            | Request::UpdateCheck
+            | Request::UpdateApply { .. }
+            | Request::UpdateSettings { .. }
+            | Request::UpdateDismiss) => self.update_request(client, id, request),
         }
     }
 

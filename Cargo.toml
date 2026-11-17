@@ -5,10 +5,11 @@ members = [
     "crates/titan-agentd",
     "crates/titan-agent",
     "crates/titan-team",
+    "crates/titan-agent-launcher",
 ]
 
 [workspace.package]
-version = "0.5.2"
+version = "0.6.0"
 edition = "2024"
 license = "Apache-2.0"
 publish = false
@@ -23,6 +24,14 @@ rustix = { version = "1.1.6", features = ["fs"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 toml = { version = "1.2.1", features = ["preserve_order"] }
+# Updater (ADR-0011 §8): HTTP with rustls, the tar.gz, SHA-256 and minisign.
+ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
+tar = "0.4.46"
+flate2 = "1.1.11"
+sha2 = "0.10.9"
+minisign-verify = "0.3.0"
+# Only to sign in tests, with a key generated for each test.
+minisign = "0.10.0"
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 # GPUI from Zed's repository, pinned to the commit of the stable tag v1.28.1.
 # Why and how to update it: docs/Decisiones/ADR-0006.

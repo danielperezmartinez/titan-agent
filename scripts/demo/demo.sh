@@ -57,7 +57,7 @@ stop() {
 # Scenes: name, description and the variables the window reads. Each scene
 # sets its own variables here, so a capture never depends on the caller's
 # shell splitting words.
-SCENES="inicio terminal filtro nueva nueva-menu nueva-error ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar"
+SCENES="inicio terminal filtro nueva nueva-menu nueva-error ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
 
 describe() {
   case "$1" in
@@ -74,6 +74,14 @@ describe() {
     hilo) echo "hilo de Sol (tests) en solo lectura" ;;
     hilo-largo) echo "hilo largo de Luna (terminado): debe abrir abajo" ;;
     hilo-confirmar) echo "hilo con la confirmación de tomar el control" ;;
+    act-lista) echo "aviso [^] con una versión nueva lista (actualizar)" ;;
+    act-descarga) echo "aviso [^] descargando la versión nueva" ;;
+    act-confirmar) echo "aviso [^] con la confirmación en línea (2 sesiones trabajando)" ;;
+    act-aplicando) echo "aviso [^] actualizando" ;;
+    act-fallo) echo "aviso [^] de una versión que no se pudo verificar" ;;
+    act-atras) echo "aviso [^] de vuelta atrás reciente, con [x]" ;;
+    act-daemon) echo "aviso [^] de daemon de otra versión (reiniciar)" ;;
+    act-ajustes) echo "Configuración con el bloque ACTUALIZACIONES y una versión lista" ;;
     *) return 1 ;;
   esac
 }
@@ -91,6 +99,16 @@ scene_env() {
     hilo) scene_env grafo; export TITAN_AGENT_THREAD=disenador_tests ;;
     hilo-largo) scene_env grafo; export TITAN_AGENT_THREAD=mecanico ;;
     hilo-confirmar) scene_env hilo; export TITAN_AGENT_DEMO_CONFIRM=1 ;;
+    # The updater of the demo daemon is off (a build tree): the window shows
+    # a fixed state of the notice instead.
+    act-lista) export TITAN_AGENT_DEMO_UPDATE=ready ;;
+    act-descarga) export TITAN_AGENT_DEMO_UPDATE=downloading ;;
+    act-confirmar) export TITAN_AGENT_DEMO_UPDATE=confirm ;;
+    act-aplicando) export TITAN_AGENT_DEMO_UPDATE=applying ;;
+    act-fallo) export TITAN_AGENT_DEMO_UPDATE=failed ;;
+    act-atras) export TITAN_AGENT_DEMO_UPDATE=rollback ;;
+    act-daemon) export TITAN_AGENT_DEMO_UPDATE=daemon ;;
+    act-ajustes) export TITAN_AGENT_SETTINGS=1 TITAN_AGENT_DEMO_UPDATE=ready ;;
     *) die "escena desconocida: $1 (demo.sh escenas)" ;;
   esac
 }
