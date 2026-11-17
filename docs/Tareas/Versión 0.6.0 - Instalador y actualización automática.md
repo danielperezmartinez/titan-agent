@@ -5,7 +5,7 @@ Resumen: 'Implementar ADR-0011. Hay que montar el workflow «Publicar versión»
 Decisiones: '[[Decisiones/ADR-0011 Distribución en GitHub Releases con instalación por usuario y actualización firmada]] y [[Decisiones visuales/Aviso de actualización en la cabecera]]. Versión 0.6.0 (minor), acordada con el usuario el 2026-11-17. Clave generada con minisign del paquete de Arch, que instala el usuario. Al instalar se retira la entrada «titan-agent (main)» del menú.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T10:00:00+01:00
-Última modificación: 2026-11-17T20:35:00+01:00
+Última modificación: 2026-11-17T23:50:00+01:00
 ---
 
 # Versión 0.6.0 - Instalador y actualización automática
@@ -553,5 +553,32 @@ Rama `feat/v0.6.0`, en local el 2026-11-17:
 6. **El evaluador visual encontró fallos reales en la ronda 1** (corte de
    texto y línea partida) y aprobó en la 2: el reparto funcionó como se
    esperaba.
+
+### Añadidas al diseñar la 0.7.0 y la 0.8.0 (2026-11-17)
+
+Para la ronda «Equipo v6», desde
+[[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]] y
+[[Chat de sesión con Codex y Claude Code]]:
+
+7. **`bin/team` compila titan-team desde la carpeta del director.** En una
+   tarea que cambia titan-team (la primera PR de la 0.8.0 lo reescribe para
+   el app-server, ADR-0013), el director usaría la herramienta a medio
+   hacer. *Propuesta*:
+   - que `bin/team` pueda usar un binario fijado (`TITAN_TEAM_BIN`, o
+     compilado desde `main` en la carpeta de compilación del equipo);
+   - que la skill diga que se use así en las tareas sobre el propio equipo.
+8. **El kit de demo no puede escribir en la ventana.** La 0.7.0 necesita
+   capturas del campo de texto con texto, listas y el borrador lleno, y la
+   0.8.0 el menú `/`. *Propuesta*:
+   - un guion de teclas que la app aplica al arrancar en modo demo (una
+     variable del kit, como las de las escenas);
+   - una carpeta de configuración de demo con `projects.json` para las
+     escenas de proyectos.
+9. **La interfaz no tiene tests de ventana**, y la 0.7.0 trae lógica de
+   interacción nueva: la edición del campo, las reglas del árbol con dos
+   grupos y qué encargos tiene una directora. *Propuesta*: que la skill
+   exija que esa lógica vaya en funciones o modelos puros con tests de
+   aceptación, y que la vista solo pinte. Así Sol puede escribir tests de
+   lo que hoy solo comprueba el evaluador visual.
 
 ## Resultado

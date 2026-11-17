@@ -1,11 +1,11 @@
 ---
 Nombre: Chat de sesión con Codex y Claude Code
 Estado: Planificando
-Resumen: 'Sustituir el terminal en crudo por una vista «conversación» (que también es «Nueva sesión») con un campo de texto común al estilo de Claude Code Desktop y menú `/`. En Codex, por el app-server compartido, con titan-team ejecutando sus turnos en el mismo app-server para que no haya dos escritores. En Claude Code, envío con `claude --resume` en un PTY del daemon, lectura de la transcripción y hooks al lanzar para responder permisos, preguntas y planes. Empieza con un spike con los CLI reales. La hace el equipo v5.'
-Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; ADR-0012 y ADR-0013 aceptadas por el usuario el mismo día; decisión visual aceptada tras revisar la previa; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. La versión se acuerda en la PR.'
-Bloqueada: []
+Resumen: 'Versión 0.8.0, después de la 0.7.0 (que trae la vista «conversación» y el campo de texto común): llenar la conversación con el chat, con menú `/` y `@`, en tres PR (titan-team por el app-server, chat de Codex, chat de Claude Code). En Codex, por el app-server compartido, con titan-team ejecutando sus turnos en el mismo app-server para que no haya dos escritores. En Claude Code, envío con `claude --resume` en un PTY del daemon, lectura de la transcripción y hooks al lanzar para responder permisos, preguntas y planes. Empieza con un spike con los CLI reales. La hace el equipo v5.'
+Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; ADR-0012 y ADR-0013 aceptadas por el usuario el mismo día; decisión visual aceptada tras revisar la previa; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. Al diseñar la 0.7.0 (mismo día) el usuario decidió que el chat va en la 0.8.0, sobre la estructura de la 0.7.0. La versión se acuerda en cada PR.'
+Bloqueada: ["[[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]]"]
 Fecha de creación: 2026-11-17T23:30:00+01:00
-Última modificación: 2026-11-17T23:55:00+01:00
+Última modificación: 2026-11-17T23:59:00+01:00
 ---
 
 # Chat de sesión con Codex y Claude Code
@@ -28,11 +28,19 @@ hallazgos de la prueba manual.
 
 **Cómo se trabaja**:
 
-- con el [[Equipo v5]] (skill `equipo`), en la rama `feat/chat-sesion`, que
+- con el equipo vigente (skill `equipo`), en la rama `feat/chat-sesion`, que
   ya trae la previa `design/preview/Conversacion.dc.html`;
-- no bloquea nada en curso; si coincide con la 0.7.0 (proyectos
-  importados), la que llegue después hace rebase;
-- la versión se acuerda con el usuario en la PR.
+- **va después de la
+  [[Versión 0.7.0 - Proyectos importados y monitor por sesión directora|0.7.0]]**,
+  que deja hecha la vista «conversación» (borrador y sesión con terminal),
+  el campo de texto común y el monitor por sesión directora; la rama hace
+  rebase sobre `main` antes de empezar;
+- el spike (parte 0) se puede hacer antes, porque no toca código de la app;
+- **tres PR, en este orden**, con la versión que se acuerde en cada una:
+  1. titan-team por el app-server (parte 1), que es independiente de la
+     interfaz y deja un solo escritor por hilo;
+  2. chat de Codex (partes 2 a 4 y 6 para Codex);
+  3. chat de Claude Code (partes 2, 3, 5 y 6 para Claude).
 
 ## Parte 0. Spike con los CLI reales (antes del contrato)
 
@@ -140,10 +148,10 @@ hallazgos de la prueba manual.
 
 **6. Interfaz**:
 
-- `app/composer.rs`, el campo de texto con su menú (teclas de la decisión
-  visual);
-- la vista «conversación» con sus estados borrador y sesión, que sustituye
-  a `new_session.rs` y `thread_view.rs`;
+- el campo de texto y la vista «conversación» ya vienen de la 0.7.0; aquí
+  se añade el menú `/` y `@` del campo;
+- el cuerpo de la sesión pasa del terminal a la conversación, y sustituye a
+  `thread_view.rs`;
 - las peticiones al usuario, la cola, la línea de estado y `[t] terminal`;
 - el clic en un rol del monitor o en una sesión del árbol abre la
   conversación.
@@ -169,7 +177,8 @@ hallazgos de la prueba manual.
 **En la interfaz**:
 
 - el menú `/` funciona en las dos sesiones;
-- «Nueva sesión» lanza con Enter y se convierte en la conversación;
+- tras lanzar desde el borrador, el cuerpo de la sesión muestra la
+  conversación y no el terminal;
 - con una transcripción de formato desconocido, el chat lo dice y ofrece el
   terminal.
 
