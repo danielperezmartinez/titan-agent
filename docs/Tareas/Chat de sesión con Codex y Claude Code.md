@@ -2,10 +2,10 @@
 Nombre: Chat de sesión con Codex y Claude Code
 Estado: Planificando
 Resumen: 'Sustituir el terminal en crudo por una vista «conversación» (que también es «Nueva sesión») con un campo de texto común al estilo de Claude Code Desktop y menú `/`. En Codex, por el app-server compartido, con titan-team ejecutando sus turnos en el mismo app-server para que no haya dos escritores. En Claude Code, envío con `claude --resume` en un PTY del daemon, lectura de la transcripción y hooks al lanzar para responder permisos, preguntas y planes. Empieza con un spike con los CLI reales. La hace el equipo v5.'
-Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. La versión se acuerda en la PR.'
+Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; ADR-0012 y ADR-0013 aceptadas por el usuario el mismo día; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. La versión se acuerda en la PR.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:30:00+01:00
-Última modificación: 2026-11-17T23:30:00+01:00
+Última modificación: 2026-11-17T23:40:00+01:00
 ---
 
 # Chat de sesión con Codex y Claude Code
@@ -180,8 +180,7 @@ hallazgos de la prueba manual.
   cada uno;
 - comprobaciones de «Comprobaciones y compuerta de "Hecha"» en verde;
 - PR integrada con la versión acordada;
-- ADR-0012 y ADR-0013 aceptadas, y la decisión visual aceptada tras la
-  previa.
+- la decisión visual, aceptada tras revisar la previa.
 
 ## Spike
 

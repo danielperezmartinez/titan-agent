@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-17T23:20:00+01:00
+Última modificación: 2026-11-17T23:40:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -378,11 +378,11 @@ opcional, sin cambiar `version`:
 ### Cómo se lanza el turno: ADR-0013 (2026-11-17)
 
 [[ADR-0013 Turnos de titan-team por el app-server de Codex|ADR-0013]]
-(Propuesta) sustituye los pasos 3, 4, 5 y 7 de «1.5 Un turno (`ask`)»: el
+(Aceptada el 2026-11-17) sustituye los pasos 3, 4, 5 y 7 de «1.5 Un turno (`ask`)»: el
 turno pasa a ejecutarse por el app-server de Codex en lugar de con
 `codex exec`, y se añade el evento `user_turn`. El resto de esta ADR no
-cambia. Mientras ADR-0013 no esté aceptada e implementada, rige lo de
-arriba.
+cambia. Hasta que se integre su implementación
+([[Tareas/Chat de sesión con Codex y Claude Code]]), rige lo de arriba.
 
 ## Alternativas consideradas
 

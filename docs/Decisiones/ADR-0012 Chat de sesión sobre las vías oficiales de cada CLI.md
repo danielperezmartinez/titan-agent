@@ -1,14 +1,14 @@
 ---
 Nombre: Chat de sesión sobre las vías oficiales de cada CLI
 Número: 12
-Estado: Propuesta
+Estado: Aceptada
 Resumen: 'La app muestra cada sesión como una conversación con un campo de texto (el mismo componente que «Nueva sesión») en lugar del terminal en crudo, y entrega lo que escribe el usuario por la vía oficial de cada CLI: en Codex, el app-server compartido (turn/start con el hilo libre, la cola oficial thread/queue/add con el hilo ocupado, aprobaciones, preguntas, diffs y plan en el chat); en Claude Code, `claude --resume <id> "<texto>"` en un PTY del daemon para enviar, la transcripción local para leer y hooks oficiales puestos al lanzar (`--settings`) para responder permisos, preguntas y planes. El terminal sigue para lo que solo existe en el TUI. Ningún texto lo genera la app.'
 Decisión: Chat de sesión sobre el app-server de Codex y, en Claude Code, sobre `claude --resume` en PTY, la transcripción local y hooks puestos al lanzar; con el rol del equipo ocupado, cola oficial; el terminal como respaldo.
 Consecuencias: Desaparece el «active writer» con titan-team solo si titan-team ejecuta sus turnos en el mismo app-server (ADR-0013). La lectura del chat de Claude depende de un formato interno que puede cambiar en cualquier versión (el chat lo detecta y ofrece el terminal). Riesgo residual de términos de Anthropic igual al de ADR-0002. Protocolo del daemon ampliado de forma compatible (ADR-0007).
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-17T23:15:00+01:00
-Última modificación: 2026-11-17T23:15:00+01:00
+Última modificación: 2026-11-17T23:40:00+01:00
 ---
 
 # ADR-0012 · Chat de sesión sobre las vías oficiales de cada CLI

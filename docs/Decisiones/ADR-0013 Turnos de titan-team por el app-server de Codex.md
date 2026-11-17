@@ -1,14 +1,14 @@
 ---
 Nombre: Turnos de titan-team por el app-server de Codex
 Número: 13
-Estado: Propuesta
+Estado: Aceptada
 Resumen: 'titan-team deja de lanzar `codex exec` y ejecuta cada turno con un cliente JSON-RPC propio contra el app-server de Codex: el daemon compartido si está en marcha (el mismo al que se conectan titan-agentd y el chat) o, si no, un `codex app-server` propio por stdio. Así el hilo de cada rol tiene un solo escritor y el usuario puede hablar con él desde el chat sin que el director reciba «active writer». Antes de cada turno detecta los turnos que el usuario tuvo con el rol, los registra (commit y evento `user_turn`) y se los cuenta al director. Sustituye solo cómo se lanza el turno en ADR-0010 (pasos 3 a 5 y 7 de 1.5); team.toml y events.jsonl no cambian salvo el tipo nuevo.'
 Decisión: titan-team ejecuta los turnos de los roles de Codex por el app-server (thread/start o thread/resume, turn/start y sus notificaciones) en lugar de con `codex exec`, y detecta y registra los turnos del usuario con el rol.
 Consecuencias: No hay que esperar a `codex exec --remote` (0.171) ni añadir dependencias, porque es la API que ya usa el daemon. Más código en titan-team (cliente, mapeo de notificaciones, esquema de salida, tiempo límite) y una API marcada como experimental que cambia entre versiones de Codex. Lo comprueban tests con un app-server falso.
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-17T23:20:00+01:00
-Última modificación: 2026-11-17T23:20:00+01:00
+Última modificación: 2026-11-17T23:40:00+01:00
 ---
 
 # ADR-0013 · Turnos de titan-team por el app-server de Codex
