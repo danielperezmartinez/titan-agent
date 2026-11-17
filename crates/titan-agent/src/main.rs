@@ -43,7 +43,8 @@ fn main() {
                     title: Some("titan-agent".into()),
                     ..Default::default()
                 }),
-                app_id: Some("titan-agent".into()),
+                // The id of the menu entry, so Plasma ties the window to it.
+                app_id: Some(titan_agent_core::update::APP_ID.into()),
                 ..Default::default()
             },
             |_, cx| cx.new(|cx| MainView::new(client, incoming, cx)),

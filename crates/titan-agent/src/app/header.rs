@@ -1,4 +1,5 @@
-//! Header bar: title, state counters, daemon status and notices.
+//! Header bar: title, state counters, daemon status, notices and the
+//! update notice `[^]` (drawn by `update_notice.rs`).
 
 use gpui::{ClickEvent, Context, FontWeight, Role, div, prelude::*, px};
 use titan_agent_core::session::StateCounts;
@@ -38,6 +39,8 @@ impl MainView {
                     .items_baseline()
                     .gap(px(8.))
                     .flex_grow_1()
+                    .flex_shrink_0()
+                    .whitespace_nowrap()
                     .child(
                         div()
                             .text_color(color(theme::INK))
@@ -82,6 +85,8 @@ impl MainView {
                     ))
                     .child(format!("[+] {} en espera", counts.waiting)),
             )
+            // `[^]`: only when there is something to say (ADR-0011 §6).
+            .children(self.update_notice(cx))
             .child(link("about", "[i]"))
             .child(
                 link("settings", "[*]")

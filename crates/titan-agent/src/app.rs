@@ -22,7 +22,7 @@ use gpui::{
 use titan_agent_core::launch::LaunchDefaults;
 use titan_agent_core::protocol::{
     AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, TeamTask, TerminalRef,
-    TranscriptResult, decode_bytes,
+    TranscriptResult, UpdateState, decode_bytes,
 };
 use titan_agent_core::quota::Quota;
 use titan_agent_core::session::{AgentCli, Session};
@@ -41,6 +41,7 @@ mod new_session;
 mod session_view;
 mod settings;
 mod thread_view;
+mod update_notice;
 mod widgets;
 
 use menu::Menu;
@@ -66,6 +67,10 @@ enum Pending {
     Open,
     Launch,
     Transcript(String),
+    /// An `update_*` request answered with the updater's status.
+    Update,
+    /// `update_apply`: on success the window reopens through the launcher.
+    UpdateApply,
 }
 
 pub struct MainView {
@@ -112,6 +117,8 @@ pub struct MainView {
     lane_window_s: i64,
     /// Window width, for views that place things in pixels.
     viewport_w: f32,
+    /// The updater of the daemon and the `[^]` notice.
+    update: update_notice::UpdateUi,
     _brief_events: Subscription,
 }
 
@@ -252,6 +259,7 @@ impl MainView {
             monitor_tab: MonitorTab::from_env(),
             lane_window_s: monitor::LANE_WINDOWS[0],
             viewport_w: 1440.,
+            update: update_notice::UpdateUi::new(),
             _brief_events: brief_events,
         }
     }
@@ -298,7 +306,17 @@ impl MainView {
 
     fn message(&mut self, message: ServerMessage, cx: &mut Context<Self>) {
         match message {
+            // The connection's own `hello` (id 1): the daemon's version.
+            ServerMessage::Result { id: 1, result } => {
+                if let Ok(hello) =
+                    serde_json::from_value::<titan_agent_core::protocol::HelloResult>(result)
+                {
+                    self.update_hello(hello.daemon, cx);
+                }
+            }
             ServerMessage::Result { id, result } => match self.pending.remove(&id) {
+                Some(Pending::Update) => self.update_answer(result),
+                Some(Pending::UpdateApply) => self.update_applied(cx),
                 Some(Pending::Attach(session)) => {
                     if let (Ok(answer), Some(view)) = (
                         serde_json::from_value::<AttachResult>(result),
@@ -348,6 +366,10 @@ impl MainView {
                         self.new.error = Some(error.message);
                     }
                     Some(Pending::Transcript(key)) => self.transcript_answer(&key, Err(error)),
+                    // Sessions started working since the status: ask.
+                    Some(Pending::UpdateApply) if error.code == "confirm_needed" => {
+                        self.update.confirm = true;
+                    }
                     _ => self.notice = Some((error.message, true)),
                 }
             }
@@ -393,6 +415,12 @@ impl MainView {
                 {
                     view.update(cx, |view, cx| view.feed(&bytes, cx));
                 }
+            }
+            ServerMessage::Event(Event::Update(status)) => {
+                if !matches!(status.state, UpdateState::Ready | UpdateState::Waiting) {
+                    self.update.confirm = false;
+                }
+                self.update.status = Some(status);
             }
             ServerMessage::Event(Event::TerminalClosed {
                 terminal,
@@ -457,7 +485,8 @@ impl MainView {
         } else if keystroke.key == "escape" && self.new.menu.is_some() {
             self.new.menu = None;
             cx.notify();
-        } else if keystroke.key == "escape" && self.cancel_take_control() {
+        } else if keystroke.key == "escape" && (self.cancel_take_control() || self.update_cancel())
+        {
             cx.notify();
         }
     }
