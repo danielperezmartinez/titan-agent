@@ -145,7 +145,9 @@ Ampliación compatible de
   `--dry-run`, no ejecuta ninguna, no crea el fichero y no lleva `checks`
   (o la lleva vacía).
 - **C3. `ask --gate`.** Antes de lanzar Codex ejecuta `project.gate_cmd` en
-  el worktree (shell, tope `test_timeout_s`) y añade al final del mensaje que
+  el worktree (shell, tope `test_timeout_s`; ya con `turn_started` escrito y
+  un `activity` `$ <orden>`, para que el monitor muestre la espera —ampliación
+  hecha tras los tests de Sol, que la siguen cumpliendo—) y añade al final del mensaje que
   recibe Codex por la entrada estándar el bloque
   `# Compuerta (exit <código>)` seguido de las últimas 150 líneas de su
   salida; lo guarda también en `NN-<rol>.gate.txt`. Que falle no impide el
@@ -203,7 +205,30 @@ hace `git rebase origin/main`, se sube la versión y se abre la PR.
 
 ## Carencias nuevas encontradas
 
-<Se rellena durante el trabajo.>
+Encontradas al hacer esta tarea con el equipo (v4 y, desde la revisión, v5):
+
+1. **Los datos de la demo dentro de un worktree se agrupan bajo el repo.**
+   `.claude/worktrees/` y `.agents/worktrees/` marcan la raíz del proyecto,
+   así que un `~/dev/titan-ssh` falso bajo `.previa/` salía como el proyecto
+   `titan-agent`. *Corregido en el kit*: los datos van fuera del repo.
+2. **Las capturas podían mostrar el nombre del usuario.** La línea «se
+   ejecutará» de nueva sesión imprime la carpeta absoluta, y con los datos
+   bajo `HOME` salía `/home/<usuario>/…`. *Corregido en el kit*: los datos
+   viven en `$XDG_RUNTIME_DIR`. *Propuesta para la app*: abreviar `HOME` como
+   `~` también en esa línea.
+3. **El hover depende de dónde esté el puntero.** La ventana se abre bajo el
+   puntero y una fila del árbol sale resaltada en algunas capturas; sin
+   simular entrada no se controla. *Propuesta*: que el evaluador visual lo
+   sepa (va en la skill) o una variable de la app que desactive el hover en
+   las capturas.
+4. **El revisor no ve la skill ni la bóveda** (`hidden_paths`), y en una
+   tarea sobre el propio equipo la skill es la mitad del cambio. *Propuesta*:
+   en esas tareas, copiar la skill al brief del revisor.
+5. **Cada encargo compila desde cero** (cada worktree tiene su `target/`):
+   las `checks` de Sol y el `--gate` del revisor pagan un build completo con
+   GPUI. *Propuesta*: medirlo en la 0.6.0 y, si pesa, un `CARGO_TARGET_DIR`
+   compartido por los encargos (sin compartirlo con el del director, para no
+   volver a la espera del bloqueo de Cargo de la 0.5.0).
 
 ## Verificación
 

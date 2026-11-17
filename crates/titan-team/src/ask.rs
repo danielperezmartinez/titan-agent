@@ -160,15 +160,8 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             ));
         }
     }
-    let mut gate = None;
-    if args.flag("--gate") {
-        if args.flag("--dry-run") {
-            prompt.push_str("\n\n# Compuerta\n\n(no se ejecuta en --dry-run)");
-        } else {
-            let block = checks::gate(team, &wt)?;
-            prompt.push_str(&format!("\n\n{block}"));
-            gate = Some(block);
-        }
+    if args.flag("--gate") && args.flag("--dry-run") {
+        prompt.push_str("\n\n# Compuerta\n\n(no se ejecuta en --dry-run)");
     }
 
     let n = state.history.len() as u32 + 1;
@@ -189,9 +182,6 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         )));
     }
     std::fs::create_dir_all(&dir).map_err(Failure::io)?;
-    if let Some(block) = &gate {
-        std::fs::write(file("gate.txt"), block).map_err(Failure::io)?;
-    }
 
     let turn = known.map_or(0, |r| r.turns) + 1;
     let log = EventLog::new(team, task);
@@ -219,6 +209,28 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         thread_id: thread_id.clone(),
         review_round: is_reviewer.then_some(round),
     })?;
+    // The gate runs once the turn is on the log, so the monitor shows what
+    // the role is waiting for (a whole build can take minutes). Nothing here
+    // may end the command: the turn is already open in the log.
+    if let Some(cmd) = team
+        .project
+        .gate_cmd
+        .as_deref()
+        .filter(|_| args.flag("--gate"))
+    {
+        if let Err(error) = log.append(EventKind::Activity {
+            role: role_name.clone(),
+            turn,
+            text: clip(&format!("$ {cmd}"), TEXT_LIMIT),
+        }) {
+            eprintln!("aviso: {}", error.message);
+        }
+        let block = checks::gate(team, cmd, &wt);
+        if let Err(error) = std::fs::write(file("gate.txt"), &block) {
+            eprintln!("aviso: no se pudo guardar la compuerta: {error}");
+        }
+        prompt.push_str(&format!("\n\n{block}"));
+    }
     let started = Instant::now();
     let outcome = codex::run(
         &program,

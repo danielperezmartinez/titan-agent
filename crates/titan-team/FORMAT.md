@@ -120,7 +120,8 @@ Se informa de **todos** a la vez, cada uno con `path` (p. ej.
 `ask <rol> <encargo>` es un turno de un rol de Codex, que continúa su hilo si
 ya tiene uno (`-m`/`-f` obligatorio entonces; `--new` empieza otro), ejecuta
 las `checks` del rol, hace commit de lo que escribió y avisa de rutas.
-`ask --gate` ejecuta antes `gate_cmd` y añade al mensaje `# Compuerta (exit N)`
+`ask --gate` ejecuta antes `gate_cmd` (ya dentro del turno, con un `activity`
+`$ <orden>`) y añade al mensaje `# Compuerta (exit N)`
 con sus últimas 150 líneas (también en `NN-<rol>.gate.txt`): sirve para un rol
 `read-only` que no puede ejecutarla. `ask --allow <patrón>` (repetible)
 autoriza esas rutas en ese turno: no avisan por `allowed_paths` ni

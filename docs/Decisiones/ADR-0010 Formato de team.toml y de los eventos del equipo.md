@@ -356,9 +356,10 @@ completo (C1–C5) está en la nota de la tarea; en resumen:
   queda en `NN-<rol>.checks.txt` y en `checks` del historial, cada fallo es
   un aviso `comprobación <nombre> falló (exit N)` y, con
   `checks_required`, el turno queda `status = "error"` y `ask` sale con 1.
-- `ask --gate`: ejecuta `gate_cmd` y añade `# Compuerta (exit N)` con sus
-  últimas 150 líneas al mensaje (y a `NN-<rol>.gate.txt`); sin `gate_cmd`,
-  exit 2 sin lanzar nada.
+- `ask --gate`: tras `turn_started` y un `activity` `$ <orden>`, ejecuta
+  `gate_cmd` y añade `# Compuerta (exit N)` con sus últimas 150 líneas al
+  mensaje (y a `NN-<rol>.gate.txt`); sin `gate_cmd`, exit 2 sin lanzar nada
+  ni escribir eventos.
 - `ask --allow <patrón>` (repetible): esas rutas no avisan en ese turno; el
   historial guarda `allowed`.
 

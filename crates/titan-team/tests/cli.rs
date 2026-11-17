@@ -1,7 +1,8 @@
 //! Own end-to-end tests of titan-team (the acceptance tests are in
 //! `phase3_acceptance.rs`): what must not run, the task lock, a turn that is
 //! recorded even when its commit fails, a thread open elsewhere, the
-//! director's session and `init`/`doc`. Fake Codex, temporary repo.
+//! director's session, `init`/`doc` and the gate inside the turn. Fake
+//! Codex, temporary repo.
 #![cfg(unix)]
 
 use std::fs;
@@ -279,4 +280,36 @@ fn init_gives_a_valid_team_and_doc_needs_none() {
         "mine",
         "init never overwrites a prompt"
     );
+}
+
+#[test]
+fn the_gate_runs_inside_the_turn_so_the_monitor_shows_it() {
+    let repo = Repo::new();
+    let team = TEAM.replace(
+        "autocommit = true",
+        "autocommit = true\ngate_cmd = \"echo gate-ran\"",
+    );
+    fs::write(repo.0.join(".agents/team.toml"), team).unwrap();
+    let out = repo.run(&["ask", "writer", "kite", "--gate"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let kinds: Vec<(String, String)> = repo
+        .events()
+        .iter()
+        .map(|e| {
+            let text = e["text"].as_str().unwrap_or_default().to_string();
+            (e["type"].as_str().unwrap().to_string(), text)
+        })
+        .collect();
+    let at = |kind: &str, text: &str| {
+        kinds
+            .iter()
+            .position(|(k, t)| k == kind && (text.is_empty() || t == text))
+            .unwrap_or_else(|| panic!("{kind} {text} in {kinds:?}"))
+    };
+    let started = at("turn_started", "");
+    let gate = at("activity", "$ echo gate-ran");
+    let finished = at("turn_finished", "");
+    assert!(started < gate && gate < finished, "{kinds:?}");
+    let saved = fs::read_to_string(repo.0.join(".agents/state/kite/01-writer.gate.txt")).unwrap();
+    assert_eq!(saved, "# Compuerta (exit 0)\n\ngate-ran");
 }

@@ -8,7 +8,6 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
-use crate::Failure;
 use crate::config::{Role, TeamConfig};
 use crate::process::{last_lines, run_shell};
 
@@ -90,23 +89,18 @@ pub fn summary(runs: &[CheckRun]) -> String {
         .join(" · ")
 }
 
-/// Runs `project.gate_cmd` in `worktree` and returns the block added to
-/// the role's message (`# Compuerta (exit N)` and its last lines).
-pub fn gate(team: &TeamConfig, worktree: &Path) -> Result<String, Failure> {
-    let cmd = team
-        .project
-        .gate_cmd
-        .as_deref()
-        .ok_or_else(|| Failure::usage("No hay project.gate_cmd configurado"))?;
+/// Runs the gate command `cmd` in `worktree` and returns the block added
+/// to the role's message (`# Compuerta (exit N)` and its last lines).
+pub fn gate(team: &TeamConfig, cmd: &str, worktree: &Path) -> String {
     let (exit, output) = run_shell(
         cmd,
         worktree,
         Duration::from_secs(team.project.test_timeout_s),
     );
-    Ok(format!(
+    format!(
         "# Compuerta (exit {exit})\n\n{}",
         last_lines(&output, GATE_LINES)
-    ))
+    )
 }
 
 #[cfg(test)]
