@@ -40,6 +40,12 @@ Numeración de la nota de la 0.5.0 (C = carencia) y el ajuste acordado:
 | C8. Un bucle de zsh capturó la vista equivocada | A4: `shot` recibe el nombre de la escena y fija él sus variables |
 | C9. El evaluador visual no prueba la interacción | A4: escenas por estado y lista de clics para el usuario |
 | C6. Avisos de `forbidden_paths` que no aportan | A5: `ask --allow <patrón>` |
+| C11. El traspaso al usuario no daba pasos ni resultado esperado | A4: «Prueba a mano» con pasos numerados y su resultado esperado |
+| C12. El daemon no registra las peticiones que recibe | A6: pendiente de la integración de la 0.5.0 (toca el daemon) |
+| C13. Los scripts de prueba dejaban vivo su daemon | A4: `shot`, `shots` y `probar` paran la demo al salir |
+
+C11–C13 salieron de la prueba manual de la 0.5.0 (nota de la ronda, rama
+`feat/v0.5-equipo-v4`) y las pasó la sesión de control el 2026-11-17.
 
 ## Diseño
 
@@ -100,9 +106,21 @@ repetitivas en muchos sitios con un patrón fijado.
   captura solo si KWin confirma que la ventana activa es la nuestra (PID,
   antes y después de capturar) y del tamaño esperado, y abre la ventana para
   que el usuario pruebe los clics.
+- `shot`, `shots` y `probar` arrancan la demo si no está en marcha y la
+  paran al salir (también con Ctrl+C, con `trap`); `probar` espera a que el
+  usuario cierre la ventana. Solo un `up` explícito la deja viva hasta
+  `down`.
 - La skill pide una escena por estado de la interfaz que cambie (incluidos
-  los largos) y, en la nota de la tarea, una **lista corta de clics** para
-  que el usuario pruebe la interacción.
+  los largos) y, en la nota de la tarea, una sección **«Prueba a mano»**:
+  qué se prueba, la orden y una lista numerada de pasos con el resultado
+  esperado de cada uno, que se le da al usuario tal cual.
+
+### A6. Registro de peticiones del daemon (pendiente)
+
+Que `titan-agentd` deje una línea por petición recibida (método, sesión y
+resultado; nunca el texto que se escribe en un terminal) en su log, para que
+una prueba deje rastro. Toca el daemon, que cambia la 0.5.0: se hace tras
+integrarla, antes de la PR, o pasa a una tarea propia si no cabe.
 
 ### A5. `ask --allow <patrón>`
 

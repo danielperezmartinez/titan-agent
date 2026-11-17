@@ -9,8 +9,13 @@
 #   ui <escena>         open the window in that scene (closes the previous one)
 #   shot <escena> [png] capture the scene; only if KWin confirms our window
 #   shots [escena...]   one capture per scene (all of them by default)
-#   probar [escena]     open the window for the user to click by hand
+#   probar [escena]     open the window for the user to click by hand and wait
+#                       until it is closed
 #   down                close the window, the daemon and the app-server
+#
+# shot, shots and probar start the demo themselves when it is not running
+# and then stop it on the way out (also on Ctrl+C): nothing stays alive.
+# Only an explicit `up` leaves it running, until `down`.
 #
 # Environment: TITAN_DEMO_DIR (invented data, default under
 # $XDG_RUNTIME_DIR, one per checkout), TITAN_DEMO_SHOTS
@@ -156,6 +161,15 @@ for (const w of ws) { if (w.pid === $1 && w.normalWindow) { workspace.activeWind
 const a = workspace.activeWindow; print(\"$2 pid \" + (a ? a.pid : -1));" "$2"
 }
 
+# Starts the demo for this command if it is not running, and stops it when
+# the command ends, however it ends.
+session() {
+  alive daemon && return 0
+  trap 'down >/dev/null' EXIT
+  trap 'exit 130' INT TERM HUP
+  up
+}
+
 shot() {
   [ $# -ge 1 ] && [ $# -le 2 ] || die "uso: demo.sh shot <escena> [fichero.png]"
   # A failed capture returns 1 instead of exiting, so shots goes on.
@@ -200,17 +214,20 @@ case "${1:-}" in
   down) down ;;
   escenas) for s in $SCENES; do printf '%-15s %s\n' "$s" "$(describe "$s")"; done ;;
   ui) shift; ui "$@"; echo "ventana abierta (PID $(cat "$RUN/ui.pid"))" ;;
-  shot) shift; shot "$@" ;;
+  shot) shift; session; shot "$@" ;;
   shots)
     shift
+    session
     failed=0
     for s in ${*:-$SCENES}; do shot "$s" || failed=1; done
     exit "$failed"
     ;;
   probar)
+    session
     ui "${2:-inicio}"
     echo "ventana abierta para probar a mano (PID $(cat "$RUN/ui.pid")); datos inventados."
-    echo "La lista de clics está en la nota de la tarea. Al terminar: demo.sh down"
+    echo "Sigue los pasos de la nota de la tarea. Al cerrar la ventana se para todo."
+    while alive ui; do sleep 1; done
     ;;
-  *) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
