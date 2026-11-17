@@ -271,11 +271,50 @@ control.
 
 ## Verificación
 
-<Se rellena al completar.>
+Rama `feat/equipo-v5` (subida a `origin`, sin PR hasta integrar la 0.5.0), en
+local el 2026-11-17:
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde: **123 tests** (112 en
+  `main`): 8 de aceptación de Sol (`equipo_v5_acceptance.rs`, commit
+  `ec5555e`, sin tocar desde entonces y en verde a la primera) y 3 propios
+  (validación de `checks`, resumen de comprobaciones y la compuerta dentro
+  del turno), más casos nuevos en el test de argumentos. Hooks de gitleaks
+  en cada commit y push.
+- La compuerta de `--gate` pasó en el worktree del revisor (exit 0).
+- Kit de demo: `demo.sh shots` capturó `inicio`, `terminal`, `nueva`,
+  `nueva-menu`, `ajustes`, `grafo`, `carriles`, `mesa` (1440×900, PID
+  comprobado, sin datos del entorno en la imagen) y, tras salir, no queda
+  ningún proceso de la demo. Las escenas de hilo se comprueban tras el
+  rebase sobre la 0.5.0.
+- `mover-lineas.sh`: probado con rango válido, inserción, destino nuevo,
+  rango fuera del fichero, el mismo fichero por enlace duro y simbólico, y
+  un origen sin salto final (se niega sin crear nada).
+- **Pendiente**: rebase sobre la 0.5.0, A6, la versión que acuerde el
+  usuario, `docs/README.md` (Propósito → Equipo), PR, CI e integración.
 
 ## Métricas
 
-Inicio: 2026-11-17 14:45.
+- **Tiempo**: de 14:45 a 15:17 del 2026-11-17 (unos **32 min**) hasta la
+  rama lista para el rebase, sin paradas por límites de uso ni esperas al
+  usuario. Queda la espera a la integración de la 0.5.0.
+- **Uso de Claude** (transcript, Opus 5.5) hasta aquí: 123 respuestas y 142
+  llamadas a herramientas, unos **122 k tokens de salida, 298 k de escritura
+  en caché y 27,8 M de lectura de caché**. Sin subagentes (no hay interfaz
+  nueva que evaluar).
+- **Codex**: 2 llamadas, 1,05 M de entrada (0,95 M en caché) y 13 k de salida.
+
+  | Encargo | Rol | Entrada (caché) | Salida | Tiempo |
+  | --- | --- | --- | --- | --- |
+  | `equipo-v5` | Sol, tests | 72 k (60 k) | 7,0 k | 168 s |
+  | `equipo-v5-revision` | Sol, revisión high con `--gate` | 976 k (891 k) | 6,0 k | 165 s (+ unos 8 min de compuerta en frío) |
+
+- **Luna**: no se usó; no hubo ediciones repetitivas.
+- **Hallazgos**: Sol, 3 mayores y 3 menores (5 aceptados y 1 descartado) y
+  una pregunta.
+- **Comparado con la 0.5.0**: Sol cubrió los cinco apartados a la primera,
+  sin segunda llamada por formato ni por firmas (C1–C3 de la 0.5.0 no se
+  repitieron).
 
 ## Resultado
 
