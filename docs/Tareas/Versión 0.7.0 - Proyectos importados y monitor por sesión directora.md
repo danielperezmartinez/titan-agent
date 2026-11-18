@@ -334,6 +334,34 @@ impl Drafts {
 
 Firmas completas y formato de los eventos: especificación del encargo `v07a` (fuera del repo); los tests van en `crates/titan-agent-core/tests/director_acceptance.rs`, `crates/titan-agent/tests/conversation_acceptance.rs` y `crates/titan-agent/tests/composer_acceptance.rs`.
 
+## PR A · Criterios visuales (evaluador)
+
+Frente a `design/preview/Conversacion.dc.html` (estado 1, borrador) y
+`design/preview/Proyectos.dc.html` (estado 2, monitor desde la directora), y
+las decisiones visuales de la conversación y de la ventana. No se cambian para
+que el resultado pase.
+
+1. **Borrador**: barra superior `[+] Nueva sesión en [#] proyecto` con
+   `[esc] cerrar` a la derecha; zona vacía «la conversación empieza aquí» en
+   `mute`; abajo, en este orden, los chips de ajustes, la línea del comando
+   exacto (`$ …` en `mute`) y el campo; nada centrado en mitad de la pantalla
+   como el cuadro antiguo.
+2. **Campo**: fondo `surface`, borde `hairline` (`accent` con el foco), radio
+   4 px; texto de varias líneas con la lista «- » alineada; ayuda en `stone`
+   «enter lanzar · shift+enter nueva línea · «- » lista»; crece con el texto
+   sin pasar de 8 líneas.
+3. **Barra de sesión**: nombre en `ink` negrita, estado con su color, agente y
+   modelo con el color del agente, carpeta en `mute`; a la derecha `[m]
+   monitor` (solo en una directora) y `[t] terminal`, con el activo resaltado
+   (borde `accent`); misma altura que la barra del monitor.
+4. **Monitor desde la directora**: miga `[#] proyecto › directora`; con dos
+   encargos, selector `encargo nombre [v]` (y su menú en
+   `surface-elevated`/`hairline-strong`); `[<] conversación` para volver; las
+   tres vistas sin cambios.
+5. **Árbol**: `[*]` en `success` junto al nombre de cada sesión directora (dos
+   directoras en el mismo proyecto → dos `[*]`), y ya no en la cabecera del
+   proyecto; ninguna fila se rompe a 1000 px de ancho.
+
 ## Criterios de finalización
 
 **PR A**:
