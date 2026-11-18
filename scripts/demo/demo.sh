@@ -158,6 +158,15 @@ down() {
   echo "demo parada"
 }
 
+# Drops the TITAN_AGENT_* variables inherited from the caller's shell, so a
+# variable left over from a hand test never changes a scene (the daemon's
+# TITAN_AGENTD_* are set explicitly where they are used).
+clean_env() {
+  for var in $(env | sed -n 's/^\(TITAN_AGENT_[A-Za-z0-9_]*\)=.*/\1/p'); do
+    unset "$var"
+  done
+}
+
 ui() {
   [ $# -eq 1 ] || die "uso: demo.sh ui <escena>"
   describe "$1" >/dev/null || die "escena desconocida: $1 (demo.sh escenas)"
@@ -166,6 +175,9 @@ ui() {
   stop ui
   (
     display_env
+    clean_env
+    # shot turns the hover styles off (NOHOVER), probar keeps them.
+    [ -z "${NOHOVER:-}" ] || export TITAN_AGENT_DEMO_NO_HOVER=1
     export TITAN_AGENT_DEMO_SIZE="$SIZE"
     scene_env "$1"
     export HOME="$DIR/home" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENT_CONFIG_DIR="$DIR/config"
@@ -215,13 +227,13 @@ shot() {
   miss() { echo "demo: $*" >&2; return 1; }
   out=${2:-$SHOTS/$1.png}
   # The size the scene asks for (scene_env runs in a subshell: no leak).
-  want=$(TITAN_AGENT_DEMO_SIZE="$SIZE"; scene_env "$1"; printf %s "$TITAN_AGENT_DEMO_SIZE")
+  want=$(clean_env; TITAN_AGENT_DEMO_SIZE="$SIZE"; scene_env "$1"; printf %s "$TITAN_AGENT_DEMO_SIZE")
   mkdir -p "$(dirname "$out")"
   # An old capture with this name must not survive a failed one.
   rm -f "$out"
   # The window opens under the pointer: without hover styles a capture does
   # not depend on where it was left (probar keeps them, for the user).
-  export TITAN_AGENT_DEMO_NO_HOVER=1
+  NOHOVER=1
   ui "$1"
   sleep "$WAIT"
   display_env

@@ -10,7 +10,9 @@
 # A task that changes titan-team itself pins one first, so the director
 # never drives the team with the half-done tool it is writing.
 #
-#   bin/team pin [REV]   build titan-team from REV (default main) and pin it
+#   bin/team pin [REV]   build titan-team from REV and pin it (default
+#                        origin/main, or main when there is no origin/main:
+#                        a stale local main pinned an old tool in the 0.6.1)
 #   bin/team unpin       go back to building from this checkout
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
@@ -19,7 +21,13 @@ pinned="$root/.agents/team-bin"
 die() { echo "bin/team: $1" >&2; exit "${2:-2}"; }
 
 pin() {
-  rev=${1:-main}
+  if [ $# -ge 1 ]; then
+    rev=$1
+  elif git -C "$root" rev-parse --quiet --verify "origin/main^{commit}" >/dev/null 2>&1; then
+    rev=origin/main
+  else
+    rev=main
+  fi
   sha=$(git -C "$root" rev-parse --quiet --verify "$rev^{commit}" 2>/dev/null) ||
     die "revisión desconocida: $rev"
   src=$(mktemp -d "${TMPDIR:-/tmp}/titan-team-pin.XXXXXX")
