@@ -45,7 +45,7 @@ Implementa cada parte con **sus propios tests** (unitarios o de integración pro
 **Luna (`mecanico`) solo para ediciones repetitivas** con un patrón ya fijado en muchos sitios, o investigar una API en paralelo mientras implementas. **Nunca la interfaz** ni nada que exija decidir. Si no hay trabajo así, no se usa. Su turno pasa la compuerta (`checks = ["fmt", "gate"]` con `checks_required`): si no pasa, el turno sale como fallido (exit 1) y lees su `.checks.txt`. Si el encargo la autoriza a tocar una ruta de su `forbidden_paths`, dilo con `--allow <patrón>` en ese `ask` (sin avisos que no aportan). Su sandbox no abre PTY: si dice «tests bloqueados por el sandbox», no es un fallo; lo que cuenta es la compuerta de titan-team, que corre fuera.
 
 ## 4. Revisión única (Sol, high, contexto limpio)
-Una sola ronda (`max_review_rounds = 1`), en un **hilo nuevo** que solo ve la especificación, el diff y la compuerta:
+Una sola ronda (`max_review_rounds = 1`), en un **hilo nuevo** que solo ve la especificación, el diff y la compuerta. **Antes, tu propia compuerta en verde** (fmt, clippy y tests) sobre el commit que le pasas: un fallo que ya podías ver gasta su única ronda en un bloqueante.
 ```
 bin/team new <id>-revision --brief <especificación> --base <commit base de la fase>
 git -C .agents/worktrees/<id>-revision merge --ff-only <tu rama>

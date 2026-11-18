@@ -226,10 +226,12 @@ shot() {
   sleep "$WAIT"
   display_env
   pid=$(cat "$RUN/ui.pid")
-  alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró ($DIR/ui.log)"; return 1; }
+  alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
   tag="titandemo$$"
   got=$(focus "$pid" "$tag")
   if [ "$got" != "$pid" ]; then
+    # A window that died (a panic) also loses the focus: say which.
+    alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
     stop ui
     miss "SIN CAPTURA de $1: la ventana activa es el PID '$got', no la nuestra ($pid)"
     return 1
@@ -239,9 +241,12 @@ shot() {
   # Checked again after capturing: if another window took the focus in
   # between, the file may show it and is deleted.
   after=$(active_pid "${tag}b")
+  closed=0
+  alive ui || closed=1
   stop ui
   if [ "$after" != "$pid" ]; then
     rm -f "$out"
+    [ "$closed" = 0 ] || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
     miss "SIN CAPTURA de $1: el foco pasó al PID '$after' durante la captura"
     return 1
   fi
