@@ -2,10 +2,10 @@
 Nombre: Equipo v6
 Estado: En curso
 Resumen: 'Corrige las carencias del equipo v5 anotadas en la 0.6.0 (incluidas las 7–9 del diseño de la 0.7.0): git de una orden por llamada y mensajes por fichero (ask --message-file, mensaje vacío rechazado), rutas en el contrato, titan-team --version y un binario fijado (bin/team pin) para las tareas sobre el propio equipo, kit de demo con tamaño de ventana, guion de teclas, flujos reales y projects.json, Luna sin dar por fallido un turno por el sandbox, y la lógica de interacción en modelos puros con tests. Deja la configuración v6 como la vigente.'
-Decisiones: 'Encargo de la sesión de control control-3b (2026-11-18). Versión: patch 0.6.x, a acordar con el usuario.'
+Decisiones: 'Encargo de la sesión de control control-3b (2026-11-18). Versión 0.6.1 (patch), acordada con el usuario el 2026-11-18. Revisión de Sol: 3 hallazgos aceptados (uno ya corregido).'
 Bloqueada: []
 Fecha de creación: 2026-11-18T00:10:00+01:00
-Última modificación: 2026-11-18T00:10:00+01:00
+Última modificación: 2026-11-18T01:10:00+01:00
 ---
 
 # Equipo v6
@@ -260,6 +260,92 @@ el error en stderr y sale con 2 sin abrir la ventana; las teclas empiezan
 - fmt, clippy `-D warnings`, tests y gitleaks en verde; PR integrada por
   squash con la versión acordada con el usuario.
 
+## Revisión de Sol (high, con `--gate`)
+
+Hilo nuevo (`equipo-v6-revision`) sobre el commit `fff7f6a`, con la
+especificación, la skill tras el cambio y la compuerta. Dirigido con titan-team fijado en `origin/main`
+(`bin/team pin`), como pide ya la skill. Veredicto `changes_requested`:
+
+| Hallazgo | Severidad | Decisión |
+| --- | --- | --- |
+| La compuerta falla: clippy pide `matches!` en `demo.rs` | bloqueante | Aceptado; ya corregido en `0e12473` (el director lanzó la revisión antes de pasar clippy: carencia 3) |
+| `TITAN_TEAM_BIN` con un nombre sin barra se comprueba en la carpeta actual pero `exec` lo busca en `PATH` | mayor | Aceptado: se ejecuta como `./<nombre>`; test propio en `crates/titan-team/tests/cli.rs` |
+| `pin` de una revisión anterior a la v6 no imprime `titan-team <versión>` | menor | Aceptado: la lee del `Cargo.toml` del árbol extraído |
+
 ## Verificación
 
+Rama `feat/equipo-v6`, en local el 2026-11-18:
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde: **189 tests** (179 en
+  `main`): 8 de aceptación de Sol (`equipo_v6_acceptance.rs` y
+  `demo_acceptance.rs`, commit `c70176b`, en verde a la primera y sin tocar
+  desde entonces) y 2 propios (casos del guion de teclas en `demo.rs` y
+  `TITAN_TEAM_BIN` sin barra en `cli.rs`), más casos nuevos en el test de
+  argumentos de titan-team (`-V`, `--message-file`). Hooks de gitleaks en
+  cada commit.
+- `bin/team pin main`, `pin origin/main`, `pin HEAD` (unos 6 s con la
+  carpeta del equipo caliente), `pin` de una revisión inexistente (salida 2,
+  sin carpeta) y `unpin`, a mano.
+- Kit de demo (`demo.sh shots`, PID comprobado, sin datos del entorno):
+  `nueva-teclas` (el guion escribe el encargo con acentos y una lista),
+  `act-estrecho` (1000x800, el aviso corto `[^] actualizar` que la 0.6.0 no
+  pudo capturar) e `inicio`. Un guion inválido cierra la ventana y `shot`
+  lo dice con el error. No queda ningún proceso de la demo al salir.
+- `demo.sh flujos` lista `actualizacion.sh`.
+- Versión **0.6.1** (patch, acordada con el usuario el 2026-11-18).
+- Pendiente: push, PR e integración, con autorización del usuario.
+
+## Métricas
+
+- **Tiempo**: de 00:04 a 01:10 del 2026-11-18, con una parada de **31 min**
+  por el límite de uso de Claude (00:13–00:44): unos **35 min** de trabajo.
+  Espera al usuario: la pregunta de versión.
+- **Uso de Claude** (transcript, Opus 5.5) hasta el cierre de la nota: unas
+  90 respuestas y 100 llamadas a herramientas, unos **65 k tokens de
+  salida, 0,2 M de escritura en caché y 14,6 M de lectura de caché**. Sin
+  subagentes: lo visual se limita a dos variables de demo, comprobadas con
+  capturas por el director.
+- **Codex**: 2 llamadas, 0,74 M de entrada (0,63 M en caché) y 10,8 k de
+  salida.
+
+  | Encargo | Rol | Entrada (caché) | Salida | Tiempo |
+  | --- | --- | --- | --- | --- |
+  | `equipo-v6` | Sol, tests | 197 k (162 k) | 6,8 k | 153 s (141 s de sus `checks`) |
+  | `equipo-v6-revision` | Sol, revisión high con `--gate` | 545 k (468 k) | 3,9 k | 131 s |
+
+- **Luna**: no se usó; no hubo ediciones repetitivas.
+- **Hallazgos**: Sol, 1 bloqueante, 1 mayor y 1 menor, todos aceptados.
+
+## Carencias nuevas encontradas
+
+1. **El director lanzó la revisión sin pasar clippy**, y Sol gastó su única
+   ronda en un bloqueante que ya se veía. *Corregido en la skill*: la
+   compuerta propia en verde antes del paso 4.
+2. **`shot` atribuía un panic de la ventana a otra ventana con el foco**
+   («el foco pasó a firefox»): al cerrarse la app, el foco pasa a otra.
+   *Corregido en el kit*: si la ventana ya no vive, dice «la ventana se
+   cerró» con las últimas líneas de `ui.log`. (El panic era del primer
+   intento del guion de teclas, que despachaba dentro de `window.update` y
+   reentraba en la vista; se despacha con `update_window`.)
+3. **El `main` local estaba atrasado** (`bin/team pin main` fijó una
+   revisión vieja). La skill ya dice `git fetch origin` y
+   `bin/team pin origin/main`. *Propuesta*: que `pin` sin revisión use
+   `origin/main` si existe.
+4. **Las variables `TITAN_AGENT_*` del entorno de quien llama pasan a las
+   escenas** (salvo el tamaño, que fija `ui`). Útil para probar un guion a
+   mano, pero una variable olvidada cambia todas las capturas.
+   *Propuesta*: que `ui` limpie las `TITAN_AGENT_*` heredadas antes de
+   `scene_env`.
+
 ## Resultado
+
+Configuración v6 vigente (sección «Configuración v6»), con A1–A6 en la
+rama `feat/equipo-v6`: titan-team `--version`, `--message-file` y mensaje
+vacío rechazado; `bin/team pin`/`unpin` y `TITAN_TEAM_BIN`; las variables
+de demo `TITAN_AGENT_DEMO_SIZE` y `TITAN_AGENT_DEMO_KEYS` en la app (con
+`titan_agent::demo`); escenas, `flujos` y `projects.json` en el kit; la
+skill, los prompts de Luna y del revisor y `team.toml` de la v6. La hará
+servir [[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]].
+Falta publicar la PR (0.6.1) con autorización del usuario; hasta entonces
+la tarea sigue `En curso`.
