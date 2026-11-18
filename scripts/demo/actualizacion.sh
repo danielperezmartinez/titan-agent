@@ -81,10 +81,10 @@ preparar() {
   publish bien
   echo "4/4 instalando $current en $DATA…"
   stop daemon
-  rm -rf "$DATA" "$DIR/home"
+  rm -rf "$DATA" "$DIR/casa"
   python3 -I "$KIT/datos.py" "$TITAN_DEMO_DIR" >/dev/null
   tmp=$(mktemp -d) && tar -xzf "$DIR/pkg-actual/titan-agent-$current-linux-x86_64.tar.gz" -C "$tmp"
-  HOME="$TITAN_DEMO_DIR/home" XDG_DATA_HOME="$DATA" "$tmp/titan-agent-$current-linux-x86_64/install.sh" >/dev/null
+  HOME="$TITAN_DEMO_DIR/casa" XDG_DATA_HOME="$DATA" "$tmp/titan-agent-$current-linux-x86_64/install.sh" >/dev/null
   rm -rf "$tmp"
   echo "listo: $current instalado; el servidor ofrece $next (abre con: $0 abrir)"
 }
@@ -105,7 +105,7 @@ abrir() {
   echo "abriendo titan-agent instalado ($(readlink "$INSTALL/current")); servidor en 127.0.0.1:$PORT"
   # The daemon is started by the window with this environment and stays
   # alive after it closes (that is when it applies); `down` stops it.
-  WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" HOME="$TITAN_DEMO_DIR/home" XDG_DATA_HOME="$DATA" \
+  WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" HOME="$TITAN_DEMO_DIR/casa" XDG_DATA_HOME="$DATA" \
     TITAN_AGENT_CONFIG_DIR="$DIR/config" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" \
     TITAN_AGENTD_CLAUDE="$KIT/bin/claude" TITAN_AGENTD_CODEX="$KIT/bin/codex" TITAN_AGENTD_POLL_MS=1000 \
     TITAN_AGENT_UPDATE_URL="http://127.0.0.1:$PORT/releases" \

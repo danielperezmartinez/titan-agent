@@ -40,6 +40,7 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
 | `test_cmd` | texto | — | Orden de tests (`titan-team test`, `ask --test`, comprobación `test`). |
 | `fmt_cmd` | texto | — | Formatea el worktree en el sitio (comprobación `fmt`), p. ej. `cargo fmt --all`. |
 | `gate_cmd` | texto | — | Compuerta completa: formato, lints y tests (comprobación `gate`, `ask --gate`). |
+| `build_cmd` | texto | — | Compila sin ejecutar, tests incluidos (comprobación `build`), p. ej. `cargo test --workspace --no-run`. |
 | `test_timeout_s` | entero > 0 | `300` | Tope de los tests, en segundos. |
 | `autocommit` | booleano | `false` | Commit tras cada turno de un rol que escribe. |
 | `hidden_paths` | lista de patrones | `[]` | Lo que no se copia al worktree (sparse checkout); sigue en la rama. |
@@ -73,8 +74,9 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
 | `output_schema` | ruta a un esquema JSON | no | — |
 | `allowed_paths` | lista de patrones | no | `[]` (aviso si el rol escribe fuera) |
 | `forbidden_paths` | lista de patrones | no | `[]` (aviso si escribe dentro) |
-| `checks` | lista de `"fmt"` · `"test"` · `"gate"` | no | `[]` (solo con `sandbox = "workspace-write"`) |
-| `checks_required` | booleano | no | `false` (si una comprobación falla, el turno falla) |
+| `checks` | lista de `"fmt"` · `"test"` · `"gate"` · `"build"` | no | `[]` (solo con `sandbox = "workspace-write"`) |
+| `checks_required` | booleano o lista de comprobaciones de `checks` | no | `false` (cuáles hacen fallar el turno si fallan) |
+| `brief_sections` | lista de textos no vacíos | no | `[]` (títulos que el encargo debe tener antes del primer turno del rol) |
 | `config` | lista de `clave=valor` | no | `[]` (tras las de `[codex]`) |
 | `timeout_s` | entero > 0 | no | `900` |
 | `purpose` | texto | no | `""` |
@@ -92,8 +94,20 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
   `<encargo>/NN-<rol>.checks.txt` y en `checks` del historial; cada una que
   falla añade el aviso `comprobación <nombre> falló (exit N)`. Con
   `checks_required = true`, si alguna falla el turno queda `status = "error"`
-  y `ask` sale con 1 (el commit se hace igual). Un turno que no acaba `ok` no
-  ejecuta ninguna.
+  y `ask` sale con 1 (el commit se hace igual); con una lista (p. ej.
+  `["build"]`), solo las de la lista lo hacen fallar y las demás solo avisan.
+  Un turno que no acaba `ok` no ejecuta ninguna.
+- `build`: para el rol que escribe los tests antes de la implementación. Sus
+  tests fallan al ejecutarse (`test`), pero deben compilar contra el
+  esqueleto que deja el director: `checks_required = ["build"]` deja en rojo
+  el turno que no compila (también por un lint denegado, que rustc no
+  comprueba mientras haya errores de resolución).
+- `brief_sections`: antes de abrir el hilo del rol (su primer turno o
+  `--new`), `ask` busca cada sección en los títulos Markdown del encargo
+  (`#` a `######` y un espacio, con hasta 3 espacios delante; fuera de los
+  bloques de código cercados): el título debe contenerla, sin distinguir
+  mayúsculas. Si falta alguna, sale con 2 nombrándolas, sin lanzar Codex ni
+  escribir eventos ni historial. Al continuar un hilo no se comprueba.
 - `hidden_paths`: patrones de `git sparse-checkout` (`/AGENTS.md` es el de la
   raíz; `/docs/`, la carpeta entera).
 

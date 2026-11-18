@@ -258,7 +258,11 @@ enlazan en vez de repetirla.
   subir la versión y sin despliegue.
 - **Publicar una versión** (desde la 0.6.0): se lanza el workflow «Publicar
   versión» (`.github/workflows/release.yml`) sobre `main`, solo con
-  autorización del usuario para esa versión. El workflow comprueba la versión
+  autorización del usuario para esa versión, **cuando el CI de `main` sobre
+  el commit integrado ha terminado en verde** (`gh run list --branch main
+  --commit <sha>`; desde la 0.7.2 el workflow espera hasta 40 min a un CI que
+  aún corre, pero lanzarlo antes gasta una ejecución y, si el CI falla, el
+  usuario recibe el correo del fallo). El workflow comprueba la versión
   y el CI, compila, firma y crea él mismo la etiqueta y la Release en GitHub
   Releases. **Etiquetas solo `v0.x.y` y solo por ese workflow**: nadie crea,
   mueve ni borra etiquetas a mano. Formatos, firma, instalación y
@@ -415,7 +419,7 @@ ventana.
   implementa, Sol escribe los tests de aceptación y revisa, Luna solo para
   ediciones repetitivas). Ver
   [[Decisiones/ADR-0005 Herramienta del equipo en Rust dentro de titan-agent]];
-  la configuración vigente es la de [[Tareas/Equipo v6]].
+  la configuración vigente es la de [[Tareas/Equipo v7]].
 - **Remoto**: más adelante, desde Android a través de titan-ssh.
 
 Plan de construcción por fases:

@@ -40,6 +40,8 @@ pub struct Project {
     pub fmt_cmd: Option<String>,
     /// The whole gate: format, lints and tests (check `gate`, `ask --gate`).
     pub gate_cmd: Option<String>,
+    /// Builds without running, tests included (check `build`).
+    pub build_cmd: Option<String>,
     pub test_timeout_s: u64,
     pub autocommit: bool,
     pub hidden_paths: Vec<String>,
@@ -72,8 +74,12 @@ pub struct Role {
     /// Commands run in the worktree after an `ok` turn, in this order:
     /// names of [`CHECKS`].
     pub checks: Vec<String>,
-    /// A failed check makes the turn fail.
-    pub checks_required: bool,
+    /// The checks whose failure makes the turn fail: all of `checks` for
+    /// `checks_required = true`, none for `false`, or the listed ones.
+    pub checks_required: Vec<String>,
+    /// Headings the task's brief must have before the role's first turn
+    /// (`ask` refuses to open its thread otherwise).
+    pub brief_sections: Vec<String>,
     pub config: Vec<String>,
     pub timeout_s: u64,
     pub purpose: String,
@@ -88,7 +94,7 @@ const TOP_KEYS: [&str; 7] = [
     "flow",
     "roles",
 ];
-const PROJECT_KEYS: [&str; 11] = [
+const PROJECT_KEYS: [&str; 12] = [
     "repo",
     "base",
     "worktrees_dir",
@@ -96,6 +102,7 @@ const PROJECT_KEYS: [&str; 11] = [
     "test_cmd",
     "fmt_cmd",
     "gate_cmd",
+    "build_cmd",
     "test_timeout_s",
     "autocommit",
     "hidden_paths",
@@ -103,7 +110,7 @@ const PROJECT_KEYS: [&str; 11] = [
 ];
 const CODEX_KEYS: [&str; 1] = ["config"];
 const FLOW_KEYS: [&str; 4] = ["steps", "review_role", "fix_role", "max_review_rounds"];
-const ROLE_KEYS: [&str; 14] = [
+const ROLE_KEYS: [&str; 15] = [
     "cli",
     "model",
     "effort",
@@ -115,6 +122,7 @@ const ROLE_KEYS: [&str; 14] = [
     "forbidden_paths",
     "checks",
     "checks_required",
+    "brief_sections",
     "config",
     "timeout_s",
     "purpose",
@@ -124,7 +132,7 @@ pub const EFFORTS: [&str; 5] = ["minimal", "low", "medium", "high", "xhigh"];
 pub const SANDBOXES: [&str; 2] = ["read-only", "workspace-write"];
 /// Checks a role can run after its turn, each the `[project]` command
 /// `<name>_cmd`.
-pub const CHECKS: [&str; 3] = ["fmt", "test", "gate"];
+pub const CHECKS: [&str; 4] = ["fmt", "test", "gate", "build"];
 
 impl Project {
     /// The command of a check of [`CHECKS`], if the project sets it.
@@ -133,6 +141,7 @@ impl Project {
             "fmt" => self.fmt_cmd.as_deref(),
             "test" => self.test_cmd.as_deref(),
             "gate" => self.gate_cmd.as_deref(),
+            "build" => self.build_cmd.as_deref(),
             _ => None,
         }
     }
@@ -282,6 +291,7 @@ pub fn parse(text: &str, base: &Path) -> Result<TeamConfig, Vec<ConfigError>> {
         test_cmd: c.text(project_table, p, "test_cmd", false),
         fmt_cmd: c.text(project_table, p, "fmt_cmd", false),
         gate_cmd: c.text(project_table, p, "gate_cmd", false),
+        build_cmd: c.text(project_table, p, "build_cmd", false),
         test_timeout_s: c
             .positive(project_table, p, "test_timeout_s")
             .unwrap_or(300),
@@ -621,6 +631,49 @@ impl Checker {
             .collect()
     }
 
+    /// `checks_required`: a boolean (all of `checks` or none) or a list of
+    /// names that must be in `checks`.
+    fn required_checks(&mut self, table: &Table, prefix: &str, checks: &[String]) -> Vec<String> {
+        let path = join(prefix, "checks_required");
+        match table.get("checks_required") {
+            None | Some(Value::Boolean(false)) => Vec::new(),
+            Some(Value::Boolean(true)) => checks.to_vec(),
+            Some(Value::Array(_)) => {
+                let listed = self.list(table, prefix, "checks_required");
+                let unknown: Vec<&str> = listed
+                    .iter()
+                    .filter(|name| !checks.contains(name))
+                    .map(String::as_str)
+                    .collect();
+                if !unknown.is_empty() {
+                    self.error(
+                        &path,
+                        "unknown_value",
+                        &format!("no están en checks: {}", unknown.join(", ")),
+                    );
+                }
+                listed
+            }
+            Some(other) => {
+                self.bad_type(&path, "un booleano o una lista de comprobaciones", other);
+                Vec::new()
+            }
+        }
+    }
+
+    /// A list of non-empty texts.
+    fn sections(&mut self, table: &Table, prefix: &str, key: &str) -> Vec<String> {
+        let list = self.list(table, prefix, key);
+        if list.iter().any(|item| item.trim().is_empty()) {
+            self.error(
+                &join(prefix, key),
+                "bad_type",
+                "ninguna sección puede estar vacía",
+            );
+        }
+        list
+    }
+
     fn role(&mut self, name: &str, table: &Table) -> Role {
         let p = format!("roles.{name}");
         self.unknown_keys(table, &p, &ROLE_KEYS);
@@ -669,8 +722,9 @@ impl Checker {
             output_schema: self.file(table, &p, "output_schema"),
             allowed_paths: self.list(table, &p, "allowed_paths"),
             forbidden_paths: self.list(table, &p, "forbidden_paths"),
+            checks_required: self.required_checks(table, &p, &checks),
+            brief_sections: self.sections(table, &p, "brief_sections"),
             checks,
-            checks_required: self.boolean(table, &p, "checks_required").unwrap_or(false),
             config: self.pairs(table, &p, "config"),
             timeout_s: self.positive(table, &p, "timeout_s").unwrap_or(900),
             purpose: self.text(table, &p, "purpose", false).unwrap_or_default(),
@@ -680,109 +734,4 @@ impl Checker {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn errors(text: &str) -> Vec<(String, &'static str)> {
-        parse(text, Path::new("/nonexistent"))
-            .err()
-            .unwrap_or_default()
-            .into_iter()
-            .map(|e| (e.path, e.code))
-            .collect()
-    }
-
-    #[test]
-    fn checks_need_a_writing_role_and_their_commands() {
-        let found = errors(
-            "version = 1\nname = \"x\"\n[project]\ntest_cmd = \"t\"\n\
-             [roles.w]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nsandbox = \"workspace-write\"\n\
-             checks = [\"fmt\", \"lint\", \"test\"]\nchecks_required = \"yes\"\n\
-             [roles.r]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nchecks = [\"gate\"]\n",
-        );
-        assert_eq!(
-            found,
-            [
-                ("roles.w.checks".to_string(), "unknown_value"),
-                ("roles.w.checks_required".to_string(), "bad_type"),
-                ("roles.r.checks".to_string(), "unknown_value"),
-                ("project.fmt_cmd".to_string(), "missing_key"),
-                ("project.gate_cmd".to_string(), "missing_key"),
-            ]
-        );
-        let team = parse(
-            "version = 1\nname = \"x\"\n[project]\nfmt_cmd = \"f\"\ngate_cmd = \"g\"\n\
-             [roles.w]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nsandbox = \"workspace-write\"\n\
-             checks = [\"gate\", \"fmt\"]\nchecks_required = true\n",
-            Path::new("/nonexistent"),
-        )
-        .unwrap();
-        let role = team.role("w").unwrap();
-        assert_eq!(role.checks, ["gate", "fmt"]);
-        assert!(role.checks_required);
-        assert_eq!(team.project.check_cmd("gate"), Some("g"));
-        assert_eq!(team.project.check_cmd("test"), None);
-    }
-
-    #[test]
-    fn roles_keep_file_order_and_the_first_claude_role_directs() {
-        let text = "version = 1\nname = \"t\"\n[roles.zeta]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\n\
-                    [roles.alpha]\ncli = \"claude\"\nmodel = \"opus\"\nlaunch = false\n";
-        let team = parse(text, Path::new("/x")).unwrap();
-        let names: Vec<&str> = team.roles.iter().map(|r| r.name.as_str()).collect();
-        assert_eq!(names, ["zeta", "alpha"]);
-        assert_eq!(team.director(), Some("alpha"));
-        assert_eq!(team.state_dir, PathBuf::from("/x/.agents/state"));
-        assert_eq!(team.role("zeta").unwrap().sandbox, "read-only");
-    }
-
-    #[test]
-    fn types_values_and_references_are_reported_with_their_paths() {
-        let found = errors(
-            "version = 1\nname = 3\n[flow]\nsteps = [\"ghost\"]\nmax_review_rounds = -1\n\
-             [roles.a]\ncli = \"gemini\"\nmodel = \"m\"\neffort = \"huge\"\ntimeout_s = \"9\"\n[roles.B]\ncli = \"codex\"\nmodel = \"\"\nlaunch = false\n",
-        );
-        for expected in [
-            ("name", "bad_type"),
-            ("flow.steps", "unknown_role"),
-            ("flow.max_review_rounds", "bad_type"),
-            ("roles.a.cli", "unknown_value"),
-            ("roles.a.effort", "unknown_value"),
-            ("roles.a.timeout_s", "bad_type"),
-            ("roles.B", "bad_type"),
-            ("roles.B.model", "bad_type"),
-        ] {
-            assert!(
-                found.contains(&(expected.0.to_string(), expected.1)),
-                "{expected:?} in {found:?}"
-            );
-        }
-        assert_eq!(
-            errors("name = \"x\"\n[roles]\n")[0],
-            ("version".into(), "missing_key")
-        );
-        let found = errors(
-            "version = 1\nname = \"x\"\n[codex]\nconfig = [\"a=1\", \"nope\"]\n[roles.r]\ncli = \"codex\"\nmodel = \"m\"\nlaunch = false\nconfig = [\"=x\"]\n",
-        );
-        assert!(
-            found.contains(&("codex.config".into(), "bad_type")),
-            "{found:?}"
-        );
-        assert!(
-            found.contains(&("roles.r.config".into(), "bad_type")),
-            "{found:?}"
-        );
-    }
-
-    #[test]
-    fn resolve_drops_dot_components() {
-        assert_eq!(
-            resolve(Path::new("/a/b"), Path::new("./c/../d")),
-            PathBuf::from("/a/b/d")
-        );
-        assert_eq!(
-            resolve(Path::new("/a"), Path::new("/abs/./x")),
-            PathBuf::from("/abs/x")
-        );
-    }
-}
+mod tests;

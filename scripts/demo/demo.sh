@@ -8,6 +8,7 @@
 #   escenas             list the scenes
 #   ui <escena>         open the window in that scene (closes the previous one)
 #   shot <escena> [png] capture the scene; only if KWin confirms our window
+#                       (retried when another window had the focus)
 #   shots [escena...]   one capture per scene (all of them by default)
 #   probar [escena]     open the window for the user to click by hand and wait
 #                       until it is closed
@@ -21,9 +22,11 @@
 # Environment: TITAN_DEMO_DIR (invented data, default under
 # $XDG_RUNTIME_DIR, one per checkout), TITAN_DEMO_SHOTS
 # (captures, default <repo>/.previa/demo), TITAN_DEMO_BIN (binaries, default
-# <repo>/target/debug), TITAN_DEMO_WAIT (seconds before a capture, default 6)
-# and TITAN_DEMO_SIZE (window size of the scenes that do not set their own,
-# default 1440x900).
+# <repo>/target/debug), TITAN_DEMO_WAIT (seconds before a capture, default 6),
+# TITAN_DEMO_SIZE (window size of the scenes that do not set their own,
+# default 1440x900), TITAN_DEMO_RETRIES (new tries of a capture refused
+# because another window had the focus, default 2) and TITAN_DEMO_RETRY_WAIT
+# (seconds before each, default 15).
 #
 # A scene may set, besides the window's own variables, TITAN_AGENT_DEMO_SIZE
 # (its window size, WxH) and TITAN_AGENT_DEMO_KEYS (keys the window applies
@@ -51,6 +54,8 @@ SHOTS=${TITAN_DEMO_SHOTS:-$ROOT/.previa/demo}
 BIN=${TITAN_DEMO_BIN:-$ROOT/target/debug}
 WAIT=${TITAN_DEMO_WAIT:-6}
 SIZE=${TITAN_DEMO_SIZE:-1440x900}
+RETRIES=${TITAN_DEMO_RETRIES:-2}
+RETRY_WAIT=${TITAN_DEMO_RETRY_WAIT:-15}
 # Pids and sockets (a Unix socket path has at most 108 bytes: keep it short).
 RUN="$DIR/run"
 export TITAN_DEMO_DIR="$DIR" TITAN_DEMO_RUN="$RUN"
@@ -132,8 +137,7 @@ scene_env() {
     resumen) export TITAN_AGENT_PROJECT=titan-ssh ;;
     resumen-sin-directora) export TITAN_AGENT_PROJECT=recetas ;;
     monitor-sin-directora) export TITAN_AGENT_PROJECT=recetas TITAN_AGENT_BODY=monitor ;;
-    # The invented HOME of the demo, not a personal folder.
-    borrador-proyecto) export TITAN_AGENT_NEW=1 TITAN_AGENT_FOLDER="$DIR/home/dev/recetas" ;; # gitleaks:allow
+    borrador-proyecto) export TITAN_AGENT_NEW=1 TITAN_AGENT_FOLDER="$DIR/casa/dev/recetas" ;;
     proyectos-estrecho) export TITAN_AGENT_DEMO_SIZE=1000x800 ;;
     hilo) scene_env grafo; export TITAN_AGENT_THREAD=disenador_tests ;;
     hilo-largo) scene_env grafo; export TITAN_AGENT_THREAD=mecanico ;;
@@ -165,7 +169,7 @@ up() {
   python3 -I "$KIT/datos.py" "$DIR" >/dev/null
   nohup python3 -I "$KIT/appserver.py" "$RUN/codex.sock" "$DIR/codex.json" >"$DIR/appserver.log" 2>&1 &
   echo $! >"$RUN/appserver.pid"
-  HOME="$DIR/home" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENTD_CLAUDE="$KIT/bin/claude" \
+  HOME="$DIR/casa" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENTD_CLAUDE="$KIT/bin/claude" \
     TITAN_AGENTD_CODEX="$KIT/bin/codex" TITAN_AGENTD_POLL_MS=1000 TITAN_AGENT_CONFIG_DIR="$DIR/config" \
     nohup "$BIN/titan-agentd" >"$DIR/daemon.log" 2>&1 &
   echo $! >"$RUN/daemon.pid"
@@ -203,7 +207,7 @@ ui() {
     [ -z "${NOHOVER:-}" ] || export TITAN_AGENT_DEMO_NO_HOVER=1
     export TITAN_AGENT_DEMO_SIZE="$SIZE"
     scene_env "$1"
-    export HOME="$DIR/home" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENT_CONFIG_DIR="$DIR/config"
+    export HOME="$DIR/casa" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENT_CONFIG_DIR="$DIR/config"
     # If the private daemon dies, the window starts another one with its
     # own environment: it must also get the fake CLIs, never the real ones.
     export TITAN_AGENTD_CLAUDE="$KIT/bin/claude" TITAN_AGENTD_CODEX="$KIT/bin/codex" TITAN_AGENTD_POLL_MS=1000
@@ -244,9 +248,13 @@ session() {
   up
 }
 
+# Exit status of shot when the capture was refused because another window
+# had the focus (the user is using the desktop): worth another try.
+FOCUS=3
+
 shot() {
   [ $# -ge 1 ] && [ $# -le 2 ] || die "uso: demo.sh shot <escena> [fichero.png]"
-  # A failed capture returns 1 instead of exiting, so shots goes on.
+  # A failed capture returns 1 (or FOCUS) instead of exiting, so shots goes on.
   miss() { echo "demo: $*" >&2; return 1; }
   out=${2:-$SHOTS/$1.png}
   # The size the scene asks for (scene_env runs in a subshell: no leak).
@@ -280,7 +288,7 @@ shot() {
     alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
     stop ui
     miss "SIN CAPTURA de $1: la ventana activa es el PID '$got', no la nuestra ($pid)"
-    return 1
+    return "$FOCUS"
   fi
   rm -f "$out"
   spectacle -b -n -a -e -o "$out" >/dev/null 2>&1 || true
@@ -294,7 +302,7 @@ shot() {
     rm -f "$out"
     [ "$closed" = 0 ] || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
     miss "SIN CAPTURA de $1: el foco pasó al PID '$after' durante la captura"
-    return 1
+    return "$FOCUS"
   fi
   [ -f "$out" ] || { miss "SIN CAPTURA de $1: spectacle no escribió $out"; return 1; }
   size=$(magick identify -format '%wx%h' "$out" 2>/dev/null || echo "?")
@@ -304,6 +312,22 @@ shot() {
     return 1
   fi
   echo "$1 → $out"
+}
+
+# shot, tried again (RETRIES times, RETRY_WAIT seconds apart) while the
+# capture is refused only because another window had the focus. Any other
+# failure is final.
+shot_retry() {
+  try=0
+  while :; do
+    status=0
+    shot "$@" || status=$?
+    [ "$status" -eq "$FOCUS" ] && [ "$try" -lt "$RETRIES" ] || break
+    try=$((try + 1))
+    echo "demo: otra ventana tenía el foco; nuevo intento de $1 en ${RETRY_WAIT} s ($try de $RETRIES)" >&2
+    sleep "$RETRY_WAIT"
+  done
+  [ "$status" -eq 0 ] || return 1
 }
 
 case "${1:-}" in
@@ -319,12 +343,12 @@ case "${1:-}" in
     done
     ;;
   ui) shift; ui "$@"; echo "ventana abierta (PID $(cat "$RUN/ui.pid"))" ;;
-  shot) shift; session; shot "$@" ;;
+  shot) shift; session; shot_retry "$@" ;;
   shots)
     shift
     session
     failed=0
-    for s in ${*:-$SCENES}; do shot "$s" || failed=1; done
+    for s in ${*:-$SCENES}; do shot_retry "$s" || failed=1; done
     exit "$failed"
     ;;
   probar)
@@ -334,5 +358,5 @@ case "${1:-}" in
     echo "Sigue los pasos de la nota de la tarea. Al cerrar la ventana se para todo."
     while alive ui; do sleep 1; done
     ;;
-  *) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 2 ;;
 esac
