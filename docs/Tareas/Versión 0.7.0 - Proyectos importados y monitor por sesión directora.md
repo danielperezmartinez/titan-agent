@@ -1,11 +1,11 @@
 ---
 Nombre: Versión 0.7.0 - Proyectos importados y monitor por sesión directora
-Estado: En curso
+Estado: Hecha
 Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrador con el campo de texto común, que sustituye a «Nueva sesión»; sesión con su barra y el terminal) y el monitor por sesión directora con `[m]`. B: proyectos importados en el daemon (ADR-0014) con `+` por proyecto, grupo «otras carpetas» y resumen del proyecto. Después de la ronda «Equipo v6». El chat va después, en la 0.8.0 (tarea «Chat de sesión con Codex y Claude Code»).'
 Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos). PR A: 0.7.0 (minor) y PR B: 0.7.1 (patch), acordadas con el usuario el 2026-11-18.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-18T21:00:00+01:00
+Última modificación: 2026-11-18T21:20:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -930,6 +930,12 @@ siguiente:
    director. *Corregido*: ruta absoluta según la plataforma. *Propuesta*: que
    el contrato diga «ruta absoluta» y no su forma en Unix.
 
+9. **El director lanzó «Publicar versión» justo tras integrar**, con el CI
+   de `main` sobre el commit integrado aún corriendo: el workflow se negó
+   (bien) y llegó un correo de «build failed» al usuario. *Propuesta*: que
+   la skill pida esperar a que el CI de `main` sobre el commit integrado
+   esté en verde antes de lanzar la publicación.
+
 ## Resultado
 
 Las dos PR de la 0.7 integradas en `main`:
@@ -941,4 +947,15 @@ Las dos PR de la 0.7 integradas en `main`:
   `project_add`/`project_remove`, importación inicial y al lanzar),
   «otras carpetas», el `+` por proyecto y el resumen del proyecto.
 
-Falta el paso 3 del plan, la Release 0.7.1, que decide el usuario.
+**Release 0.7.1** publicada con autorización del usuario (paso 3 del plan),
+con el workflow «Publicar versión» sobre `main` (`2f24b75`): ejecución
+`44395654175` en verde (Preparar, Linux, Windows experimental y Publicar),
+etiqueta `v0.7.1` creada por el workflow y Release con los paquetes de Linux
+y Windows, `SHA256SUMS`, `titan-agent-update.json` y su firma. Verificada en
+local: la firma del manifiesto con `packaging/minisign.pub` (comentario de
+confianza `version=0.7.1`) y las sumas de los tres ficheros. Un primer
+intento (`44395152731`) se negó solo porque el CI de `main` sobre ese commit
+aún corría: no creó etiqueta ni Release (carencia 9). La app instalada se
+actualiza sola desde esta Release.
+
+Siguiente: [[Chat de sesión con Codex y Claude Code]] (0.8.0).
