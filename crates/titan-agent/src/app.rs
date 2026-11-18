@@ -133,6 +133,8 @@ pub struct MainView {
     /// that does not know them (the tree then groups every session).
     projects: Option<Vec<ProjectInfo>>,
     projects_error: Option<String>,
+    /// The last `project_add`/`project_remove` refused, shown in the tree.
+    projects_refused: Option<String>,
     /// What the selected project shows.
     project_body: ProjectBody,
     /// Open the preselected session's monitor once it appears (screenshots).
@@ -303,6 +305,7 @@ impl MainView {
             body: SessionBody::Terminal,
             projects: None,
             projects_error: None,
+            projects_refused: None,
             project_body: ProjectBody::Summary,
             demo_body,
             task_menu,
@@ -403,7 +406,8 @@ impl MainView {
                         }
                     }),
                 ),
-                Some(Pending::Open) | Some(Pending::Projects) | None => {}
+                Some(Pending::Projects) => self.projects_refused = None,
+                Some(Pending::Open) | None => {}
             },
             ServerMessage::Error { id, error } => {
                 match id.and_then(|id| self.pending.remove(&id)) {
@@ -423,6 +427,7 @@ impl MainView {
                         self.new.error = Some(error.message);
                     }
                     Some(Pending::Transcript(key)) => self.transcript_answer(&key, Err(error)),
+                    Some(Pending::Projects) => self.projects_refused = Some(error.message),
                     // Sessions started working since the status: ask.
                     Some(Pending::UpdateApply) if error.code == "confirm_needed" => {
                         self.update.confirm = true;

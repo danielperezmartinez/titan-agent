@@ -703,6 +703,39 @@ pide la skill: carencia 4) y no se cambian para que el resultado pase.
 5. **Monitor sin directora**: miga `[#] proyecto › encargo`, «sin sesión
    directora» y `[<] resumen`; las tres vistas sin cambios.
 
+## PR B · Revisión de Sol (high, con `--gate`)
+
+Hilo nuevo (`v07b-revision`) sobre el commit `9ad078e`, con la
+especificación y la compuerta (en verde). Veredicto `changes_requested`:
+la protección del fichero ilegible, el renombrado atómico y la importación
+al lanzar están bien; fallos en la primera importación, en el árbol y en la
+vista del resumen.
+
+| Hallazgo | Severidad | Decisión |
+| --- | --- | --- |
+| `first_discovery` dejaba la lista cambiada aunque no se pudiera escribir: los clientes veían proyectos sin guardar y un `project_add` posterior daba éxito sin escribir | mayor | Aceptado: la primera importación es una transacción como las demás (se queda solo si se escribió); test propio con la carpeta de configuración bloqueada |
+| Un hijo cuyo padre es de otra raíz colgaba del proyecto del padre (y su propio proyecto salía sin sesiones o no salía en «otras carpetas») | mayor | Aceptado: la jerarquía se arma dentro de cada raíz; el hijo de otra raíz empieza su grupo. Test propio con la raíz importada y sin importar |
+| Qué sesiones lista el resumen y a dónde lleva el `[m]` de un equipo estaban en la vista | mayor | Aceptado: `summary_sessions` y `team_open` en `titan_agent::conversation`, con tests (también con un daemon sin proyectos) |
+| `folder_choices` no quitaba un importado repetido (`/a` y `/a/`) | menor | Aceptado, con test |
+| `projects_error` y los rechazos de importar o quitar no se veían | menor | Aceptado: salen en `danger` bajo el título del árbol, con cualquier selección |
+
+Su pregunta (¿y si lanzar pasa las salvaguardas pero no se puede importar?):
+el lanzamiento sigue y el fallo va al log del daemon. Importar es una
+comodidad; no vale la pena negar un lanzamiento que el usuario ya pidió y vio.
+
+## PR B · Evaluador visual
+
+**Ronda 1** (subagente de Opus nuevo, 6 capturas): árbol 7, otras carpetas 9,
+resumen 7, borrador 9, monitor sin directora 8,5. Aplicado: el contador del
+árbol es el de sesiones vivas (como el resumen); `[!]` en el sitio del
+contador en una carpeta borrada; la directora en `accent` (pulsable) y
+«directora» en `mute`; la actividad alineada a la derecha antes de `[m]`;
+`[+] nueva sesión` con borde `accent` y `[x] quitar` con borde `danger`; el
+resumen limitado a 880 px; «sin sesión directora» en `mute`; el `+` en una
+cajita con borde. No aplicado: anclar el chip del borrador al `+` con borde
+`accent` y marcar el proyecto en el árbol mientras el borrador está abierto
+(el botón «Nueva sesión» ya lo marca).
+
 ## PR B · Prueba a mano
 
 Qué se prueba: la interacción con los proyectos importados (hover del `+`,

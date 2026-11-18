@@ -56,14 +56,21 @@ impl ProjectStore {
         if !std::mem::take(&mut self.first) {
             return false;
         }
-        let before = self.list.clone();
+        if self.unreadable.is_some() {
+            return false;
+        }
+        let mut list = self.list.clone();
         for project in initial_projects(sessions, now_ms) {
-            add_project(&mut self.list, &project.root, now_ms);
+            add_project(&mut list, &project.root, now_ms);
         }
-        if let Err(error) = self.save() {
-            eprintln!("titan-agentd: {error}");
+        // Like any change: kept only if it was written.
+        match self.commit(list) {
+            Ok(()) => true,
+            Err((_, error)) => {
+                eprintln!("titan-agentd: {error}");
+                false
+            }
         }
-        self.list != before
     }
 
     /// `project_add`: an absolute path of an existing folder.
@@ -206,6 +213,27 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.join(PROJECTS_FILE)).unwrap(),
             "{roto"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_first_import_that_cannot_be_written_is_not_kept() {
+        let dir = folder("unwritable");
+        // A file where the settings folder should be: nothing can be written.
+        let blocked = dir.join("config");
+        std::fs::write(&blocked, "").unwrap();
+        let mut store = ProjectStore::load(Some(&blocked));
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "key":"cl:a","agent":"claude_code","cli_id":"a","name":"a","cwd":"/srv/a",
+            "project_root":"/srv/a","project":"a","kind":"background","state":"working"
+        }))
+        .unwrap();
+        assert!(!store.first_discovery(&[session], 1));
+        assert!(store.infos().is_empty());
+        assert_eq!(
+            store.add(dir.to_str().unwrap(), 2).unwrap_err().0,
+            "config_error"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

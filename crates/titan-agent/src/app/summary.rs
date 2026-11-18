@@ -6,12 +6,13 @@
 //! `project_tree` of the core.
 
 use gpui::{ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
-use titan_agent::conversation::{SessionBody, crumb_name, pick_task};
+use titan_agent::conversation::{
+    SessionBody, TeamOpen, crumb_name, pick_task, summary_sessions, team_open,
+};
 use titan_agent_core::monitor::{TaskId, project_teams};
 use titan_agent_core::project::{project_name, tilde};
 use titan_agent_core::protocol::Request;
 use titan_agent_core::time::ago;
-use titan_agent_core::tree::{NavRow, project_tree};
 
 use crate::theme::{self, color, hairline};
 
@@ -19,7 +20,7 @@ use super::widgets::{agent_pill, state_marker};
 use super::{MainView, Pending, ProjectBody};
 
 /// An action of the summary: `[x] text` with a hairline border.
-fn action(id: String, label: &'static str, text: u32) -> Stateful<Div> {
+fn action(id: String, label: &'static str, text: u32, border: Option<u32>) -> Stateful<Div> {
     div()
         .id(SharedString::from(id))
         .flex()
@@ -29,7 +30,10 @@ fn action(id: String, label: &'static str, text: u32) -> Stateful<Div> {
         .px(px(12.))
         .border_1()
         .rounded(px(4.))
-        .border_color(hairline())
+        .map(|d| match border {
+            Some(border) => d.border_color(color(border)),
+            None => d.border_color(hairline()),
+        })
         .text_size(px(12.))
         .text_color(color(text))
         .whitespace_nowrap()
@@ -55,12 +59,12 @@ impl MainView {
         director: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        match director {
-            Some(key) => {
-                self.select_session(key.clone(), None, cx);
-                self.body = pick_task(&SessionBody::Terminal, &task, self.director_tasks(&key));
+        match team_open(&task, director.as_deref()) {
+            TeamOpen::Director { session, task } => {
+                self.select_session(session.clone(), None, cx);
+                self.body = pick_task(&SessionBody::Terminal, &task, self.director_tasks(&session));
             }
-            None => self.project_body = ProjectBody::Monitor(task),
+            TeamOpen::Here { task } => self.project_body = ProjectBody::Monitor(task),
         }
         cx.notify();
     }
@@ -82,61 +86,72 @@ impl MainView {
                 .unwrap_or_else(|| project_name(root))
         });
         let teams = project_teams(root, &self.teams, &self.sessions, self.now_ms);
-        let sessions: Vec<String> = project_tree(
+        let sessions = summary_sessions(
+            root,
             &self.sessions,
             self.projects.as_deref().unwrap_or_default(),
             &self.teams,
-            "",
-        )
-        .into_iter()
-        .skip_while(|row| !matches!(row, NavRow::Project { root: r, .. } if r == root))
-        .skip(1)
-        .take_while(|row| matches!(row, NavRow::Session { .. }))
-        .filter_map(|row| match row {
-            NavRow::Session { key, .. } => Some(key),
-            _ => None,
-        })
-        .filter(|key| self.session(key).is_some_and(|s| s.state.is_live()))
-        .collect();
+        );
 
         let new_root = root.to_string();
         let open_root = root.to_string();
         let edit_root = root.to_string();
-        let actions =
-            div()
-                .flex()
-                .flex_wrap()
-                .gap(px(8.))
-                .pt(px(16.))
-                .child(
-                    action(format!("sum-new:{root}"), "[+] nueva sesión", theme::INK).on_click(
-                        cx.listener(move |this, _: &ClickEvent, window, cx| {
-                            this.open_new_in(new_root.clone(), window, cx)
-                        }),
-                    ),
+        let actions = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .pt(px(16.))
+            .child(
+                action(
+                    format!("sum-new:{root}"),
+                    "[+] nueva sesión",
+                    theme::INK,
+                    Some(theme::ACCENT),
                 )
-                .when(!missing, |d| {
-                    d.child(
-                        action(format!("sum-open:{root}"), "[d] abrir carpeta", theme::BODY)
-                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-                                cx.open_with_system(std::path::Path::new(&open_root))
-                            })),
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.open_new_in(new_root.clone(), window, cx)
+                })),
+            )
+            .when(!missing, |d| {
+                d.child(
+                    action(
+                        format!("sum-open:{root}"),
+                        "[d] abrir carpeta",
+                        theme::BODY,
+                        None,
                     )
+                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                        cx.open_with_system(std::path::Path::new(&open_root))
+                    })),
+                )
+            })
+            .when(self.projects.is_some(), |d| {
+                d.child(if imported {
+                    action(
+                        format!("sum-remove:{root}"),
+                        "[x] quitar",
+                        theme::DANGER,
+                        Some(theme::DANGER),
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            this.remove_project(edit_root.clone(), cx)
+                        },
+                    ))
+                } else {
+                    action(
+                        format!("sum-import:{root}"),
+                        "[+] importar",
+                        theme::ACCENT,
+                        Some(theme::ACCENT),
+                    )
+                    .on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            this.import_project(edit_root.clone(), cx)
+                        },
+                    ))
                 })
-                .when(self.projects.is_some(), |d| {
-                    d.child(if imported {
-                        action(format!("sum-remove:{root}"), "[x] quitar", theme::DANGER).on_click(
-                            cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.remove_project(edit_root.clone(), cx)
-                            }),
-                        )
-                    } else {
-                        action(format!("sum-import:{root}"), "[+] importar", theme::ACCENT)
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.import_project(edit_root.clone(), cx)
-                            }))
-                    })
-                });
+            });
 
         let team_rows = teams.into_iter().map(|line| {
             let director_name = line
@@ -184,21 +199,24 @@ impl MainView {
                 .child(match director_name {
                     Some(name) => div()
                         .id(SharedString::from(format!("{id}:director")))
+                        .flex()
                         .flex_none()
+                        .gap(px(6.))
                         .text_size(px(12.))
-                        .text_color(color(theme::BODY))
+                        .text_color(color(theme::MUTE))
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                             if let Some(key) = open.clone() {
                                 this.select_session(key, Some(window), cx);
                             }
                         }))
-                        .child(format!("directora {name}")),
+                        .child("directora")
+                        .child(div().text_color(color(theme::ACCENT)).child(name)),
                     None => div()
                         .id(SharedString::from(format!("{id}:director")))
                         .flex_none()
                         .text_size(px(12.))
-                        .text_color(color(theme::STONE))
+                        .text_color(color(theme::MUTE))
                         .child("sin sesión directora"),
                 })
                 .child(
@@ -208,6 +226,7 @@ impl MainView {
                         .overflow_hidden()
                         .whitespace_nowrap()
                         .text_ellipsis()
+                        .text_right()
                         .text_size(px(12.))
                         .text_color(color(theme::MUTE))
                         .child(format!(
@@ -217,7 +236,7 @@ impl MainView {
                         )),
                 )
                 .child(
-                    action(format!("{id}:monitor"), "[m] monitor", theme::BODY).on_click(
+                    action(format!("{id}:monitor"), "[m] monitor", theme::BODY, None).on_click(
                         cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.open_team(task.clone(), director.clone(), cx)
                         }),
@@ -283,6 +302,8 @@ impl MainView {
             .overflow_y_scroll()
             .px(px(24.))
             .py(px(20.))
+            // A summary reads as one column, not across the whole window.
+            .max_w(px(880.))
             .child(
                 div()
                     .flex()

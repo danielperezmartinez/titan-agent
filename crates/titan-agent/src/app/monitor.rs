@@ -396,7 +396,7 @@ impl MainView {
             .child(
                 div()
                     .whitespace_nowrap()
-                    .text_color(color(theme::STONE))
+                    .text_color(color(theme::MUTE))
                     .child("sin sesión directora"),
             )
             .when_some(round, |d, round| {

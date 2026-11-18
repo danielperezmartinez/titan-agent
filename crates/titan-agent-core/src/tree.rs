@@ -132,9 +132,19 @@ pub fn project_tree(
     let by_key: HashMap<&str, &Session> = sessions.iter().map(|s| (s.key.as_str(), s)).collect();
     let mut children: HashMap<&str, Vec<&Session>> = HashMap::new();
     let mut tops: Vec<&Session> = Vec::new();
+    // A session hangs from its parent only inside the same project: one
+    // launched from another project's session starts its own group there.
     for session in sessions {
-        match session.parent.as_deref().filter(|p| by_key.contains_key(p)) {
-            Some(parent) => children.entry(parent).or_default().push(session),
+        let parent = session
+            .parent
+            .as_deref()
+            .and_then(|p| by_key.get(p))
+            .filter(|p| same_root(&p.project_root, &session.project_root));
+        match parent {
+            Some(parent) => children
+                .entry(parent.key.as_str())
+                .or_default()
+                .push(session),
             None => tops.push(session),
         }
     }

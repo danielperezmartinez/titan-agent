@@ -158,6 +158,13 @@ impl MainView {
                 })
                 .collect(),
         };
+        // Why the list of projects is not there, or the last import or
+        // removal refused: under the title, whatever is selected.
+        let projects_problem = self
+            .projects_error
+            .clone()
+            .map(|e| format!("no se puede leer la lista de proyectos: {e}"))
+            .or_else(|| self.projects_refused.clone());
         let mut tree = div()
             .id("tree")
             .flex()
@@ -166,6 +173,16 @@ impl MainView {
             .min_h(px(0.))
             .overflow_y_scroll()
             .pb(px(12.));
+        if let Some(problem) = projects_problem {
+            tree = tree.child(
+                div()
+                    .px(px(12.))
+                    .pt(px(4.))
+                    .text_size(px(11.))
+                    .text_color(color(theme::DANGER))
+                    .child(format!("[x] {problem}")),
+            );
+        }
         if rows.is_empty() {
             tree = tree.child(
                 div()
@@ -320,14 +337,19 @@ impl MainView {
             NavRow::Project {
                 name,
                 root,
-                count,
                 imported,
                 missing,
+                ..
             } => {
                 let selected = self.selection == Selection::Project(root.clone())
                     || (matches!(self.selection, Selection::Thread(_))
                         && self.thread.as_ref().and_then(|t| t.r.root.as_deref())
                             == Some(root.as_str()));
+                let live = self
+                    .sessions
+                    .iter()
+                    .filter(|s| s.project_root == root && s.state.is_live())
+                    .count();
                 let group = SharedString::from(format!("pg:{root}"));
                 let plus_root = root.clone();
                 let import_root = root.clone();
@@ -377,16 +399,17 @@ impl MainView {
                             .font_weight(FontWeight::MEDIUM)
                             .child(name),
                     )
-                    .when(missing, |d| {
-                        d.child(
-                            div()
-                                .flex_none()
-                                .text_color(color(theme::WARNING))
-                                .child("[!]"),
-                        )
-                    })
                     .child(div().flex_grow_1().min_w(px(8.)).h(px(1.)).bg(hairline()))
-                    .child(div().flex_none().child(count.to_string()))
+                    // Live sessions, as the summary counts them; a folder
+                    // that is gone shows `[!]` in their place.
+                    .child(if missing {
+                        div()
+                            .flex_none()
+                            .text_color(color(theme::WARNING))
+                            .child("[!]")
+                    } else {
+                        div().flex_none().child(live.to_string())
+                    })
                     .map(|d| {
                         if imported {
                             // `+`: the draft with this project, shown on
@@ -396,8 +419,11 @@ impl MainView {
                                     div()
                                         .id(SharedString::from(format!("plus:{root}")))
                                         .flex_none()
-                                        .px(px(4.))
-                                        .text_size(px(14.))
+                                        .px(px(5.))
+                                        .border_1()
+                                        .rounded(px(4.))
+                                        .border_color(hairline())
+                                        .text_size(px(12.))
                                         .text_color(color(theme::INK))
                                         .opacity(if selected { 1. } else { 0. })
                                         .when(hover_enabled(), |d| {
