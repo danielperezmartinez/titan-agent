@@ -21,6 +21,9 @@ test_cmd = "cargo test --workspace"
 # (checks tras su turno y ask --gate para el revisor, que no puede ejecutar nada).
 fmt_cmd = "cargo fmt --all"
 gate_cmd = "cargo fmt --all --check && cargo clippy --workspace --all-targets --quiet -- -D warnings && cargo test --workspace --quiet"
+# Desde el equipo v7: compila todo, tests incluidos, sin ejecutarlos (comprobación
+# "build"). Los tests de Sol fallan sin implementación, pero deben compilar.
+build_cmd = "cargo test --workspace --no-run --quiet"
 test_timeout_s = 1800               # el primer build de GPUI en un worktree nuevo tarda
 # Carpeta de compilación del equipo (relativa a este checkout, que es el del
 # director): la comparten los checks, la compuerta y los roles que escriben de
@@ -43,9 +46,10 @@ config = [
 ]
 
 [flow]
-# Equipo v6 (2026-11-18; v5 del 2026-11-17, v4 del 2026-11-16, v3 del 2026-11-15): se
-# reparte por contexto, no por rol. La v6 corrige las carencias de la v5
-# (docs/Tareas/Equipo v6.md): sin cambios de reparto en este fichero.
+# Equipo v7 (2026-11-18; v6 del mismo día, v5 del 2026-11-17, v4 del 2026-11-16,
+# v3 del 2026-11-15): se reparte por contexto, no por rol. La v7 corrige las
+# carencias de la v6 (docs/Tareas/Equipo v7.md): sin cambios de reparto; Sol
+# trabaja sobre un esqueleto que compila y su turno falla si sus tests no compilan.
 # Opus (director) fija el contrato en la especificación e implementa cada parte
 # con sus propios tests; Codex solo escribe antes los tests de aceptación (desde
 # el contrato, sin inventar detalles) y hace UNA revisión al final con contexto
@@ -71,9 +75,15 @@ effort = "medium"                  # gasta cuota de Sol, como el revisor
 sandbox = "workspace-write"
 prompt_file = ".agents/prompts/disenador_tests.md"
 allowed_paths = ["crates/*/tests/"] # aviso si toca algo fuera de aquí
-# Tras su turno: formato (entra en su commit) y tests. Sus tests fallan hasta
-# que haya implementación: la salida es informativa, no hace fallar el turno.
-checks = ["fmt", "test"]
+# Tras su turno: formato (entra en su commit), compilación y tests. Sus tests
+# fallan hasta que haya implementación (la salida de "test" es informativa),
+# pero compilan contra el esqueleto del director: si no compilan (un lint
+# denegado incluido), el turno sale en rojo (equipo v7).
+checks = ["fmt", "build", "test"]
+checks_required = ["build"]
+# El encargo trae estas secciones antes de su primer turno, o titan-team no lo
+# lanza: los criterios visuales se escriben antes de implementar (equipo v7).
+brief_sections = ["Contrato", "Firmas", "Criterios visuales"]
 timeout_s = 1200
 purpose = "Antes de implementar, escribe POCOS tests de aceptación a partir de la especificación. El director no puede tocarlos."
 

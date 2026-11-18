@@ -6,11 +6,12 @@ Usage: python3 -I datos.py <dir>
 Writes, under <dir>, everything the private daemon reads, with timestamps
 relative to now so the "working" states look live:
 
-- home/: a fake HOME with the Claude Code transcripts that give each
-  session its model, and the demo projects under home/dev/.
+- casa/: a fake HOME with the Claude Code transcripts that give each
+  session its model, and the demo projects under casa/dev/. Not "home/":
+  a path ending in home/dev reads as a personal folder to gitleaks.
 - agents.json: what the fake `claude agents --json` prints.
 - codex.json: threads, items and quota served by the fake app-server.
-- home/dev/titan-ssh/.agents/: a team.toml and the events of three team
+- casa/dev/titan-ssh/.agents/: a team.toml and the events of three team
   runs: two directed by "sftp renombrar" (one in progress, one waiting on the
   user) and one by "sincronizar hosts", a second director in a worktree of
   the same project (two teams in one project).
@@ -32,7 +33,7 @@ import time
 if len(sys.argv) != 2:
     sys.exit("usage: datos.py <dir>")
 DIR = os.path.abspath(sys.argv[1])
-HOME = os.path.join(DIR, "home")
+HOME = os.path.join(DIR, "casa")
 DEV = os.path.join(HOME, "dev")
 SSH = os.path.join(DEV, "titan-ssh")
 WEB = os.path.join(DEV, "web-notas")

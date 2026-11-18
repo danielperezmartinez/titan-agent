@@ -5,7 +5,7 @@ Resumen: 'Corrige las carencias del equipo v5 anotadas en la 0.6.0 (incluidas la
 Decisiones: 'Encargo de la sesión de control control-3b (2026-11-18). Versión 0.6.1 (patch), acordada con el usuario el 2026-11-18. Revisión de Sol: 3 hallazgos aceptados (uno ya corregido).'
 Bloqueada: []
 Fecha de creación: 2026-11-18T00:10:00+01:00
-Última modificación: 2026-11-18T01:30:00+01:00
+Última modificación: 2026-11-18T22:30:00+01:00
 ---
 
 # Equipo v6
@@ -74,7 +74,9 @@ C6 (el evaluador visual funcionó) no pide ajuste.
   puros con firmas en el contrato y tests de Sol; el prompt del revisor lo
   añade a sus criterios.
 
-## Configuración v6 (vigente)
+## Configuración v6
+
+La sustituye la configuración v7 de [[Equipo v7]] (2026-11-18).
 
 Sustituye a la v5 ([[Equipo v5]] y [[Equipo v5.1 - Compilación compartida por equipo]]).
 El reparto no cambia; lo nuevo va marcado:

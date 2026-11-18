@@ -52,6 +52,38 @@ fn available(program: &str) -> bool {
     })
 }
 
+/// The sections of `required` that no Markdown heading of `brief` names:
+/// an ATX heading (up to 3 spaces, 1–6 `#` and a space) whose text
+/// contains the section, ignoring case. Lines inside a fenced code block
+/// are not headings.
+pub fn missing_sections<'a>(brief: &str, required: &'a [String]) -> Vec<&'a str> {
+    let mut headings = Vec::new();
+    let mut fenced = false;
+    for line in brief.lines() {
+        let indent = line.len() - line.trim_start_matches(' ').len();
+        let rest = &line[indent..];
+        if indent <= 3 && rest.starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced || indent > 3 {
+            continue;
+        }
+        let hashes = rest.len() - rest.trim_start_matches('#').len();
+        if (1..=6).contains(&hashes) && rest[hashes..].starts_with(' ') {
+            headings.push(rest[hashes..].trim().to_lowercase());
+        }
+    }
+    required
+        .iter()
+        .filter(|section| {
+            let section = section.trim().to_lowercase();
+            !headings.iter().any(|heading| heading.contains(&section))
+        })
+        .map(String::as_str)
+        .collect()
+}
+
 pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Result<i32, Failure> {
     let [role_name, task] = rest else {
         return Err(Failure::usage(
@@ -106,6 +138,23 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         return Err(Failure::usage(
             "Para continuar un hilo es obligatorio indicar -m o -f",
         ));
+    }
+    if thread_id.is_none() && !role.brief_sections.is_empty() {
+        let brief = std::fs::read_to_string(team.path(Path::new(&state.brief)))
+            .map_err(|e| Failure::usage(format!("No se pudo leer el encargo: {e}")))?;
+        let missing = missing_sections(&brief, &role.brief_sections);
+        if !missing.is_empty() {
+            return Err(Failure::usage(format!(
+                "Al encargo le falta {} para {role_name} (brief_sections): {}; \
+                 añádela como título Markdown y vuelve a crearlo con new --brief",
+                if missing.len() == 1 {
+                    "una sección"
+                } else {
+                    "secciones"
+                },
+                missing.join(", ")
+            )));
+        }
     }
     if args.flag("--gate") && team.project.gate_cmd.is_none() {
         return Err(Failure::usage(
@@ -320,7 +369,10 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             ));
         }
         warnings.extend(runs.iter().filter(|r| !r.passed()).map(CheckRun::warning));
-        if role.checks_required && runs.iter().any(|r| !r.passed()) {
+        if runs
+            .iter()
+            .any(|r| !r.passed() && role.checks_required.contains(&r.name))
+        {
             status = "error";
         }
         check_runs = runs;
@@ -704,5 +756,17 @@ mod tests {
             "codex -c 'sandbox_mode=\"read-only\"' 'a b' -"
         );
         assert_eq!(safe("rev/isor"), "rev_isor");
+    }
+
+    #[test]
+    fn brief_sections_are_found_in_headings_only() {
+        let required = ["Contrato", "Firmas", "Criterios visuales", "Extra"].map(String::from);
+        let brief = "# Encargo\n\nEl Contrato y las Firmas van abajo.\n\
+                     ## C. contrato numerado\n   ### FIRMAS que usan los tests\n\
+                     ```md\n## Extra\n```\n    ## Extra indentado\n#Extra sin espacio\n\
+                     ####### Extra con siete\n## Criterios visuales\n";
+        assert_eq!(missing_sections(brief, &required), ["Extra"]);
+        assert!(missing_sections(brief, &required[..3]).is_empty());
+        assert_eq!(missing_sections("", &required[..1]), ["Contrato"]);
     }
 }

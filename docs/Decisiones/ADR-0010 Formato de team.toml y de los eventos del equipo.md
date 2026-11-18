@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-18T10:00:00+01:00
+Última modificación: 2026-11-18T22:30:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -389,6 +389,23 @@ cambiar `version`, los eventos ni los códigos de salida:
   `TITAN_TEAM_BIN`, si no el fijado en `.agents/team-bin/titan-team`
   (`bin/team pin [REV]`, que compila titan-team de esa revisión; `bin/team
   unpin` lo quita), y si no `cargo run` desde el checkout.
+
+### Ampliación compatible del equipo v7 (2026-11-18)
+
+De [[Tareas/Equipo v7]]. Claves opcionales, sin cambiar `version`, los
+eventos ni los códigos de salida; el contrato completo (C1–C4) está en la
+nota de la tarea:
+
+- `[project] build_cmd` y la comprobación `"build"` en `checks` (compila sin
+  ejecutar, tests incluidos); sin la orden, `missing_key` en
+  `project.build_cmd`.
+- `checks_required` admite también una lista de comprobaciones de `checks`
+  (p. ej. `["build"]`): solo esas hacen fallar el turno. Un nombre que no
+  está en `checks` es `unknown_value`; otro tipo, `bad_type`.
+- `[roles.<n>] brief_sections`: títulos Markdown que el encargo debe tener
+  antes de abrir el hilo del rol (su primer turno o `--new`); si falta
+  alguno, `ask` sale con 2 sin lanzar nada ni escribir eventos. Una sección
+  vacía es `bad_type`.
 
 ### Ampliación compatible de los proyectos importados (0.7.1, 2026-11-18)
 

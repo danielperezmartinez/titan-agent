@@ -1,11 +1,11 @@
 ---
 Nombre: Chat de sesión con Codex y Claude Code
 Estado: Planificando
-Resumen: 'Versión 0.8.0, después de la 0.7.0 (que trae la vista «conversación» y el campo de texto común): llenar la conversación con el chat, con menú `/` y `@`, en tres PR (titan-team por el app-server, chat de Codex, chat de Claude Code). En Codex, por el app-server compartido, con titan-team ejecutando sus turnos en el mismo app-server para que no haya dos escritores. En Claude Code, envío con `claude --resume` en un PTY del daemon, lectura de la transcripción y hooks al lanzar para responder permisos, preguntas y planes. Empieza con un spike con los CLI reales. La hace el equipo v5.'
+Resumen: 'Versión 0.8.0, después de la 0.7.0 (que trae la vista «conversación» y el campo de texto común): llenar la conversación con el chat, con menú `/` y `@`, en tres PR (titan-team por el app-server, chat de Codex, chat de Claude Code). En Codex, por el app-server compartido, con titan-team ejecutando sus turnos en el mismo app-server para que no haya dos escritores. En Claude Code, envío con `claude --resume` en un PTY del daemon, lectura de la transcripción y hooks al lanzar para responder permisos, preguntas y planes. Empieza con un spike con los CLI reales. La hace el equipo v7 (configuración de [[Equipo v7]]).'
 Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; ADR-0012 y ADR-0013 aceptadas por el usuario el mismo día; decisión visual aceptada tras revisar la previa; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. Al diseñar la 0.7.0 (mismo día) el usuario decidió que el chat va en la 0.8.0, sobre la estructura de la 0.7.0. La versión se acuerda en cada PR.'
-Bloqueada: ["[[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]]"]
+Bloqueada: ["[[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]]", "[[Equipo v7]]"]
 Fecha de creación: 2026-11-17T23:30:00+01:00
-Última modificación: 2026-11-17T23:59:00+01:00
+Última modificación: 2026-11-18T22:30:00+01:00
 ---
 
 # Chat de sesión con Codex y Claude Code
@@ -28,8 +28,25 @@ hallazgos de la prueba manual.
 
 **Cómo se trabaja**:
 
-- con el equipo vigente (skill `equipo`), en la rama `feat/chat-sesion`, que
-  ya trae la previa `design/preview/Conversacion.dc.html`;
+- con el equipo vigente, el v7 de [[Equipo v7]] (skill `equipo`), en la
+  rama `feat/chat-sesion`, que ya trae la previa
+  `design/preview/Conversacion.dc.html`. Lo que cambia la v7 para estas PR:
+  - la especificación de cada PR lleva los títulos «Contrato», «Firmas» y
+    «Criterios visuales» (la de la PR 1, «Sin interfaz»), o titan-team no
+    lanza a Sol; los criterios visuales de las PR 2 y 3 salen de la
+    decisión visual y de la previa, antes de implementar;
+  - antes de Sol, un esqueleto con las firmas del contrato y cuerpos
+    `todo!()` que compile (tipos de la conversación, variantes del
+    protocolo…): sus tests deben compilar y, si no, su turno sale en rojo;
+  - ningún apartado remite a otra regla («como el monitor», «la misma regla
+    que X») sin dar su firma, y las rutas se describen por su significado
+    («ruta absoluta»), no por su forma en Linux;
+  - la PR 1 cambia titan-team: se dirige con titan-team fijado
+    (`bin/team pin origin/main`) y, si añade claves a `team.toml`, se fija
+    el commit propio en verde antes de la revisión (`bin/team pin HEAD`);
+  - la prueba a mano de cada PR va completa en el mensaje al usuario (la
+    orden, los pasos numerados y el resultado esperado), no solo en esta
+    nota;
 - **va después de la
   [[Versión 0.7.0 - Proyectos importados y monitor por sesión directora|0.7.0]]**,
   que deja hecha la vista «conversación» (borrador y sesión con terminal),
@@ -184,7 +201,7 @@ hallazgos de la prueba manual.
 
 **Proceso**:
 
-- revisión de Sol y evaluación visual del equipo v5;
+- revisión de Sol y evaluación visual del equipo v7;
 - prueba manual del usuario con pasos numerados y el resultado esperado de
   cada uno;
 - comprobaciones de «Comprobaciones y compuerta de "Hecha"» en verde;
