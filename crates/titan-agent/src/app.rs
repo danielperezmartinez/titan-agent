@@ -5,12 +5,13 @@
 //! This module holds the start-up, the state shared by every view and the
 //! routing (daemon messages, selection, keys, which view goes in the centre).
 //! Each view lives in its own submodule: `header`, `nav` (tree and filter),
-//! `session_view` (terminal), `detail` (session detail), `monitor` (project
-//! monitor and its three views), `thread_view` (a team role's thread,
-//! read-only), `new_session`, `settings`; `menu` and
-//! `widgets` are pieces they share.
+//! the conversation view in its two states (`draft`, with the common text
+//! field of `composer`, and `session_view`, with the terminal or a
+//! director's monitor), `detail` (session detail), `monitor` (team monitor
+//! and its three views), `thread_view` (a team role's thread, read-only),
+//! `settings`; `menu` and `widgets` are pieces they share.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use futures::StreamExt;
@@ -19,7 +20,10 @@ use gpui::{
     AnyElement, App, Context, Entity, FocusHandle, Focusable, KeyDownEvent, MouseButton,
     MouseDownEvent, Subscription, Window, div, prelude::*, px,
 };
+use titan_agent::composer::Drafts;
+use titan_agent::conversation::{SessionBody, settle};
 use titan_agent_core::launch::LaunchDefaults;
+use titan_agent_core::monitor::{TaskId, directors};
 use titan_agent_core::protocol::{
     AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, TeamTask, TerminalRef,
     TranscriptResult, UpdateState, decode_bytes,
@@ -27,26 +31,27 @@ use titan_agent_core::protocol::{
 use titan_agent_core::quota::Quota;
 use titan_agent_core::session::{AgentCli, Session};
 
-use crate::brief::{BriefEvent, BriefInput};
 use crate::client::{DaemonClient, Incoming};
 use crate::terminal::TerminalView;
 use crate::theme::{self, color};
 
+mod composer;
 mod detail;
+mod draft;
 mod header;
 mod menu;
 mod monitor;
 mod nav;
-mod new_session;
 mod session_view;
 mod settings;
 mod thread_view;
 mod update_notice;
 mod widgets;
 
+use composer::{Composer, ComposerEvent};
+use draft::NewSession;
 use menu::Menu;
 use monitor::MonitorTab;
-use new_session::NewSession;
 use thread_view::ThreadState;
 use widgets::placeholder;
 
@@ -102,6 +107,20 @@ pub struct MainView {
     folders: Vec<String>,
     /// Focus the brief on the next frame.
     focus_brief: bool,
+    /// What was selected when the draft opened, to go back on `[esc]`.
+    before_draft: Selection,
+    /// Drafts and last sent text of each conversation's field.
+    drafts: Drafts,
+    /// Open tasks of each director session, from the last snapshot.
+    directors: BTreeMap<String, Vec<TaskId>>,
+    /// What the selected session's body shows: terminal or monitor.
+    body: SessionBody,
+    /// The director monitor's task picker is open.
+    task_menu: bool,
+    /// Open the preselected session's monitor once it appears (screenshots).
+    demo_body: bool,
+    /// The field gave up the focus (Escape): the window keeps it.
+    blur_composer: bool,
     /// Real session of each launch, from the last snapshot (it can arrive
     /// before the launch's own answer).
     resolved: HashMap<String, String>,
@@ -119,7 +138,7 @@ pub struct MainView {
     viewport_w: f32,
     /// The updater of the daemon and the `[^]` notice.
     update: update_notice::UpdateUi,
-    _brief_events: Subscription,
+    _composer_events: Subscription,
 }
 
 fn now_ms() -> i64 {
@@ -187,7 +206,7 @@ impl MainView {
         let preselect = std::env::var("TITAN_AGENT_SELECT").ok();
         let defaults = crate::config::load();
         let brief = cx.new(|cx| {
-            let mut input = BriefInput::new(
+            let mut input = Composer::new(
                 "Escribe el encargo. titan-agent no lo completa ni lo reescribe.",
                 cx,
             );
@@ -199,13 +218,18 @@ impl MainView {
             }
             input
         });
-        let brief_events = cx.subscribe(&brief, |this, _, event: &BriefEvent, cx| match event {
-            BriefEvent::Changed => {
-                this.new.error = None;
-                cx.notify();
-            }
-            BriefEvent::Submit => this.launch(cx),
-        });
+        let composer_events =
+            cx.subscribe(&brief, |this, _, event: &ComposerEvent, cx| match event {
+                ComposerEvent::Changed => {
+                    this.new.error = None;
+                    cx.notify();
+                }
+                ComposerEvent::Submit => this.launch(cx),
+                ComposerEvent::Blurred => {
+                    this.blur_composer = true;
+                    cx.notify();
+                }
+            });
         let demo_menu = match std::env::var("TITAN_AGENT_DEMO_MENU").as_deref() {
             Ok("agent") => Some(Menu::Agent),
             Ok("model") => Some(Menu::Model),
@@ -214,6 +238,10 @@ impl MainView {
             Ok("project") => Some(Menu::Project),
             _ => None,
         };
+        // Screenshots only: the director's monitor of the preselected
+        // session (`TITAN_AGENT_BODY=monitor`) and its task picker open.
+        let demo_body = std::env::var("TITAN_AGENT_BODY").as_deref() == Ok("monitor");
+        let task_menu = std::env::var("TITAN_AGENT_DEMO_MENU").as_deref() == Ok("task");
         MainView {
             client,
             connected: false,
@@ -251,6 +279,13 @@ impl MainView {
             settings_menu: None,
             folders: Vec::new(),
             focus_brief: true,
+            before_draft: Selection::None,
+            drafts: Drafts::default(),
+            directors: BTreeMap::new(),
+            body: SessionBody::Terminal,
+            demo_body,
+            task_menu,
+            blur_composer: false,
             resolved: HashMap::new(),
             teams: Vec::new(),
             quotas: Vec::new(),
@@ -260,7 +295,7 @@ impl MainView {
             lane_window_s: monitor::LANE_WINDOWS[0],
             viewport_w: 1440.,
             update: update_notice::UpdateUi::new(),
-            _brief_events: brief_events,
+            _composer_events: composer_events,
         }
     }
 
@@ -392,6 +427,10 @@ impl MainView {
                 self.sources = sources;
                 self.teams = teams;
                 self.quotas = quotas;
+                self.directors = directors(&self.teams, &self.sessions);
+                if let Selection::Session(key) = &self.selection {
+                    self.body = settle(&self.body, self.director_tasks(key));
+                }
                 self.follow_launches(&launches, cx);
                 if let Some(fragment) = self.preselect.clone()
                     && let Some(key) = self
@@ -401,7 +440,13 @@ impl MainView {
                         .map(|s| s.key.clone())
                 {
                     self.preselect = None;
-                    self.select_session(key, None, cx);
+                    // Screenshots: the picker asked for by the scene.
+                    let picker = self.task_menu;
+                    self.select_session(key.clone(), None, cx);
+                    if std::mem::take(&mut self.demo_body) {
+                        self.toggle_monitor(&key, cx);
+                        self.task_menu = picker;
+                    }
                 }
                 if let Ok(name) = std::env::var("TITAN_AGENT_PROJECT")
                     && self.selection == Selection::None
@@ -455,6 +500,10 @@ impl MainView {
     }
 
     fn select_session(&mut self, key: String, window: Option<&mut Window>, cx: &mut Context<Self>) {
+        // Another session (or the director's own row, from its monitor)
+        // starts on its conversation.
+        self.body = SessionBody::Terminal;
+        self.task_menu = false;
         self.selection = Selection::Session(key.clone());
         self.notice = None;
         let attachable = self
@@ -491,6 +540,11 @@ impl MainView {
         } else if keystroke.key == "escape" && self.new.menu.is_some() {
             self.new.menu = None;
             cx.notify();
+        } else if keystroke.key == "escape" && self.task_menu {
+            self.task_menu = false;
+            cx.notify();
+        } else if keystroke.key == "escape" && self.selection == Selection::New {
+            self.close_draft(cx);
         } else if keystroke.key == "escape" && (self.cancel_take_control() || self.update_cancel())
         {
             cx.notify();
@@ -517,7 +571,7 @@ impl MainView {
                 .into_any_element(),
             },
             Selection::Project(root) => self.monitor_view(&root, cx).into_any_element(),
-            Selection::New => self.new_session_view(window, cx).into_any_element(),
+            Selection::New => self.draft_view(window, cx).into_any_element(),
             Selection::Settings => self.settings_view(cx).into_any_element(),
             Selection::None => placeholder(
                 "Elige una sesión",
@@ -542,6 +596,9 @@ impl Render for MainView {
                 let handle = view.read(cx).focus_handle(cx);
                 handle.focus(window, cx);
             }
+        }
+        if std::mem::take(&mut self.blur_composer) {
+            self.focus.focus(window, cx);
         }
         if self.focus_brief && self.selection == Selection::New {
             self.focus_brief = false;

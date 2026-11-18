@@ -67,7 +67,7 @@ stop() {
 # Scenes: name, description and the variables the window reads. Each scene
 # sets its own variables here, so a capture never depends on the caller's
 # shell splitting words.
-SCENES="inicio terminal filtro nueva nueva-teclas nueva-menu nueva-error ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-estrecho act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
+SCENES="inicio terminal filtro nueva nueva-teclas nueva-estrecho nueva-menu nueva-error lanzar directora directora-monitor directora-encargos dos-equipos ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-estrecho act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
 
 describe() {
   case "$1" in
@@ -75,7 +75,13 @@ describe() {
     terminal) echo "terminal de la sesión del director (claude attach falso)" ;;
     filtro) echo "árbol filtrado por «sftp»" ;;
     nueva) echo "nueva sesión con un encargo escrito" ;;
-    nueva-teclas) echo "nueva sesión con un encargo y una lista escritos por el guion de teclas" ;;
+    nueva-teclas) echo "borrador con un encargo, una lista y un elemento sangrado escritos por el guion de teclas" ;;
+    nueva-estrecho) echo "borrador con el encargo escrito en una ventana estrecha (1000x800)" ;;
+    lanzar) echo "borrador: el guion escribe un encargo y pulsa Enter; la vista pasa a la sesión lanzada" ;;
+    directora) echo "sesión directora (sftp renombrar): barra con [m] monitor, [*] en el árbol" ;;
+    directora-monitor) echo "[m] de la directora: su monitor en lugar del terminal, con la miga y el selector" ;;
+    directora-encargos) echo "monitor de la directora con el selector de sus dos encargos abierto" ;;
+    dos-equipos) echo "segunda directora del mismo proyecto (sincronizar hosts) con su propio monitor" ;;
     nueva-menu) echo "nueva sesión con el menú de modelo abierto" ;;
     nueva-error) echo "nueva sesión con un lanzamiento rechazado" ;;
     ajustes) echo "ajustes por defecto de nueva sesión" ;;
@@ -106,8 +112,14 @@ scene_env() {
     nueva) export TITAN_AGENT_NEW=1 TITAN_AGENT_DEMO_BRIEF="Añade la orden rename al explorador SFTP.\nSi el destino existe, error claro sin tocar nada." ;;
     nueva-teclas)
       export TITAN_AGENT_NEW=1
-      export TITAN_AGENT_DEMO_KEYS="Añade la orden rename al explorador SFTP.{enter}{enter}- Si el destino existe, error claro.{enter}- Sin tocar nada en el servidor."
+      export TITAN_AGENT_DEMO_KEYS="Añade la orden rename al explorador SFTP.{shift-enter}{shift-enter}- Si el destino existe, error claro.{shift-enter}{tab}con el nombre del fichero{shift-enter}{shift-tab}Sin tocar nada en el servidor."
       ;;
+    nueva-estrecho) scene_env nueva-teclas; export TITAN_AGENT_DEMO_SIZE=1000x800 ;;
+    lanzar) export TITAN_AGENT_NEW=1 TITAN_AGENT_DEMO_KEYS="Revisa el changelog de la 0.7.0{enter}" ;;
+    directora) export TITAN_AGENT_SELECT="sftp renombrar" ;;
+    directora-monitor) scene_env directora; export TITAN_AGENT_BODY=monitor ;;
+    directora-encargos) scene_env directora-monitor; export TITAN_AGENT_DEMO_MENU=task ;;
+    dos-equipos) export TITAN_AGENT_SELECT="sincronizar hosts" TITAN_AGENT_BODY=monitor ;;
     nueva-menu) scene_env nueva; export TITAN_AGENT_DEMO_MENU=model ;;
     nueva-error) scene_env nueva; export TITAN_AGENT_DEMO_ERROR="La carpeta no existe: ~/dev/titan-sh" ;;
     ajustes) export TITAN_AGENT_SETTINGS=1 ;;
@@ -158,6 +170,15 @@ down() {
   echo "demo parada"
 }
 
+# Drops the TITAN_AGENT_* variables inherited from the caller's shell, so a
+# variable left over from a hand test never changes a scene (the daemon's
+# TITAN_AGENTD_* are set explicitly where they are used).
+clean_env() {
+  for var in $(env | sed -n 's/^\(TITAN_AGENT_[A-Za-z0-9_]*\)=.*/\1/p'); do
+    unset "$var"
+  done
+}
+
 ui() {
   [ $# -eq 1 ] || die "uso: demo.sh ui <escena>"
   describe "$1" >/dev/null || die "escena desconocida: $1 (demo.sh escenas)"
@@ -166,6 +187,9 @@ ui() {
   stop ui
   (
     display_env
+    clean_env
+    # shot turns the hover styles off (NOHOVER), probar keeps them.
+    [ -z "${NOHOVER:-}" ] || export TITAN_AGENT_DEMO_NO_HOVER=1
     export TITAN_AGENT_DEMO_SIZE="$SIZE"
     scene_env "$1"
     export HOME="$DIR/home" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENT_CONFIG_DIR="$DIR/config"
@@ -215,15 +239,26 @@ shot() {
   miss() { echo "demo: $*" >&2; return 1; }
   out=${2:-$SHOTS/$1.png}
   # The size the scene asks for (scene_env runs in a subshell: no leak).
-  want=$(TITAN_AGENT_DEMO_SIZE="$SIZE"; scene_env "$1"; printf %s "$TITAN_AGENT_DEMO_SIZE")
+  want=$(clean_env; TITAN_AGENT_DEMO_SIZE="$SIZE"; scene_env "$1"; printf %s "$TITAN_AGENT_DEMO_SIZE")
   mkdir -p "$(dirname "$out")"
   # An old capture with this name must not survive a failed one.
   rm -f "$out"
   # The window opens under the pointer: without hover styles a capture does
   # not depend on where it was left (probar keeps them, for the user).
-  export TITAN_AGENT_DEMO_NO_HOVER=1
+  NOHOVER=1
   ui "$1"
+  # A key script types for a while after the window opens: give it time.
+  keys=$(clean_env; scene_env "$1"; printf %s "${TITAN_AGENT_DEMO_KEYS:-}")
   sleep "$WAIT"
+  if [ -n "$keys" ]; then
+    # The window says when its key script is done (20 s at most).
+    n=0
+    while [ "$n" -lt 40 ] && ! grep -q "guion de teclas terminado" "$DIR/ui.log" 2>/dev/null; do
+      sleep 0.5
+      n=$((n + 1))
+    done
+    sleep 1
+  fi
   display_env
   pid=$(cat "$RUN/ui.pid")
   alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }

@@ -1,11 +1,15 @@
-//! «Nueva sesión» box (ADR-0002: the brief is only what the user types; one
-//! click, one launch; the exact command is shown before launching).
+//! The conversation view in its draft state, what was the «Nueva sesión»
+//! box (docs/Decisiones visuales/Conversación de sesión y campo de texto
+//! común.md): settings, the exact command and the common text field; Enter
+//! launches and the view becomes the session's (ADR-0002: the brief is only
+//! what the user types; one Enter, one launch; the exact command is shown
+//! before launching).
 
 use std::rc::Rc;
 
 use gpui::{
     App, ClickEvent, Context, Div, Entity, Focusable, FontWeight, PathPromptOptions, Role, Window,
-    div, prelude::*, px,
+    div, prelude::*, px, relative,
 };
 use titan_agent_core::launch::{
     LaunchDefaults, LaunchSpec, efforts, folder_name, models, permissions,
@@ -14,7 +18,9 @@ use titan_agent_core::project::{project_name, tilde};
 use titan_agent_core::protocol::{LaunchRef, LaunchResult, Request};
 use titan_agent_core::session::AgentCli;
 
-use crate::brief::BriefInput;
+use titan_agent::conversation::SessionBody;
+
+use super::composer::Composer;
 use crate::terminal::TerminalView;
 use crate::theme::{self, color, hairline};
 
@@ -23,10 +29,13 @@ use super::menu::{
 };
 use super::{MainView, Pending, Selection};
 
+/// Key of the draft's field in [`titan_agent::composer::Drafts`].
+pub(super) const DRAFT_KEY: &str = "new";
+
 /// State of the "new session" box (ADR-0002: the brief is only what the
 /// user types; one click, one launch; the exact command is shown).
 pub(super) struct NewSession {
-    pub(super) brief: Entity<BriefInput>,
+    pub(super) brief: Entity<Composer>,
     /// Current choices, starting from the configured defaults.
     pub(super) form: LaunchDefaults,
     /// Working folder (a project root or a folder picked with `[d]`).
@@ -52,10 +61,24 @@ impl MainView {
         if let Some(root) = current {
             self.new.folder = Some(root);
         }
+        if self.selection != Selection::New {
+            self.before_draft = self.selection.clone();
+        }
         self.selection = Selection::New;
         self.new.menu = None;
         let handle = self.new.brief.read(cx).focus_handle(cx);
         handle.focus(window, cx);
+        cx.notify();
+    }
+
+    /// `[esc] cerrar`: back to what was selected before the draft. The
+    /// text stays for the next time.
+    pub(super) fn close_draft(&mut self, cx: &mut Context<Self>) {
+        self.new.menu = None;
+        self.selection = std::mem::replace(&mut self.before_draft, Selection::None);
+        if let Selection::Session(key) = self.selection.clone() {
+            self.select_session(key, None, cx);
+        }
         cx.notify();
     }
 
@@ -102,8 +125,8 @@ impl MainView {
         })
     }
 
-    /// One click of `[ok] lanzar` (or ctrl+enter): one launch request with
-    /// a fresh token. Nothing is retried.
+    /// One Enter in the field: one launch request with a fresh token.
+    /// Nothing is retried.
     pub(super) fn launch(&mut self, cx: &mut Context<Self>) {
         if self.new.launching {
             return;
@@ -140,6 +163,12 @@ impl MainView {
     /// TUI's terminal for Codex) and empty the box for the next one.
     pub(super) fn launched(&mut self, launched: LaunchResult, cx: &mut Context<Self>) {
         let sent = self.new.sent.take();
+        if let Some(text) = &sent {
+            // ↑ on the empty field brings it back.
+            self.drafts.record_sent(DRAFT_KEY, text);
+            let last = self.drafts.last_sent(DRAFT_KEY).map(str::to_string);
+            self.new.brief.update(cx, |brief, _| brief.last_sent = last);
+        }
         if sent.as_deref() == Some(self.new.brief.read(cx).text()) {
             self.new.brief.update(cx, |brief, cx| brief.clear(cx));
         }
@@ -157,6 +186,10 @@ impl MainView {
             self.terminals.insert(key.clone(), view);
         }
         if key.starts_with("launch:") {
+            // The new session starts on its conversation, whatever the
+            // previous one showed.
+            self.body = SessionBody::Terminal;
+            self.task_menu = false;
             self.selection = Selection::Session(key);
             self.focus_terminal = true;
             cx.notify();
@@ -209,7 +242,7 @@ impl MainView {
         cx.notify();
     }
 
-    pub(super) fn new_session_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
+    pub(super) fn draft_view(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> Div {
         let agent = self.new.form.agent;
         let chosen = self.new.form.get(agent).clone();
         let agent_color = theme::agent_color(agent);
@@ -218,8 +251,9 @@ impl MainView {
             .as_deref()
             .map(project_name)
             .unwrap_or_else(|| "sin carpeta".into());
-        let empty = self.new.brief.read(cx).text().trim().is_empty();
         let command = self.spec(cx).map(|mut spec| {
+            // The exact command (ADR-0002), only with a marker while the
+            // field is empty.
             if spec.brief.trim().is_empty() {
                 spec.brief = "<tu encargo>".into();
             }
@@ -261,7 +295,7 @@ impl MainView {
                 "new-effort",
                 "",
                 theme::MUTE,
-                chosen.effort.clone(),
+                format!("esfuerzo {}", chosen.effort),
                 "Esfuerzo",
                 open == Some(Menu::Effort),
                 toggle(Menu::Effort),
@@ -271,7 +305,11 @@ impl MainView {
                 "new-permission",
                 "",
                 theme::MUTE,
-                chosen.permission.clone(),
+                format!(
+                    "{} {}",
+                    permission_title(agent).to_lowercase(),
+                    chosen.permission
+                ),
                 permission_title(agent),
                 open == Some(Menu::Permission),
                 toggle(Menu::Permission),
@@ -292,142 +330,132 @@ impl MainView {
             let (title, items) = self.new_menu_items(menu);
             menu_list(title, items, cx)
         });
-        let disabled = empty || self.new.launching || command.is_none();
-        let launch = div()
-            .id("launch")
-            .role(Role::Button)
-            .aria_label("lanzar")
-            .ml_auto()
+        let bar = div()
             .flex()
             .items_center()
-            .min_h(px(32.))
+            .gap(px(8.))
             .px(px(16.))
-            .border_1()
-            .border_color(color(if disabled {
-                theme::HAIRLINE_STRONG
-            } else {
-                theme::ACCENT
-            }))
-            .rounded(px(4.))
-            .bg(color(theme::SURFACE_ELEVATED))
+            .h(px(40.))
+            .flex_none()
+            .border_b_1()
+            .border_color(hairline())
             .text_size(px(13.))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(color(if disabled { theme::STONE } else { theme::INK }))
-            .when(!disabled, |d| d.cursor_pointer())
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.launch(cx)))
-            .child(if self.new.launching {
-                "[>] lanzando…"
-            } else {
-                "[ok] lanzar"
-            });
+            .text_color(color(theme::MUTE))
+            .child(div().text_color(color(theme::INK)).child("[+]"))
+            .child(
+                div()
+                    .text_color(color(theme::INK))
+                    .font_weight(FontWeight::BOLD)
+                    .child("Nueva sesión"),
+            )
+            .child("en")
+            .child(
+                div()
+                    .text_color(color(theme::BODY))
+                    .whitespace_nowrap()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .min_w(px(0.))
+                    .child(format!("[#] {project}")),
+            )
+            .child(div().flex_grow_1())
+            .child(
+                div()
+                    .id("close-draft")
+                    .role(Role::Button)
+                    .aria_label("cerrar")
+                    .flex_none()
+                    .text_size(px(12.))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.close_draft(cx)))
+                    .child("[esc] cerrar"),
+            );
+        let hint = if self.new.launching {
+            "[>] lanzando…".to_string()
+        } else {
+            "enter lanzar · shift+enter nueva línea · «- » lista · ↑ el último encargo".into()
+        };
 
         div()
             .flex()
             .flex_col()
-            .items_center()
             .size_full()
-            .p(px(16.))
-            .bg(color(theme::TERMINAL_BG))
+            .child(bar)
             .child(
                 div()
                     .flex()
-                    .flex_col()
                     .flex_grow_1()
+                    .min_h(px(0.))
                     .items_center()
                     .justify_center()
-                    .gap(px(8.))
-                    .py(px(48.))
-                    .child(
-                        div()
-                            .text_color(color(theme::INK))
-                            .text_size(px(28.))
-                            .font_weight(FontWeight::BOLD)
-                            .child("Nueva sesión"),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .text_size(px(13.))
-                            .text_color(color(theme::MUTE))
-                            .child("en")
-                            .child(
-                                div()
-                                    .text_color(color(theme::BODY))
-                                    .child(format!("[#] {project}")),
-                            )
-                            .child("con")
-                            .child(
-                                div()
-                                    .text_color(color(agent_color))
-                                    .child(agent.to_string()),
-                            ),
-                    ),
+                    .text_size(px(12.))
+                    .text_color(color(theme::MUTE))
+                    .child("la conversación empieza aquí"),
             )
             .child(
                 div()
-                    .w_full()
-                    .max_w(px(820.))
+                    .relative()
                     .flex()
                     .flex_col()
+                    .flex_none()
                     .gap(px(8.))
-                    .children(menu)
+                    .px(px(16.))
+                    .pt(px(12.))
+                    .pb(px(14.))
+                    .border_t_1()
+                    .border_color(hairline())
+                    // A settings menu floats over the empty conversation,
+                    // just above the chips.
+                    .children(menu.map(|menu| {
+                        div()
+                            .absolute()
+                            .bottom(relative(1.))
+                            .left(px(16.))
+                            .w(px(420.))
+                            .pb(px(4.))
+                            .child(menu)
+                    }))
                     .child(
                         div()
                             .flex()
-                            .flex_col()
-                            .border_1()
-                            .border_color(color(theme::ACCENT))
-                            .rounded(px(4.))
-                            .bg(color(theme::CANVAS))
-                            .child(self.new.brief.clone())
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .items_center()
-                                    .gap(px(4.))
-                                    .p(px(8.))
-                                    .border_t_1()
-                                    .border_color(hairline())
-                                    .children(chips)
-                                    .child(launch),
-                            ),
+                            .flex_wrap()
+                            .items_center()
+                            .gap(px(4.))
+                            .children(chips),
                     )
                     .child(
                         div()
                             .flex()
                             .flex_wrap()
-                            .gap(px(8.))
-                            .px(px(4.))
+                            .gap_x(px(6.6))
+                            .px(px(2.))
                             .text_size(px(11.))
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(color(theme::STONE))
-                                    .child("se ejecutará"),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.))
-                                    .flex()
-                                    .flex_wrap()
-                                    .gap_x(px(6.6))
-                                    .text_color(color(theme::MUTE))
-                                    .children(
-                                        command_groups(&command.unwrap_or_else(|| {
-                                            "elige la carpeta de trabajo con [#] o [d]".into()
-                                        }))
-                                        .into_iter()
-                                        .map(|group| div().min_w(px(0.)).child(group)),
-                                    ),
+                            .text_color(color(theme::MUTE))
+                            .child(div().flex_none().child("$"))
+                            .children(
+                                command_groups(&command.unwrap_or_else(|| {
+                                    "elige la carpeta de trabajo con [#] o [d]".into()
+                                }))
+                                .into_iter()
+                                .map(|group| div().min_w(px(0.)).child(group)),
                             ),
+                    )
+                    .child(self.new.brief.clone())
+                    .child(
+                        div()
+                            .px(px(2.))
+                            .text_size(px(11.))
+                            .text_color(color(if self.new.launching {
+                                theme::MUTE
+                            } else {
+                                theme::STONE
+                            }))
+                            .child(hint),
                     )
                     .when_some(self.new.error.clone(), |d, error| {
                         d.child(
                             div()
-                                .px(px(4.))
+                                .px(px(2.))
                                 .text_size(px(11.))
                                 .text_color(color(theme::DANGER))
                                 .child(format!("[x] {error}")),

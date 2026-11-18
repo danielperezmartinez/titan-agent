@@ -1,7 +1,6 @@
 //! titan-agent: GPUI desktop interface, a client of titan-agentd (ADR-0004).
 
 mod app;
-mod brief;
 mod client;
 mod config;
 mod terminal;
@@ -67,6 +66,8 @@ fn play_keys(window: gpui::AnyWindowHandle, steps: Vec<DemoStep>, cx: &mut App) 
                 }
             }
         }
+        // The demo kit waits for this line before capturing.
+        eprintln!("titan-agent: guion de teclas terminado");
     })
     .detach();
 }

@@ -1,4 +1,8 @@
-//! The brief field of the "new session" box: a small multi-line text editor.
+//! The common text field of the conversation view (docs/Decisiones
+//! visuales/Conversación de sesión y campo de texto común.md): a small
+//! multi-line text editor. What each editing key does, its height and the
+//! drafts live in the pure model `titan_agent::composer`; this component
+//! paints it and routes the keys.
 //!
 //! GPUI ships no text field (ADR-0003), so this follows its `input.rs`
 //! example: the platform input handler delivers typed text and IME
@@ -6,8 +10,9 @@
 //! shapes the text with wrapping. The text is only ever what the user typed
 //! (ADR-0002): nothing here completes or rewrites it.
 
-mod text;
-pub use text::BriefText;
+use titan_agent::composer::{
+    ComposerText, Effect, MIN_ROWS, edit_key, normalize_paste, rows_shown,
+};
 
 use std::ops::Range;
 
@@ -19,20 +24,18 @@ use gpui::{
     fill, point, prelude::*, px, relative, size,
 };
 
-use crate::theme::{self, color, hsla};
+use crate::theme::{self, color, hairline, hsla};
 
-/// Visible lines of the field: it grows with the text up to the maximum and
-/// then scrolls.
-const MIN_LINES: usize = 4;
-const MAX_LINES: usize = 12;
 pub const FONT_SIZE: f32 = 13.;
 pub const LINE_HEIGHT: f32 = 19.;
 
 /// Events for the view that owns the field.
-pub enum BriefEvent {
+pub enum ComposerEvent {
     Changed,
-    /// ctrl+enter: the user asks to launch.
+    /// Enter with some text: the user asks to launch (or send) it.
     Submit,
+    /// Escape without a selection: the field gives up the focus.
+    Blurred,
 }
 
 /// One hard line of the last layout: its shaped text, where it starts in
@@ -43,9 +46,9 @@ struct LaidLine {
     top: Pixels,
 }
 
-pub struct BriefInput {
+pub struct Composer {
     focus: FocusHandle,
-    pub content: BriefText,
+    pub content: ComposerText,
     placeholder: SharedString,
     lines: Vec<LaidLine>,
     /// Content origin on screen (bounds origin minus the scroll).
@@ -59,24 +62,27 @@ pub struct BriefInput {
     /// Scroll to the cursor on the next paint (after an edit or a move,
     /// not after the wheel).
     reveal: bool,
+    /// The last text sent from this field, for ↑ on an empty field.
+    pub last_sent: Option<String>,
 }
 
-impl EventEmitter<BriefEvent> for BriefInput {}
+impl EventEmitter<ComposerEvent> for Composer {}
 
-impl BriefInput {
-    pub fn new(placeholder: &str, cx: &mut Context<Self>) -> BriefInput {
-        BriefInput {
+impl Composer {
+    pub fn new(placeholder: &str, cx: &mut Context<Self>) -> Composer {
+        Composer {
             focus: cx.focus_handle(),
-            content: BriefText::default(),
+            content: ComposerText::default(),
             placeholder: placeholder.to_string().into(),
             lines: Vec::new(),
             origin: Point::default(),
             bounds: None,
-            visual_lines: MIN_LINES,
+            visual_lines: MIN_ROWS,
             scroll: px(0.),
             selecting: false,
             goal_x: None,
             reveal: true,
+            last_sent: None,
         }
     }
 
@@ -85,16 +91,16 @@ impl BriefInput {
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.content = BriefText::default();
+        self.content = ComposerText::default();
         self.scroll = px(0.);
-        cx.emit(BriefEvent::Changed);
+        cx.emit(ComposerEvent::Changed);
         cx.notify();
     }
 
     fn changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.reveal = true;
         window.notify_text_input_changed(&self.focus);
-        cx.emit(BriefEvent::Changed);
+        cx.emit(ComposerEvent::Changed);
         cx.notify();
     }
 
@@ -106,6 +112,28 @@ impl BriefInput {
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
+        if let Some(key) = edit_key(keystroke) {
+            match self.content.press(key, self.last_sent.as_deref()) {
+                Effect::Nothing => {}
+                Effect::Edited => {
+                    self.goal_x = None;
+                    self.changed(window, cx);
+                }
+                Effect::Submit(_) => cx.emit(ComposerEvent::Submit),
+                // The owner takes the focus; Escape again closes its view.
+                Effect::Blur => cx.emit(ComposerEvent::Blurred),
+                Effect::Unhandled => return self.unhandled(event, window, cx),
+            }
+            cx.stop_propagation();
+            return;
+        }
+        self.unhandled(event, window, cx);
+    }
+
+    /// The keys the model leaves to the view: movement, deletion and the
+    /// clipboard.
+    fn unhandled(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
         let m = keystroke.modifiers;
         let ctrl = m.control || m.platform;
         let shift = m.shift;
@@ -113,14 +141,6 @@ impl BriefInput {
         let cursor = text.cursor();
         let mut keep_goal = false;
         match keystroke.key.as_str() {
-            "enter" if ctrl => {
-                cx.emit(BriefEvent::Submit);
-            }
-            "enter" => {
-                text.replace(None, "\n");
-                self.goal_x = None;
-                self.changed(window, cx);
-            }
             "backspace" | "delete" => {
                 let forward = keystroke.key == "delete";
                 if ctrl && text.selection.is_empty() {
@@ -195,16 +215,9 @@ impl BriefInput {
             }
             "v" if ctrl => {
                 if let Some(paste) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    text.replace(None, &paste.replace("\r\n", "\n"));
+                    text.replace(None, &normalize_paste(&paste));
                     self.changed(window, cx);
                 }
-            }
-            "escape" => {
-                if text.selection.is_empty() {
-                    return;
-                }
-                text.move_to(cursor);
-                self.moved(window, cx);
             }
             // Plain text goes through the platform input handler.
             _ => return,
@@ -312,12 +325,12 @@ impl BriefInput {
     }
 
     fn max_scroll(&self) -> Pixels {
-        let shown = self.visual_lines.clamp(MIN_LINES, MAX_LINES);
+        let shown = rows_shown(self.visual_lines);
         px(LINE_HEIGHT) * self.visual_lines.saturating_sub(shown) as f32
     }
 }
 
-impl EntityInputHandler for BriefInput {
+impl EntityInputHandler for Composer {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -420,18 +433,19 @@ impl EntityInputHandler for BriefInput {
     }
 }
 
-impl Focusable for BriefInput {
+impl Focusable for Composer {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.focus.clone()
     }
 }
 
-impl Render for BriefInput {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let shown = self.visual_lines.clamp(MIN_LINES, MAX_LINES);
+impl Render for Composer {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let shown = rows_shown(self.visual_lines);
+        let focused = self.focus.is_focused(window);
         gpui::div()
-            .id("brief")
-            .key_context("Brief")
+            .id("composer")
+            .key_context("Composer")
             .track_focus(&self.focus)
             .cursor(CursorStyle::IBeam)
             .on_key_down(cx.listener(Self::key_down))
@@ -440,17 +454,26 @@ impl Render for BriefInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_scroll(cx.listener(Self::scroll_wheel))
-            .p(px(12.))
+            .px(px(12.))
+            .py(px(10.))
             .w_full()
-            .h(px(LINE_HEIGHT * shown as f32 + 24.))
+            .h(px(LINE_HEIGHT * shown as f32 + 22.))
+            .border_1()
+            .border_color(if focused {
+                color(theme::ACCENT)
+            } else {
+                hairline()
+            })
+            .rounded(px(4.))
+            .bg(color(theme::SURFACE))
             .text_size(px(FONT_SIZE))
             .line_height(px(LINE_HEIGHT))
-            .child(BriefElement { input: cx.entity() })
+            .child(ComposerElement { input: cx.entity() })
     }
 }
 
-struct BriefElement {
-    input: gpui::Entity<BriefInput>,
+struct ComposerElement {
+    input: gpui::Entity<Composer>,
 }
 
 struct Prepainted {
@@ -458,7 +481,7 @@ struct Prepainted {
     cursor: Option<PaintQuad>,
 }
 
-impl IntoElement for BriefElement {
+impl IntoElement for ComposerElement {
     type Element = Self;
 
     fn into_element(self) -> Self {
@@ -466,7 +489,7 @@ impl IntoElement for BriefElement {
     }
 }
 
-impl Element for BriefElement {
+impl Element for ComposerElement {
     type RequestLayoutState = ();
     type PrepaintState = Prepainted;
 
@@ -570,7 +593,7 @@ impl Element for BriefElement {
         let cursor_offset = if empty { 0 } else { content.cursor() };
         // Keep the cursor visible.
         let cursor_at = {
-            let probe = BriefProbe { lines: &laid };
+            let probe = ComposerProbe { lines: &laid };
             probe.position(cursor_offset)
         };
         if let Some(at) = cursor_at.filter(|_| input.reveal) {
@@ -584,7 +607,7 @@ impl Element for BriefElement {
         scroll = scroll.clamp(px(0.), max_scroll);
         let origin = point(bounds.origin.x, bounds.origin.y - scroll);
 
-        let probe = BriefProbe { lines: &laid };
+        let probe = ComposerProbe { lines: &laid };
         let mut selection = Vec::new();
         if !empty && !content.selection.is_empty() {
             let (Some(a), Some(b)) = (
@@ -684,11 +707,11 @@ impl Element for BriefElement {
 }
 
 /// Position lookups on a layout that is not stored yet.
-struct BriefProbe<'a> {
+struct ComposerProbe<'a> {
     lines: &'a [LaidLine],
 }
 
-impl BriefProbe<'_> {
+impl ComposerProbe<'_> {
     fn position(&self, offset: usize) -> Option<Point<Pixels>> {
         let laid = self.lines.iter().rev().find(|l| l.start <= offset)?;
         let local = laid

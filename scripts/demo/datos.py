@@ -10,8 +10,10 @@ relative to now so the "working" states look live:
   session its model, and the demo projects under home/dev/.
 - agents.json: what the fake `claude agents --json` prints.
 - codex.json: threads, items and quota served by the fake app-server.
-- home/dev/titan-ssh/.agents/: a team.toml and the events of two team runs
-  (one in progress, one waiting on the user).
+- home/dev/titan-ssh/.agents/: a team.toml and the events of three team
+  runs: two directed by "sftp renombrar" (one in progress, one waiting on the
+  user) and one by "sincronizar hosts", a second director in a worktree of
+  the same project (two teams in one project).
 - config/projects.json: the imported projects (ADR-0014, read by the daemon
   through TITAN_AGENT_CONFIG_DIR): titan-ssh, recetas (no sessions) and
   borrado (its folder is gone); web-notas is left out, so its sessions go to
@@ -33,6 +35,8 @@ HOME = os.path.join(DIR, "home")
 DEV = os.path.join(HOME, "dev")
 SSH = os.path.join(DEV, "titan-ssh")
 WEB = os.path.join(DEV, "web-notas")
+# A Claude Code worktree of titan-ssh: its sessions fold into the project.
+SYNC = os.path.join(SSH, ".claude", "worktrees", "sincronizar")
 NOW_MS = int(time.time() * 1000)
 NOW_S = NOW_MS // 1000
 
@@ -57,7 +61,10 @@ CLAUDE = [
      "repasar el changelog", 80, "claude-sonnet-5-5"),
     ("w3bn0t45", "00000000-0000-4000-8000-0000000000d3", WEB, "background", "busy", "blocked",
      "web-notas: maqueta del editor", 12, "claude-opus-5-5"),
+    ("5yncd1r3", "00000000-0000-4000-8000-0000000000d4", SYNC, "background", "busy", None,
+     "titan-ssh: sincronizar hosts", 40, "claude-opus-5-5"),
 ]
+os.makedirs(SYNC, exist_ok=True)
 agents = []
 for short, sid, cwd, kind, status, state, name, ago, model in CLAUDE:
     entry = {"id": short, "pid": 1, "cwd": cwd, "kind": kind, "status": status,
@@ -87,18 +94,18 @@ ROLES = [
 DIRECTOR = "00000000-0000-4000-8000-0000000000d1"
 
 
-def run(task, steps):
+def run(task, steps, director=DIRECTOR):
     """Events of one task; each step is (seconds ago, type, fields)."""
     team = {"name": "titan-ssh", "director": "director", "roles": ROLES,
             "steps": ["disenador_tests", "revisor"], "review_role": "revisor",
             "max_review_rounds": 1}
     events = [{"v": 1, "ts_ms": NOW_MS - steps[0][0] * 1000 - 5000, "task": task,
-               "type": "task_created", "director_session": DIRECTOR, "base": "main",
+               "type": "task_created", "director_session": director, "base": "main",
                "base_commit": "a1b2c3d", "branch": "encargo/" + task,
                "worktree": ".agents/worktrees/" + task, "team": team}]
     for ago, kind, fields in steps:
         events.append({"v": 1, "ts_ms": NOW_MS - ago * 1000, "task": task, "type": kind,
-                       "director_session": DIRECTOR, **fields})
+                       "director_session": director, **fields})
     path = os.path.join(SSH, ".agents", "state", task, "events.jsonl")
     write(path, "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events))
 
@@ -161,6 +168,14 @@ run("sftp-enlaces", [
     (2998, "turn_finished", finished("revisor", 1, None, "hilo de revisor abierto en titan-agent",
                                      0, 0, 1, status="busy")),
 ])
+
+# A second team in the same project, directed by another session.
+run("sincronizar-hosts", [
+    (600, "brief_sent", brief("disenador_tests", 1, "encargo inicial")),
+    (599, "turn_started", started("disenador_tests", 1, "gpt-6.1-sol")),
+    (300, "activity", act("disenador_tests", 1, "edita crates/sync/tests/resume_acceptance.rs")),
+    (20, "activity", act("disenador_tests", 1, "$ cargo test --workspace")),
+], director="00000000-0000-4000-8000-0000000000d4")
 
 # --- Codex threads (fake app-server) ----------------------------------------
 

@@ -208,13 +208,13 @@ impl MainView {
                 name,
                 root,
                 count,
-                team_live,
+                // The team's `[*]` goes on its director's row now.
+                team_live: _,
             } => {
                 let selected = self.selection == Selection::Project(root.clone())
                     || (matches!(self.selection, Selection::Thread(_))
                         && self.thread.as_ref().and_then(|t| t.r.root.as_deref())
                             == Some(root.as_str()));
-                let root_for_marker = root.clone();
                 let id = ElementId::Name(SharedString::from(format!("p:{root}")));
                 div()
                     .id(id)
@@ -256,10 +256,6 @@ impl MainView {
                             .child(name),
                     )
                     .child(div().flex_grow_1().min_w(px(8.)).h(px(1.)).bg(hairline()))
-                    .when(
-                        team_live || self.teams.iter().any(|t| t.project_root == root_for_marker),
-                        |d| d.child(div().text_color(color(theme::SUCCESS)).child("[*]")),
-                    )
                     .child(div().flex_none().child(count.to_string()))
                     .into_any_element()
             }
@@ -269,6 +265,7 @@ impl MainView {
                 };
                 let selected = self.selection == Selection::Session(key.clone());
                 let finished = !session.state.is_live();
+                let director = !self.director_tasks(&key).is_empty();
                 let agent = theme::agent_color(session.agent);
                 let indent = if depth == 0 {
                     12.
@@ -310,7 +307,7 @@ impl MainView {
                     )
                     .child(
                         div()
-                            .flex_grow_1()
+                            .flex_shrink(1.)
                             .min_w(px(0.))
                             .overflow_hidden()
                             .whitespace_nowrap()
@@ -318,6 +315,15 @@ impl MainView {
                             .text_color(color(if finished { theme::MUTE } else { theme::BODY }))
                             .child(session.name.clone()),
                     )
+                    .when(director, |d| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .text_color(color(theme::SUCCESS))
+                                .child("[*]"),
+                        )
+                    })
+                    .child(div().flex_grow_1())
                     .child(agent_pill(session.agent, session.model.as_deref(), agent))
                     .into_any_element()
             }
@@ -362,7 +368,8 @@ impl MainView {
                     .child(marked("[>]", theme::SUCCESS, "trabajando"))
                     .child(marked("[?]", theme::WARNING, "te necesita"))
                     .child("[+] en espera")
-                    .child("[x] terminada"),
+                    .child("[x] terminada")
+                    .child(marked("[*]", theme::SUCCESS, "equipo en vivo")),
             )
     }
 }

@@ -117,13 +117,13 @@ Variante **equipo v3** (rama `feat/fase-2-equipo-v3`, sin push), en local el
   hasta resolver, hilo de Codex vivo en el app-server compartido (desde el
   cierre, con `--remote unix://`), marca `launched_here`, errores explicados en español con el texto del CLI.
 - **Interfaz**: campo de encargo de varias líneas ([[Catálogo técnico/Campo de
-  encargo]]), botones con lista corta para agente, modelo, esfuerzo,
+  texto común]], antes «Campo de encargo»), botones con lista corta para agente, modelo, esfuerzo,
   permisos/sandbox y proyecto (o `[d]` otra carpeta con el selector del
   sistema), línea «se ejecutará» que solo parte antes de una opción, `[ok]
   lanzar` (o `ctrl+enter`), error en `danger`, y `[*]` Configuración con los
   valores por defecto (`~/.config/titan-agent/defaults.json`).
 - Catálogo: [[Catálogo técnico/Lanzamiento de sesiones]], [[Catálogo
-  técnico/Campo de encargo]], [[Catálogo técnico/Protocolo de titan-agentd]] y
+  técnico/Campo de texto común]], [[Catálogo técnico/Protocolo de titan-agentd]] y
   [[Catálogo técnico/titan-agentd]].
 - Aplazado: recuperar tras reabrir la ventana el terminal de un Codex aún
   provisional (hallazgo menor de Sol).

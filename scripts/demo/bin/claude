@@ -1,8 +1,10 @@
 #!/bin/sh
 # Fake `claude` CLI of the demo kit (scripts/demo/demo.sh): lists the
 # invented sessions of agents.json and fakes `claude attach` in the
-# terminal. It never starts Claude Code.
+# terminal. A launch from the draft (`claude --bg …`) adds an invented
+# session to agents.json (lanzar.py). It never starts Claude Code.
 case "$1" in
+  --bg) exec python3 -I "$(dirname -- "$0")/../lanzar.py" "$TITAN_DEMO_DIR/agents.json" "$PWD" "$@" ;;
   agents) cat "$TITAN_DEMO_DIR/agents.json" ;;
   attach)
     printf '\033[1m✻ Claude Code\033[0m (demo) · sesión %s\r\n\r\n' "$2"

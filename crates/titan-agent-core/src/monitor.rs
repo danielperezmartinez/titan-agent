@@ -3,6 +3,8 @@
 //! sessions the daemon knows and the time. Pure, so the three views only
 //! draw a [`Board`].
 
+use std::collections::BTreeMap;
+
 use crate::project::project_root;
 use crate::protocol::{TeamTask, TerminalRef};
 use crate::session::{AgentCli, Session, SessionState, short_model};
@@ -129,33 +131,87 @@ fn role_label(role: &str) -> String {
     role.replace('_', " ")
 }
 
-/// Builds the board of a task.
-pub fn board(task: &TeamTask, run: &TeamRun, sessions: &[Session], now_ms: i64) -> Board {
-    // The events name the director's Claude Code session when titan-team
-    // ran inside one: that exact session is the director. Without it (or if
-    // the daemon does not list it), several sessions can share the team
-    // folder and the busiest live one is taken (it is the one running the tool).
+/// One open team task, by its team folder and name.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TaskId {
+    pub folder: String,
+    pub task: String,
+}
+
+impl TaskId {
+    pub fn of(task: &TeamTask) -> TaskId {
+        TaskId {
+            folder: task.folder.clone(),
+            task: task.task.clone(),
+        }
+    }
+
+    pub fn matches(&self, task: &TeamTask) -> bool {
+        self.folder == task.folder && self.task == task.task
+    }
+}
+
+/// The session that directs a task (ADR-0010). The events name the
+/// director's Claude Code session when titan-team ran inside one: that exact
+/// session is the director. Without it (or if the daemon does not list it),
+/// several sessions can share the team folder and the busiest live one is
+/// taken (it is the one running the tool). `None` for a team without a
+/// director role.
+pub fn director_of<'a>(
+    task: &TeamTask,
+    run: &TeamRun,
+    sessions: &'a [Session],
+) -> Option<&'a Session> {
+    run.director.as_ref()?;
     let exact = run
         .director_session
         .as_ref()
         .map(|id| format!("cl:{id}"))
         .and_then(|key| sessions.iter().find(|s| s.key == key));
-    let director_session = run.director.as_ref().and_then(|_| {
-        exact.or_else(|| {
-            sessions
-                .iter()
-                .filter(|s| s.agent == AgentCli::ClaudeCode && same_folder(&s.cwd, &task.folder))
-                .min_by_key(|s| {
-                    let rank = match s.state {
-                        SessionState::NeedsYou => 0,
-                        SessionState::Working => 1,
-                        SessionState::Waiting => 2,
-                        SessionState::Finished { .. } => 3,
-                    };
-                    (rank, -s.state_since_ms.unwrap_or(0))
-                })
+    exact.or_else(|| {
+        sessions
+            .iter()
+            .filter(|s| s.agent == AgentCli::ClaudeCode && same_folder(&s.cwd, &task.folder))
+            .min_by_key(|s| {
+                let rank = match s.state {
+                    SessionState::NeedsYou => 0,
+                    SessionState::Working => 1,
+                    SessionState::Waiting => 2,
+                    SessionState::Finished { .. } => 3,
+                };
+                (rank, std::cmp::Reverse(s.state_since_ms.unwrap_or(0)))
+            })
+    })
+}
+
+/// The open tasks of every director session, by session key: the newest
+/// first (last event), then by name. The monitor's rule read backwards, so
+/// `[m]`, the tree's `[*]` and the monitor agree on who directs what.
+pub fn directors(teams: &[TeamTask], sessions: &[Session]) -> BTreeMap<String, Vec<TaskId>> {
+    let mut found: BTreeMap<String, Vec<(i64, TaskId)>> = BTreeMap::new();
+    for task in teams {
+        let Some(run) = run_of(task).filter(|run| !run.closed) else {
+            continue;
+        };
+        if let Some(director) = director_of(task, &run, sessions) {
+            found
+                .entry(director.key.clone())
+                .or_default()
+                .push((run.last_ts_ms, TaskId::of(task)));
+        }
+    }
+    found
+        .into_iter()
+        .map(|(key, mut tasks)| {
+            tasks.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.task.cmp(&b.1.task)));
+            (key, tasks.into_iter().map(|(_, id)| id).collect())
         })
-    });
+        .collect()
+}
+
+/// Builds the board of a task.
+pub fn board(task: &TeamTask, run: &TeamRun, sessions: &[Session], now_ms: i64) -> Board {
+    let director_session = director_of(task, run, sessions);
     let director_state = director_session.map_or(SessionState::Waiting, |s| s.state);
     let mut agents = vec![Agent {
         id: USER.into(),
