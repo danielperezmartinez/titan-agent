@@ -5,7 +5,7 @@ Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrad
 Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos).'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-18T01:00:00+01:00
+Última modificación: 2026-11-18T01:30:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -38,7 +38,7 @@ Previas:
 
 | Orden | Trabajo | Depende de | Versión (propuesta) |
 | --- | --- | --- | --- |
-| 0 | Ronda [[Equipo v6]]: corrige las carencias de [[Versión 0.6.0 - Instalador y actualización automática]] → «Carencias del equipo», con las 7 a 9 añadidas para esta versión | — | la suya |
+| 0 | Hecha (PR #12, 0.6.1). Ronda [[Equipo v6]]: corrige las carencias de [[Versión 0.6.0 - Instalador y actualización automática]] → «Carencias del equipo», con las 7 a 9 añadidas para esta versión | — | la suya |
 | 1 | **PR A**: conversación y monitor por sesión directora | 0 | 0.7.0 |
 | 2 | **PR B**: proyectos importados y resumen del proyecto | A | 0.7.1 |
 | 3 | Release 0.7.x, con autorización del usuario | A y B | — |

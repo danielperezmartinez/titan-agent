@@ -1,11 +1,11 @@
 ---
 Nombre: Equipo v6
-Estado: En curso
+Estado: Hecha
 Resumen: 'Corrige las carencias del equipo v5 anotadas en la 0.6.0 (incluidas las 7–9 del diseño de la 0.7.0): git de una orden por llamada y mensajes por fichero (ask --message-file, mensaje vacío rechazado), rutas en el contrato, titan-team --version y un binario fijado (bin/team pin) para las tareas sobre el propio equipo, kit de demo con tamaño de ventana, guion de teclas, flujos reales y projects.json, Luna sin dar por fallido un turno por el sandbox, y la lógica de interacción en modelos puros con tests. Deja la configuración v6 como la vigente.'
 Decisiones: 'Encargo de la sesión de control control-3b (2026-11-18). Versión 0.6.1 (patch), acordada con el usuario el 2026-11-18. Revisión de Sol: 3 hallazgos aceptados (uno ya corregido).'
 Bloqueada: []
 Fecha de creación: 2026-11-18T00:10:00+01:00
-Última modificación: 2026-11-18T01:10:00+01:00
+Última modificación: 2026-11-18T01:30:00+01:00
 ---
 
 # Equipo v6
@@ -294,7 +294,11 @@ Rama `feat/equipo-v6`, en local el 2026-11-18:
   lo dice con el error. No queda ningún proceso de la demo al salir.
 - `demo.sh flujos` lista `actualizacion.sh`.
 - Versión **0.6.1** (patch, acordada con el usuario el 2026-11-18).
-- Pendiente: push, PR e integración, con autorización del usuario.
+- **PR #12** integrada por squash con autorización del usuario: commit
+  `0835144` en `main`, con los checks `Cambios`, `Fugas`, `Verificar` y
+  `Windows` en verde y gitleaks en cada commit y push. GitHub rechazó
+  `--author-email` con el correo noreply («Invalid email address», como en
+  la PR #4) y se integró sin él. Versión 0.6.1, sin etiqueta ni release.
 
 ## Métricas
 
@@ -347,5 +351,4 @@ de demo `TITAN_AGENT_DEMO_SIZE` y `TITAN_AGENT_DEMO_KEYS` en la app (con
 `titan_agent::demo`); escenas, `flujos` y `projects.json` en el kit; la
 skill, los prompts de Luna y del revisor y `team.toml` de la v6. La hará
 servir [[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]].
-Falta publicar la PR (0.6.1) con autorización del usuario; hasta entonces
-la tarea sigue `En curso`.
+Integrada en `main` con la PR #12 (versión 0.6.1).
