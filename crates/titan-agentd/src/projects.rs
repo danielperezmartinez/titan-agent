@@ -75,7 +75,8 @@ impl ProjectStore {
 
     /// `project_add`: an absolute path of an existing folder.
     pub fn add(&mut self, path: &str, now_ms: i64) -> Result<String, Refusal> {
-        if !path.starts_with('/') || !Path::new(path).is_dir() {
+        // Absolute: `/…` on Unix, `C:\…` on Windows.
+        if !Path::new(path).is_absolute() || !Path::new(path).is_dir() {
             return Err((
                 "not_a_folder",
                 format!("no es una carpeta que exista: {path}"),

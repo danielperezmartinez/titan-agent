@@ -536,7 +536,7 @@ projects_error: Option<String>,
 
 - `project_add` → resultado `{"root": "<root>"}` (un `ProjectAddResult`).
   Errores (`{"id":N,"error":{"code":…,"message":…}}`): `not_a_folder` si
-  `path` no es absoluta (no empieza por `/`), no existe o no es una carpeta;
+  `path` no es absoluta (no empieza por `/`; en Windows, `C:\…`), no existe o no es una carpeta;
   `config_error` si no se pudo escribir el fichero (o si el fichero existente
   no se podía leer: ver C3). Importar uno que ya está no es un error.
 - `project_remove` → resultado `{}`. Nunca toca la carpeta. Si no estaba, no
@@ -890,5 +890,11 @@ siguiente:
    a mano van siempre en el propio mensaje al usuario, además de en la nota
    (la skill ya pide darlos «tal cual»; falta decir que la nota de la rama
    no le llega).
+
+8. **El CI de Windows encontró que `project_add` exigía una ruta que
+   empezara por `/`** (el contrato lo decía así, pensando solo en Unix): en
+   Windows ninguna carpeta se podía importar. Lo vio un test propio del
+   director. *Corregido*: ruta absoluta según la plataforma. *Propuesta*: que
+   el contrato diga «ruta absoluta» y no su forma en Unix.
 
 ## Resultado
