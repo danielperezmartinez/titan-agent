@@ -387,10 +387,16 @@ impl MainView {
                     .child(div().whitespace_nowrap().child(format!("[#] {name} ›")))
                     .child(
                         div()
-                            .text_color(color(theme::INK))
-                            .font_weight(FontWeight::BOLD)
+                            .flex()
+                            .gap(px(6.))
                             .whitespace_nowrap()
-                            .child(format!("encargo {}", task.task)),
+                            .child("encargo")
+                            .child(
+                                div()
+                                    .text_color(color(theme::INK))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(task.task.clone()),
+                            ),
                     ),
             )
             .child(

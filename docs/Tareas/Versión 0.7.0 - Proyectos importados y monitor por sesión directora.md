@@ -736,6 +736,17 @@ cajita con borde. No aplicado: anclar el chip del borrador al `+` con borde
 `accent` y marcar el proyecto en el árbol mientras el borrador está abierto
 (el botón «Nueva sesión» ya lo marca).
 
+**Ronda 2** (otro subagente nuevo): árbol 9, otras carpetas 8,5, resumen
+8,5, borrador 8, monitor sin directora 9. Aplicado sin más rondas (máximo
+2): columnas de «EQUIPOS» con ancho fijo y el «hace N» aparte para que no se
+corte; el `[!]` de una carpeta borrada en la columna de los contadores;
+«encargo» en `mute` en la miga del monitor sin directora (comprobado con
+capturas). Aplazado: el chip de proyecto del borrador con borde `accent` y el
+proyecto marcado en el árbol mientras el borrador está abierto, la última
+fila del árbol a 800 px de alto bajo la leyenda (ya pasaba en la 0.6) y los
+colores de la previa para «[+] nueva», «[+] importar» y «[x] quitar» del
+árbol (aquí en `accent`/`danger`, como enlace y acción destructiva).
+
 ## PR B · Prueba a mano
 
 Qué se prueba: la interacción con los proyectos importados (hover del `+`,

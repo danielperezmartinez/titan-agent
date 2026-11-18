@@ -183,8 +183,13 @@ impl MainView {
                         .child(state_marker(line.state, self.now_ms)),
                 )
                 .child(
+                    // Fixed widths: the columns of the teams line up.
                     div()
                         .flex_none()
+                        .w(px(150.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
                         .text_color(color(theme::INK))
                         .font_weight(FontWeight::MEDIUM)
                         .child(line.id.task.clone()),
@@ -192,6 +197,8 @@ impl MainView {
                 .child(
                     div()
                         .flex_none()
+                        .w(px(90.))
+                        .whitespace_nowrap()
                         .text_size(px(12.))
                         .text_color(color(theme::MUTE))
                         .child(round),
@@ -201,6 +208,9 @@ impl MainView {
                         .id(SharedString::from(format!("{id}:director")))
                         .flex()
                         .flex_none()
+                        .w(px(196.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
                         .gap(px(6.))
                         .text_size(px(12.))
                         .text_color(color(theme::MUTE))
@@ -215,6 +225,7 @@ impl MainView {
                     None => div()
                         .id(SharedString::from(format!("{id}:director")))
                         .flex_none()
+                        .w(px(196.))
                         .text_size(px(12.))
                         .text_color(color(theme::MUTE))
                         .child("sin sesión directora"),
@@ -229,11 +240,16 @@ impl MainView {
                         .text_right()
                         .text_size(px(12.))
                         .text_color(color(theme::MUTE))
-                        .child(format!(
-                            "{} · {}",
-                            line.headline,
-                            ago(line.last_ts_ms, self.now_ms)
-                        )),
+                        .child(line.headline.clone()),
+                )
+                // The time apart, so a long activity never cuts it.
+                .child(
+                    div()
+                        .flex_none()
+                        .whitespace_nowrap()
+                        .text_size(px(12.))
+                        .text_color(color(theme::MUTE))
+                        .child(format!("· {}", ago(line.last_ts_ms, self.now_ms))),
                 )
                 .child(
                     action(format!("{id}:monitor"), "[m] monitor", theme::BODY, None).on_click(

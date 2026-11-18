@@ -402,43 +402,48 @@ impl MainView {
                     .child(div().flex_grow_1().min_w(px(8.)).h(px(1.)).bg(hairline()))
                     // Live sessions, as the summary counts them; a folder
                     // that is gone shows `[!]` in their place.
-                    .child(if missing {
-                        div()
-                            .flex_none()
-                            .text_color(color(theme::WARNING))
-                            .child("[!]")
-                    } else {
-                        div().flex_none().child(live.to_string())
-                    })
+                    .child(
+                        // One column for the counters and the `[!]`.
+                        div().flex().flex_none().w(px(24.)).justify_end().map(|d| {
+                            if missing {
+                                d.text_color(color(theme::WARNING)).child("[!]")
+                            } else {
+                                d.child(live.to_string())
+                            }
+                        }),
+                    )
                     .map(|d| {
                         if imported {
                             // `+`: the draft with this project, shown on
                             // hover or with the header selected.
-                            d.when(!missing, |d| {
-                                d.child(
-                                    div()
-                                        .id(SharedString::from(format!("plus:{root}")))
-                                        .flex_none()
-                                        .px(px(5.))
-                                        .border_1()
-                                        .rounded(px(4.))
-                                        .border_color(hairline())
-                                        .text_size(px(12.))
-                                        .text_color(color(theme::INK))
-                                        .opacity(if selected { 1. } else { 0. })
-                                        .when(hover_enabled(), |d| {
-                                            d.group_hover(group.clone(), |s| s.opacity(1.))
-                                        })
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(
-                                            move |this, _: &ClickEvent, window, cx| {
-                                                cx.stop_propagation();
-                                                this.open_new_in(plus_root.clone(), window, cx)
-                                            },
-                                        ))
-                                        .child("+"),
-                                )
-                            })
+                            // A folder that is gone keeps the slot empty,
+                            // so its `[!]` lines up with the counters.
+                            d.when(missing, |d| d.child(div().flex_none().w(px(22.))))
+                                .when(!missing, |d| {
+                                    d.child(
+                                        div()
+                                            .id(SharedString::from(format!("plus:{root}")))
+                                            .flex_none()
+                                            .px(px(5.))
+                                            .border_1()
+                                            .rounded(px(4.))
+                                            .border_color(hairline())
+                                            .text_size(px(12.))
+                                            .text_color(color(theme::INK))
+                                            .opacity(if selected { 1. } else { 0. })
+                                            .when(hover_enabled(), |d| {
+                                                d.group_hover(group.clone(), |s| s.opacity(1.))
+                                            })
+                                            .cursor_pointer()
+                                            .on_click(cx.listener(
+                                                move |this, _: &ClickEvent, window, cx| {
+                                                    cx.stop_propagation();
+                                                    this.open_new_in(plus_root.clone(), window, cx)
+                                                },
+                                            ))
+                                            .child("+"),
+                                    )
+                                })
                         } else {
                             d.child(
                                 div()
