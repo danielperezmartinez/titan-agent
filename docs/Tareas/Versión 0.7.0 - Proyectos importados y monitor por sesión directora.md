@@ -679,6 +679,72 @@ Las carpetas que ofrece el menú de proyecto del borrador, como
 
 Firmas completas, formato de los eventos y cómo se prueba el daemon: especificación del encargo `v07b` (fuera del repo). Tests en `crates/titan-agent-core/tests/projects_acceptance.rs`, `crates/titan-agentd/tests/projects_acceptance.rs` y `crates/titan-agent/tests/folders_acceptance.rs`.
 
+## PR B · Criterios visuales (evaluador)
+
+Frente a `design/preview/Proyectos.dc.html` (estados 1 y 3) y la decisión
+visual de la ventana. Escritos al acabar la implementación (no antes, como
+pide la skill: carencia 4) y no se cambian para que el resultado pase.
+
+1. **Árbol**: título `PROYECTOS` con `[+] importar` en `accent`; cada
+   importado `[#] nombre`, contador y `+` al pasar o con la cabecera
+   seleccionada; sin sesiones, una línea `mute` «sin sesiones · [+] nueva»;
+   carpeta borrada, `[!]` en `warning` y «[!] carpeta no encontrada · [x]
+   quitar».
+2. **Otras carpetas**: título `OTRAS CARPETAS` en `mute` al final; cada grupo
+   con `[+] importar`; sus cabeceras más apagadas que las importadas; nada
+   se rompe a 1000 px.
+3. **Resumen**: `[#] nombre` (`ink`, negrita) y la carpeta en `mute`;
+   acciones `[+] nueva sesión`, `[d] abrir carpeta` y `[x] quitar`
+   (`danger`), o `[+] importar`; «EQUIPOS · N» con una línea por encargo
+   (estado en su color, encargo, ronda, directora o «sin sesión directora»,
+   actividad en `mute` y `[m] monitor`); «SESIONES · N vivas» con su estado
+   y desde cuándo; una columna, sin paneles.
+4. **Borrador desde el `+`**: el proyecto puesto en la barra y en el chip.
+5. **Monitor sin directora**: miga `[#] proyecto › encargo`, «sin sesión
+   directora» y `[<] resumen`; las tres vistas sin cambios.
+
+## PR B · Prueba a mano
+
+Qué se prueba: la interacción con los proyectos importados (hover del `+`,
+importar, quitar, lanzar en una carpeta nueva y abrir el monitor desde el
+resumen), que el evaluador no puede ver. Datos inventados y un daemon privado
+con su propio `projects.json`: no toca la lista de la app instalada.
+
+```
+scripts/demo/demo.sh probar inicio
+```
+
+1. Se abre la ventana → `PROYECTOS [+] importar`; titan-ssh con sus
+   sesiones; recetas con «sin sesiones · [+] nueva»; borrado con `[!]` y
+   «carpeta no encontrada · [x] quitar»; al final `OTRAS CARPETAS` con
+   web-notas y su `[+] importar`.
+2. Pasa el ratón por la cabecera de recetas → aparece un `+` a la derecha.
+   Clic en el `+` → borrador «Nueva sesión en [#] recetas», con recetas en
+   el chip de proyecto.
+3. Esc dos veces → se cierra el borrador.
+4. Clic en la cabecera de titan-ssh → su resumen: carpeta, `[+] nueva
+   sesión`, `[d] abrir carpeta`, `[x] quitar`; «EQUIPOS · 3 encargos
+   abiertos» (sincronizar-hosts, sftp-renombrar y sftp-enlaces, cada uno con
+   su directora) y «SESIONES · 4 vivas».
+5. `[m] monitor` de sincronizar-hosts → se abre la sesión «sincronizar
+   hosts» con el monitor de ese encargo.
+6. Clic en la cabecera de recetas → su resumen con limpieza-docs y «sin
+   sesión directora». Su `[m] monitor` → el monitor ahí mismo, con la miga
+   «[#] recetas › encargo limpieza-docs» y `[<] resumen`.
+7. `[<] resumen` → vuelve el resumen.
+8. En web-notas (otras carpetas), `[+] importar` → pasa a `PROYECTOS` y
+   desaparece `OTRAS CARPETAS`.
+9. Clic en la cabecera de web-notas y `[x] quitar` → vuelve a `OTRAS
+   CARPETAS` con sus sesiones; la carpeta no se toca.
+10. En borrado, `[x] quitar` → desaparece del árbol.
+11. `[+] importar` del título → selector de carpetas; elige cualquier
+    carpeta (solo cambia la lista de esta demo) → aparece en `PROYECTOS`
+    con «sin sesiones».
+12. ctrl+n, chip de proyecto → «[d] elegir otra carpeta…», elige otra
+    carpeta que no esté en la lista, escribe un encargo y Enter → se lanza
+    (con el `claude` falso) y su proyecto aparece importado en `PROYECTOS`.
+13. Cierra la ventana → la demo se para sola.
+
 ## Criterios de finalización
 
 **PR A**:
@@ -758,5 +824,20 @@ siguiente:
    (`crates/titan-agent-core/tests/directors.rs`). *Propuesta*: cuando un
    apartado dice «la misma regla que X», el contrato da también la firma de
    X.
+
+4. **Criterios visuales de la B escritos tras implementar**: con la
+   especificación y Sol en marcha, el director pasó directo al daemon y a la
+   interfaz. *Propuesta*: que `bin/team new` recuerde el paso 2 (criterios
+   visuales) cuando la especificación nombre una decisión visual.
+5. **Un falso positivo de gitleaks** en `demo.sh` (la regla de rutas
+   personales confunde el HOME inventado de la demo, la carpeta `home/` con
+   su subcarpeta `dev/`, con una carpeta personal). Resuelto
+   con `gitleaks:allow` en esa línea, como dice el README. *Propuesta*: que
+   el HOME inventado de la demo no se llame `home/` (p. ej. `casa/`).
+6. **Un test de Sol no compilaba** (`json!` con un entero que no cabe en
+   `i32`): su turno solo compila los tests de su crate con los demás
+   fallando, y no lo vio. Corregido por Sol en un segundo turno corto.
+   *Propuesta*: que el prompt de Sol le pida mirar en su `.checks.txt` que
+   no haya errores de compilación, solo fallos.
 
 ## Resultado

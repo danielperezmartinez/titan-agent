@@ -8,7 +8,7 @@ Consecuencias: El monitor depende solo de events.jsonl, del estado de las sesion
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-16T18:40:00+01:00
-Última modificación: 2026-11-18T01:00:00+01:00
+Última modificación: 2026-11-18T10:00:00+01:00
 ---
 
 # ADR-0010 · Formato de team.toml y de los eventos del equipo
@@ -389,6 +389,16 @@ cambiar `version`, los eventos ni los códigos de salida:
   `TITAN_TEAM_BIN`, si no el fijado en `.agents/team-bin/titan-team`
   (`bin/team pin [REV]`, que compila titan-team de esa revisión; `bin/team
   unpin` lo quita), y si no `cargo run` desde el checkout.
+
+### Ampliación compatible de los proyectos importados (0.7.1, 2026-11-18)
+
+De [[ADR-0014 Proyectos importados en el daemon|ADR-0014]]. Amplía 4.2: la
+raíz de cada proyecto importado (si la carpeta existe) es también una
+carpeta candidata para buscar `.agents/team.toml`, así que sus encargos
+abiertos llegan en `teams` aunque no haya ninguna sesión viva. La regla de
+qué sesión dirige un encargo no cambia; desde la 0.7.0 la usa también la
+interfaz al revés (`titan_agent_core::monitor::directors`) para el `[m]` de
+cada directora.
 
 ### Cómo se lanza el turno: ADR-0013 (2026-11-17)
 

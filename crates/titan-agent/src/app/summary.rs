@@ -6,7 +6,7 @@
 //! `project_tree` of the core.
 
 use gpui::{ClickEvent, Context, Div, FontWeight, SharedString, Stateful, div, prelude::*, px};
-use titan_agent::conversation::{SessionBody, pick_task};
+use titan_agent::conversation::{SessionBody, crumb_name, pick_task};
 use titan_agent_core::monitor::{TaskId, project_teams};
 use titan_agent_core::project::{project_name, tilde};
 use titan_agent_core::protocol::Request;
@@ -143,7 +143,7 @@ impl MainView {
                 .director
                 .as_deref()
                 .and_then(|key| self.session(key))
-                .map(|s| s.name.clone());
+                .map(|s| crumb_name(&s.name, &s.project).to_string());
             let round = if line.max_rounds == 0 {
                 "sin revisión".to_string()
             } else {
