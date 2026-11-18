@@ -19,7 +19,7 @@ impl Fixture {
         std::fs::create_dir_all(dir.join("seed/.claude/worktrees/branch/sub")).unwrap();
         std::fs::write(dir.join("agents.json"), json!([{
             "id":"ab12cd34","pid":1,"cwd":dir.join("seed/.claude/worktrees/branch/sub"),
-            "kind":"background","startedAt":1700000000000,
+            "kind":"background","startedAt":1700000000000_i64,
             "sessionId":"ab12cd34-0000-4000-8000-000000000001","name":"fixture: kite","status":"busy"
         }]).to_string()).unwrap();
         for (name, body) in [
