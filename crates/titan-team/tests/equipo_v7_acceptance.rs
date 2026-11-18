@@ -208,8 +208,7 @@ fn c1_c2_c3_configuration_reports_contract_paths_and_codes() {
     ] {
         f.configure(project, role);
         let out = f.run(&["check", "--json"]);
-        // C1/C2 explicitly specify exit 1, even though older acceptance tests use 2.
-        assert_eq!(out.status.code(), Some(1), "{role}: {out:?}");
+        assert_eq!(out.status.code(), Some(2), "{role}: {out:?}");
         let result: Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(result["ok"], false);
         assert!(
