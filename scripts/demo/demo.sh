@@ -250,7 +250,15 @@ shot() {
   # A key script types for a while after the window opens: give it time.
   keys=$(clean_env; scene_env "$1"; printf %s "${TITAN_AGENT_DEMO_KEYS:-}")
   sleep "$WAIT"
-  [ -z "$keys" ] || sleep 4
+  if [ -n "$keys" ]; then
+    # The window says when its key script is done (20 s at most).
+    n=0
+    while [ "$n" -lt 40 ] && ! grep -q "guion de teclas terminado" "$DIR/ui.log" 2>/dev/null; do
+      sleep 0.5
+      n=$((n + 1))
+    done
+    sleep 1
+  fi
   display_env
   pid=$(cat "$RUN/ui.pid")
   alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }

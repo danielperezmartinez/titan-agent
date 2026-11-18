@@ -9,6 +9,8 @@
 //! empty when the session directs nothing.
 
 use titan_agent_core::monitor::TaskId;
+use titan_agent_core::team::TeamRun;
+use titan_agent_core::time::ago;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SessionBody {
@@ -53,6 +55,33 @@ pub fn settle(body: &SessionBody, tasks: &[TaskId]) -> SessionBody {
     }
 }
 
+/// A task's line in the director's task picker: its review round as the
+/// monitor counts it (`ronda N de M`, the first round before it starts),
+/// or `sin revisión` for a team without one, and the time of its last event.
+pub fn task_hint(run: &TeamRun, now_ms: i64) -> String {
+    let round = if run.max_review_rounds == 0 {
+        "sin revisión".to_string()
+    } else {
+        format!(
+            "ronda {} de {}",
+            run.review_round.max(1),
+            run.max_review_rounds
+        )
+    };
+    format!("{round} · {}", ago(run.last_ts_ms, now_ms))
+}
+
+/// A session's name in the monitor's crumb `[#] proyecto › directora`:
+/// without the `proyecto: ` prefix the launches give it (the crumb already
+/// names the project), so two directors of one project read apart.
+pub fn crumb_name<'a>(name: &'a str, project: &str) -> &'a str {
+    name.strip_prefix(project)
+        .and_then(|rest| rest.strip_prefix(':'))
+        .map(str::trim_start)
+        .filter(|rest| !rest.is_empty())
+        .unwrap_or(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,5 +111,39 @@ mod tests {
             toggle_monitor(&SessionBody::Terminal, &[]),
             SessionBody::Terminal
         );
+    }
+
+    #[test]
+    fn crumb_drops_the_project_prefix() {
+        assert_eq!(
+            crumb_name("titan-ssh: sftp renombrar", "titan-ssh"),
+            "sftp renombrar"
+        );
+        assert_eq!(crumb_name("titan-ssh:", "titan-ssh"), "titan-ssh:");
+        assert_eq!(crumb_name("otra cosa", "titan-ssh"), "otra cosa");
+    }
+
+    #[test]
+    fn task_hint_counts_rounds_like_the_monitor() {
+        let mut run = TeamRun {
+            task: "t".into(),
+            director: Some("director".into()),
+            director_session: None,
+            review_role: Some("revisor".into()),
+            review_round: 0,
+            max_review_rounds: 2,
+            closed: false,
+            members: Vec::new(),
+            messages: Vec::new(),
+            last_ts_ms: 0,
+            feed: Vec::new(),
+            spans: Vec::new(),
+            last_report: None,
+        };
+        assert_eq!(task_hint(&run, 120_000), "ronda 1 de 2 · hace 2 min");
+        run.review_round = 2;
+        assert_eq!(task_hint(&run, 5_000), "ronda 2 de 2 · ahora");
+        run.max_review_rounds = 0;
+        assert_eq!(task_hint(&run, 5_000), "sin revisión · ahora");
     }
 }

@@ -225,7 +225,10 @@ impl MainView {
                     cx.notify();
                 }
                 ComposerEvent::Submit => this.launch(cx),
-                ComposerEvent::Blurred => this.blur_composer = true,
+                ComposerEvent::Blurred => {
+                    this.blur_composer = true;
+                    cx.notify();
+                }
             });
         let demo_menu = match std::env::var("TITAN_AGENT_DEMO_MENU").as_deref() {
             Ok("agent") => Some(Menu::Agent),

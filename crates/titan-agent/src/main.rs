@@ -66,6 +66,8 @@ fn play_keys(window: gpui::AnyWindowHandle, steps: Vec<DemoStep>, cx: &mut App) 
                 }
             }
         }
+        // The demo kit waits for this line before capturing.
+        eprintln!("titan-agent: guion de teclas terminado");
     })
     .detach();
 }

@@ -9,7 +9,7 @@ use std::rc::Rc;
 
 use gpui::{
     App, ClickEvent, Context, Div, Entity, Focusable, FontWeight, PathPromptOptions, Role, Window,
-    div, prelude::*, px,
+    div, prelude::*, px, relative,
 };
 use titan_agent_core::launch::{
     LaunchDefaults, LaunchSpec, efforts, folder_name, models, permissions,
@@ -17,6 +17,8 @@ use titan_agent_core::launch::{
 use titan_agent_core::project::{project_name, tilde};
 use titan_agent_core::protocol::{LaunchRef, LaunchResult, Request};
 use titan_agent_core::session::AgentCli;
+
+use titan_agent::conversation::SessionBody;
 
 use super::composer::Composer;
 use crate::terminal::TerminalView;
@@ -184,6 +186,10 @@ impl MainView {
             self.terminals.insert(key.clone(), view);
         }
         if key.starts_with("launch:") {
+            // The new session starts on its conversation, whatever the
+            // previous one showed.
+            self.body = SessionBody::Terminal;
+            self.task_menu = false;
             self.selection = Selection::Session(key);
             self.focus_terminal = true;
             cx.notify();
@@ -246,7 +252,11 @@ impl MainView {
             .map(project_name)
             .unwrap_or_else(|| "sin carpeta".into());
         let command = self.spec(cx).map(|mut spec| {
-            spec.brief = brief_preview(&spec.brief);
+            // The exact command (ADR-0002), only with a marker while the
+            // field is empty.
+            if spec.brief.trim().is_empty() {
+                spec.brief = "<tu encargo>".into();
+            }
             spec.display_line(self.home.as_deref())
         });
         let open = self.new.menu;
@@ -285,7 +295,7 @@ impl MainView {
                 "new-effort",
                 "",
                 theme::MUTE,
-                chosen.effort.clone(),
+                format!("esfuerzo {}", chosen.effort),
                 "Esfuerzo",
                 open == Some(Menu::Effort),
                 toggle(Menu::Effort),
@@ -295,7 +305,11 @@ impl MainView {
                 "new-permission",
                 "",
                 theme::MUTE,
-                chosen.permission.clone(),
+                format!(
+                    "{} {}",
+                    permission_title(agent).to_lowercase(),
+                    chosen.permission
+                ),
                 permission_title(agent),
                 open == Some(Menu::Permission),
                 toggle(Menu::Permission),
@@ -321,13 +335,13 @@ impl MainView {
             .items_center()
             .gap(px(8.))
             .px(px(16.))
-            .h(px(44.))
+            .h(px(40.))
             .flex_none()
             .border_b_1()
             .border_color(hairline())
             .text_size(px(13.))
             .text_color(color(theme::MUTE))
-            .child(div().text_color(color(theme::ACCENT)).child("[+]"))
+            .child(div().text_color(color(theme::INK)).child("[+]"))
             .child(
                 div()
                     .text_color(color(theme::INK))
@@ -376,11 +390,12 @@ impl MainView {
                     .justify_center()
                     .pb(px(24.))
                     .text_size(px(12.))
-                    .text_color(color(theme::STONE))
+                    .text_color(color(theme::MUTE))
                     .child("la conversación empieza aquí"),
             )
             .child(
                 div()
+                    .relative()
                     .flex()
                     .flex_col()
                     .flex_none()
@@ -390,7 +405,17 @@ impl MainView {
                     .pb(px(14.))
                     .border_t_1()
                     .border_color(hairline())
-                    .children(menu)
+                    // A settings menu floats over the empty conversation,
+                    // just above the chips.
+                    .children(menu.map(|menu| {
+                        div()
+                            .absolute()
+                            .bottom(relative(1.))
+                            .left(px(16.))
+                            .w(px(420.))
+                            .pb(px(4.))
+                            .child(menu)
+                    }))
                     .child(
                         div()
                             .flex()
@@ -572,22 +597,6 @@ fn command_groups(line: &str) -> Vec<String> {
     groups
 }
 
-/// The brief as the command line shows it: its first line, cut at 40
-/// chars with `…` when there is more (the whole text is in the field just
-/// below).
-fn brief_preview(brief: &str) -> String {
-    let text = brief.trim();
-    if text.is_empty() {
-        return "<tu encargo>".into();
-    }
-    let first = text.lines().next().unwrap_or_default();
-    let mut shown: String = first.chars().take(40).collect();
-    if shown.len() < text.len() {
-        shown.push('…');
-    }
-    shown
-}
-
 /// A launch token: unique per click, so the daemon refuses a request sent
 /// twice.
 fn new_token() -> String {
@@ -602,16 +611,7 @@ fn new_token() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{brief_preview, command_groups};
-
-    #[test]
-    fn the_command_line_shows_the_brief_first_line() {
-        assert_eq!(brief_preview("  "), "<tu encargo>");
-        assert_eq!(brief_preview("Revisa\n- uno"), "Revisa…");
-        assert_eq!(brief_preview("corto"), "corto");
-        let long = "á".repeat(45);
-        assert_eq!(brief_preview(&long), format!("{}…", "á".repeat(40)));
-    }
+    use super::command_groups;
 
     #[test]
     fn command_groups_keep_options_with_their_values() {

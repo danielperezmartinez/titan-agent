@@ -12,11 +12,10 @@ use std::rc::Rc;
 use gpui::{
     AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, SharedString, div, prelude::*, px,
 };
-use titan_agent::conversation::{SessionBody, pick_task, toggle_monitor};
+use titan_agent::conversation::{SessionBody, crumb_name, pick_task, task_hint, toggle_monitor};
 use titan_agent_core::monitor::{Agent, Board, TaskId, board, latest_team, run_of};
 use titan_agent_core::session::{AgentCli, Session, SessionState};
 use titan_agent_core::team::USER;
-use titan_agent_core::time::ago;
 
 use crate::theme::{self, color, hairline, hsla};
 
@@ -338,15 +337,24 @@ impl MainView {
             .flex_col()
             .size_full()
             .child(bar)
-            .children(menu)
             .child(
                 div()
+                    .relative()
                     .flex()
                     .flex_col()
                     .flex_grow_1()
                     .min_h(px(0.))
                     .bg(color(theme::TERMINAL_BG))
-                    .child(body),
+                    .child(body)
+                    // A menu of the bar floats over the body, under it.
+                    .children(menu.map(|menu| {
+                        div()
+                            .absolute()
+                            .top(px(4.))
+                            .left(px(16.))
+                            .w(px(440.))
+                            .child(menu)
+                    })),
             )
             .when_some(self.notice.clone(), |d, (text, error)| {
                 d.child(
@@ -451,21 +459,29 @@ impl MainView {
         let picker = div()
             .id("task-picker")
             .flex()
-            .flex_none()
+            .flex_shrink(1.)
+            .min_w(px(120.))
+            .overflow_hidden()
             .gap(px(6.))
             .px(px(8.))
             .h(px(28.))
             .items_center()
-            .border_1()
-            .rounded(px(4.))
-            .border_color(if self.task_menu {
-                Hsla::from(color(theme::ACCENT))
-            } else {
-                Hsla::from(hairline())
+            // A box only when it opens the picker (more than one task).
+            .when(many, |d| {
+                d.border_1()
+                    .rounded(px(4.))
+                    .border_color(if self.task_menu {
+                        Hsla::from(color(theme::ACCENT))
+                    } else {
+                        Hsla::from(hairline())
+                    })
             })
             .child(div().whitespace_nowrap().child("encargo"))
             .child(
                 div()
+                    .min_w(px(0.))
+                    .overflow_hidden()
+                    .text_ellipsis()
                     .whitespace_nowrap()
                     .text_color(color(theme::BODY))
                     .child(task.task.clone()),
@@ -486,8 +502,9 @@ impl MainView {
             .child(
                 div()
                     .flex()
-                    .flex_shrink(1.)
-                    .min_w(px(0.))
+                    // The crumb keeps its width (it tells two directors
+                    // apart); the round gives way first, then the picker.
+                    .flex_none()
                     .overflow_hidden()
                     .gap(px(6.))
                     .text_size(px(13.))
@@ -505,12 +522,20 @@ impl MainView {
                             .text_color(color(theme::INK))
                             .font_weight(FontWeight::BOLD)
                             .whitespace_nowrap()
-                            .child(session.name.clone()),
+                            .child(crumb_name(&session.name, &session.project).to_string()),
                     ),
             )
             .child(picker)
             .when_some(round, |d, round| {
-                d.child(div().whitespace_nowrap().flex_none().child(round))
+                d.child(
+                    div()
+                        .whitespace_nowrap()
+                        .flex_shrink(8.)
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(round),
+                )
             })
             .when(board.is_some(), |d| d.child(self.live_marker()))
             .child(div().flex_grow_1())
@@ -540,15 +565,7 @@ impl MainView {
                 .iter()
                 .map(|id| {
                     let found = self.teams.iter().find(|t| id.matches(t)).and_then(run_of);
-                    let hint = found.map_or_else(String::new, |run| {
-                        let mut hint = if run.max_review_rounds > 0 && run.review_round > 0 {
-                            format!("ronda {} · ", run.review_round)
-                        } else {
-                            "sin revisión · ".to_string()
-                        };
-                        hint.push_str(&ago(run.last_ts_ms, self.now_ms));
-                        hint
-                    });
+                    let hint = found.map_or_else(String::new, |run| task_hint(&run, self.now_ms));
                     let pick = id.clone();
                     MenuItem {
                         tag: "[*]".into(),
@@ -568,12 +585,7 @@ impl MainView {
                     }
                 })
                 .collect();
-            div()
-                .px(px(16.))
-                .py(px(8.))
-                .border_b_1()
-                .border_color(hairline())
-                .child(menu_list("encargos abiertos de esta sesión", items, cx))
+            menu_list("encargos abiertos de esta sesión", items, cx)
         });
         let body = match board {
             Some(board) => self.board_view(&board, cx),

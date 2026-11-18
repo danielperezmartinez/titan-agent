@@ -362,6 +362,99 @@ que el resultado pase.
    directoras en el mismo proyecto → dos `[*]`), y ya no en la cabecera del
    proyecto; ninguna fila se rompe a 1000 px de ancho.
 
+## PR A · Revisión de Sol (high, con `--gate`)
+
+Hilo nuevo (`v07a-revision`) sobre el commit `1338744`, con la
+especificación y la compuerta (en verde). Veredicto `changes_requested`:
+C1–C5 bien en los modelos puros; fallos en la integración y en el kit.
+
+| Hallazgo | Severidad | Decisión |
+| --- | --- | --- |
+| `lanzar.py` (el `claude --bg` falso) escribía el temporal siguiendo un enlace que ya estuviera | mayor | Aceptado: temporal exclusivo con `mkstemp`, rutas comprobadas dentro de `TITAN_DEMO_DIR` y probado con un enlace hacia fuera |
+| El comando mostrado abreviaba el encargo (como la previa), y no era el que se lanza | mayor | Aceptado: ADR-0002 manda sobre la previa; se muestra el comando exacto, con el marcador solo con el campo vacío |
+| Lanzar desde el monitor de una directora dejaba el cuerpo en «monitor» en la sesión provisional | mayor | Aceptado: el cuerpo vuelve al terminal y el selector se cierra en toda entrada a una sesión. No se extrae a un modelo: son dos asignaciones en el único sitio que no pasa por `select_session` |
+| `Blurred` no pedía repintar: el foco cambiaba en el siguiente refresco | menor | Aceptado: `cx.notify()` |
+| El texto del selector de encargos estaba en la vista y contaba mal la ronda antes de empezar | menor | Aceptado: `titan_agent::conversation::task_hint`, con tests; cuenta como el monitor (`ronda 1 de N` antes de la primera) |
+
+## PR A · Evaluador visual
+
+**Ronda 1** (subagente de Opus nuevo, 13 capturas): borrador 8, campo 6,
+barra de sesión 8, monitor 6, árbol 10. Correcciones aplicadas:
+
+- la miga decía `titan-ssh › titan-ss…` en las dos directoras: el nombre va
+  sin el prefijo del proyecto (`crumb_name`, puro y con test) y tiene
+  prioridad de ancho; cede antes la ronda y luego el selector;
+- los menús (encargos y ajustes del borrador) empujaban el contenido: ahora
+  flotan sobre él;
+- chips con su etiqueta (`esfuerzo high`, `permisos manual`), `[+]` del
+  borrador en `ink`, barra del borrador de 40 px como la de sesión, zona
+  vacía en `mute` y el selector sin caja cuando solo hay un encargo;
+- «modelo ?» tras lanzar en la demo: el `claude --bg` falso no escribía
+  transcripción; ahora sí (con el modelo elegido);
+- capturas del guion a medio escribir: la app escribe en `ui.log` cuándo
+  acaba el guion y `shot` lo espera (carencia 1, resuelta en el kit).
+
+Fuera de los criterios y no aplicado: el panel de detalle corta una línea sin
+«…» (ya pasaba en la 0.6) y el texto del error de la escena `nueva-error` (es
+el dato inventado de la escena).
+
+## PR A · Prueba a mano
+
+Qué se prueba: lo que el evaluador visual no puede ver, que es el campo de
+texto con el teclado (Enter, Shift+Enter, listas, Tab, ↑ y Esc), el paso de
+borrador a sesión al lanzar y el `[m]` de cada sesión directora con dos
+equipos en el mismo proyecto. Todo con datos inventados, un daemon privado y
+un `claude` falso: no se lanza ningún CLI de verdad ni se toca la app
+instalada.
+
+Orden (desde la carpeta del repo, con la rama de la PR compilada:
+`cargo build -p titan-agent -p titan-agentd`):
+
+```
+scripts/demo/demo.sh probar nueva
+```
+
+1. Se abre la ventana en el borrador → barra «[+] Nueva sesión en [#]
+   titan-ssh» con «[esc] cerrar» a la derecha. Abajo están los ajustes, la
+   línea «$ cd … claude --bg …» y el campo con un encargo de ejemplo.
+2. Clic al final del texto del campo, Shift+Enter y escribe «- primero» →
+   hay un salto de línea y no se lanza nada.
+3. Shift+Enter → la línea nueva empieza ya por «- ».
+4. Tab → ese elemento se sangra. Shift+Tab → vuelve a su sitio.
+5. Escribe «segundo» y pulsa Shift+Enter dos veces → la segunda vez se va la
+   viñeta vacía y se acaba la lista (queda una línea vacía, sin «- »).
+6. Sigue metiendo líneas con Shift+Enter hasta pasar de 8 → el campo crece
+   hasta 8 líneas y luego desplaza (la rueda del ratón lo mueve).
+7. Selecciona una palabra con el ratón y pulsa Esc → se quita la selección.
+   Esc otra vez → el campo pierde el foco (sin cursor y con el borde gris).
+   Esc una tercera vez → se cierra el borrador y vuelve lo que había antes.
+8. ctrl+n → vuelve el borrador con tu texto. Enter → se lanza: sin cambiar
+   de pantalla, la vista pasa a la sesión nueva («[>] trabajando», terminal
+   del `claude` falso), que aparece en el árbol bajo titan-ssh.
+9. ctrl+n → el borrador está vacío. ↑ → aparece el encargo que acabas de
+   lanzar. Esc dos veces para cerrarlo sin lanzar.
+10. Clic en «titan-ssh: sftp renombrar» (lleva `[*]` en el árbol) → barra con
+    `[m] monitor` y `[t] terminal` (este resaltado) y su terminal debajo.
+11. Clic en `[m] monitor` → el terminal se cambia por el monitor: miga
+    «[#] titan-ssh › titan-ssh: sftp renombrar», selector «encargo
+    sftp-renombrar [v]», «ronda 1 de 1», `[*] en vivo`, las tres vistas y
+    `[<] conversación`. `[m]` queda resaltado.
+12. Clic en el selector → menú con sftp-renombrar y sftp-enlaces. Elige
+    sftp-enlaces → el monitor pasa a ese encargo (revisor «[w]» o «hilo
+    ocupado»).
+13. Clic en `[<] conversación` → vuelve el terminal. `[m]` otra vez y luego
+    `[t] terminal` → también vuelve.
+14. Clic en «titan-ssh: sincronizar hosts» (el otro `[*]` del mismo
+    proyecto) y en `[m]` → su propio monitor, el encargo
+    sincronizar-hosts con Sol escribiendo tests, sin `[v]` (solo lleva uno).
+15. En ese monitor, clic en el nodo de opus (la directora) → vuelve a su
+    conversación, con el terminal.
+16. Clic en «repasar el changelog» → su barra no tiene `[m]` (no dirige
+    nada).
+17. Clic en la cabecera «[#] titan-ssh» del árbol → el monitor del proyecto
+    como en la 0.6 (el encargo más reciente). Cambia en la PR B.
+18. Cierra la ventana → la demo se para sola.
+
 ## Criterios de finalización
 
 **PR A**:
@@ -389,5 +482,25 @@ que el resultado pase.
 - PR integrada con la versión acordada.
 
 ## Verificación
+
+## Carencias del equipo
+
+Encontradas en esta versión (equipo v6), con su causa y una propuesta para la
+siguiente:
+
+1. **Las escenas con guion de teclas se capturaban a medio escribir**: `shot`
+   esperaba un tiempo fijo (6 s) y un guion largo no había acabado (el
+   evaluador de la ronda 1 lo vio). *Corregido en el kit*: la app escribe
+   «guion de teclas terminado» en `ui.log` y `shot` espera esa línea (20 s
+   como mucho).
+2. **Capturas rechazadas cuando el usuario usa el escritorio**: `shot` no
+   guarda nada si otra ventana se lleva el foco (correcto), pero hay que
+   repetir a mano. *Propuesta*: que `shots` reintente una vez las que
+   fallen por el foco.
+3. **Sol pidió una firma de `board` para probar que monitor, `[m]` y `[*]`
+   coinciden**: el contrato no la daba. Lo cubre un test propio del director
+   (`crates/titan-agent-core/tests/directors.rs`). *Propuesta*: cuando un
+   apartado dice «la misma regla que X», el contrato da también la firma de
+   X.
 
 ## Resultado
