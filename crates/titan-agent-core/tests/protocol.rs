@@ -1,6 +1,7 @@
 use serde_json::json;
 use titan_agent_core::protocol::{
-    AttachResult, ClientMessage, Event, PROTOCOL_VERSION, Request, ServerMessage, SourceStatus,
+    AttachResult, ClientMessage, Event, PROTOCOL_VERSION, ProjectInfo, Request, ServerMessage,
+    SourceStatus,
     decode_bytes, decode_line, encode_bytes, encode_line, socket_path,
 };
 use titan_agent_core::session::AgentCli;
@@ -68,6 +69,13 @@ fn server_messages_round_trip() {
             launches: vec![],
             teams: vec![],
             quotas: vec![],
+            projects: Some(vec![ProjectInfo {
+                root: "/srv/kite".into(),
+                name: "kite".into(),
+                added_ms: 1,
+                missing: true,
+            }]),
+            projects_error: None,
         }),
         ServerMessage::Event(Event::TerminalClosed {
             terminal: "t3".into(),

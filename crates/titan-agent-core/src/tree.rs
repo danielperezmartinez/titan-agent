@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::protocol::{ProjectInfo, TeamTask};
 use crate::session::Session;
 
 /// One row of the tree.
@@ -83,6 +84,149 @@ pub fn build_rows(sessions: &[Session], filter: &str) -> Vec<TreeRow> {
             team_live,
         });
         rows.extend(body);
+    }
+    rows
+}
+
+/// One row of the tree with imported projects (docs/Decisiones/ADR-0014).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NavRow {
+    Project {
+        root: String,
+        name: String,
+        count: usize,
+        imported: bool,
+        missing: bool,
+    },
+    Session {
+        key: String,
+        depth: usize,
+        branch: &'static str,
+    },
+    /// An imported project without sessions shown under it.
+    Empty { root: String },
+    /// Title of the group of projects that are not imported.
+    Others,
+}
+
+/// A root without its trailing slashes (except `/`).
+fn same_root(a: &str, b: &str) -> bool {
+    let trim = |s: &str| {
+        let t = s.trim_end_matches('/');
+        if t.is_empty() { "/" } else { t }.to_string()
+    };
+    trim(a) == trim(b)
+}
+
+/// The tree of the left column with imported projects: every imported
+/// project (with its sessions, or [`NavRow::Empty`]) by last activity, then
+/// [`NavRow::Others`] and the projects of the other sessions, by name. The
+/// filter works the same in both groups (see [`build_rows`]).
+pub fn project_tree(
+    sessions: &[Session],
+    projects: &[ProjectInfo],
+    teams: &[TeamTask],
+    filter: &str,
+) -> Vec<NavRow> {
+    let needle = filter.trim().to_lowercase();
+    let by_key: HashMap<&str, &Session> = sessions.iter().map(|s| (s.key.as_str(), s)).collect();
+    let mut children: HashMap<&str, Vec<&Session>> = HashMap::new();
+    let mut tops: Vec<&Session> = Vec::new();
+    for session in sessions {
+        match session.parent.as_deref().filter(|p| by_key.contains_key(p)) {
+            Some(parent) => children.entry(parent).or_default().push(session),
+            None => tops.push(session),
+        }
+    }
+    for list in children.values_mut() {
+        sort_sessions(list);
+    }
+    let group = |root: &str, name: &str, imported: bool, missing: bool| -> Vec<NavRow> {
+        let mut mine: Vec<&Session> = tops
+            .iter()
+            .copied()
+            .filter(|s| same_root(&s.project_root, root))
+            .collect();
+        sort_sessions(&mut mine);
+        let project_matches = needle.is_empty() || name.to_lowercase().contains(&needle);
+        let mut body = Vec::new();
+        let mut visited = HashSet::new();
+        for top in &mine {
+            push_tree(
+                top,
+                0,
+                false,
+                &children,
+                &needle,
+                project_matches,
+                &mut visited,
+                &mut body,
+            );
+        }
+        if body.is_empty() && !(imported && project_matches) {
+            return Vec::new();
+        }
+        let mut rows = vec![NavRow::Project {
+            root: root.to_string(),
+            name: name.to_string(),
+            count: body.len(),
+            imported,
+            missing,
+        }];
+        if body.is_empty() {
+            rows.push(NavRow::Empty {
+                root: root.to_string(),
+            });
+        }
+        rows.extend(body.into_iter().filter_map(|row| match row {
+            TreeRow::Session { key, depth, branch } => Some(NavRow::Session { key, depth, branch }),
+            TreeRow::Project { .. } => None,
+        }));
+        rows
+    };
+
+    // Last activity: its sessions and the last event of its team tasks.
+    let activity = |root: &str| -> Option<i64> {
+        let sessions = sessions
+            .iter()
+            .filter(|s| same_root(&s.project_root, root))
+            .flat_map(|s| [s.started_at_ms, s.state_since_ms])
+            .flatten();
+        let events = teams
+            .iter()
+            .filter(|t| same_root(&t.project_root, root))
+            .filter_map(|t| t.events.last()?.get("ts_ms")?.as_i64());
+        sessions.chain(events).max()
+    };
+    let mut imported: Vec<(&ProjectInfo, Option<i64>)> =
+        projects.iter().map(|p| (p, activity(&p.root))).collect();
+    imported.sort_by(|(a, at), (b, bt)| match (at, bt) {
+        (Some(x), Some(y)) => y.cmp(x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => (a.name.to_lowercase(), &a.root).cmp(&(b.name.to_lowercase(), &b.root)),
+    });
+    let mut rows = Vec::new();
+    for (project, _) in &imported {
+        rows.extend(group(&project.root, &project.name, true, project.missing));
+    }
+
+    let mut others: Vec<(String, String)> = Vec::new();
+    for top in &tops {
+        let known = projects.iter().any(|p| same_root(&p.root, &top.project_root))
+            || others.iter().any(|(root, _)| same_root(root, &top.project_root));
+        if !known {
+            others.push((top.project_root.clone(), top.project.clone()));
+        }
+    }
+    others.sort_by(|a, b| (a.1.to_lowercase(), &a.0).cmp(&(b.1.to_lowercase(), &b.0)));
+    let rest: Vec<NavRow> = others
+        .iter()
+        .flat_map(|(root, name)| group(root, name, false, false))
+        .collect();
+    if !rest.is_empty() {
+        rows.push(NavRow::Others);
+        rows.extend(rest);
     }
     rows
 }
