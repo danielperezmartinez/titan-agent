@@ -3,9 +3,9 @@ Nombre: Chat de sesión con Codex y Claude Code
 Estado: Planificando
 Resumen: 'Versión 0.8.0, después de la 0.7.0 (que trae la vista «conversación» y el campo de texto común): llenar la conversación con el chat, con menú `/` y `@`, en tres PR (titan-team por el app-server, chat de Codex, chat de Claude Code). En Codex, por el app-server compartido, con titan-team ejecutando sus turnos en el mismo app-server para que no haya dos escritores. En Claude Code, envío con `claude --resume` en un PTY del daemon, lectura de la transcripción y hooks al lanzar para responder permisos, preguntas y planes. Empieza con un spike con los CLI reales. La hace el equipo v7 (configuración de [[Equipo v7]]).'
 Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; ADR-0012 y ADR-0013 aceptadas por el usuario el mismo día; decisión visual aceptada tras revisar la previa; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. Al diseñar la 0.7.0 (mismo día) el usuario decidió que el chat va en la 0.8.0, sobre la estructura de la 0.7.0. La versión se acuerda en cada PR.'
-Bloqueada: ["[[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]]", "[[Equipo v7]]"]
+Bloqueada: []
 Fecha de creación: 2026-11-17T23:30:00+01:00
-Última modificación: 2026-11-18T22:30:00+01:00
+Última modificación: 2026-11-18T23:00:00+01:00
 ---
 
 # Chat de sesión con Codex y Claude Code

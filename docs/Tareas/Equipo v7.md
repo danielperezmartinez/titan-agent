@@ -1,11 +1,11 @@
 ---
 Nombre: Equipo v7
-Estado: En curso
+Estado: Hecha
 Resumen: 'Corrige las carencias del equipo v6 anotadas en la 0.7.0/0.7.1: comprobación `build` obligatoria tras el turno de Sol sobre un esqueleto que compila (un test que no compila sale en rojo), secciones obligatorias del encargo (`brief_sections`: contrato, firmas y criterios visuales antes de implementar), pasos de la prueba a mano siempre en el mensaje al usuario, contrato sin «la misma regla que X» sin firma y con rutas según la plataforma, `shots` que reintenta las capturas rechazadas por el foco y HOME de la demo sin falso positivo de gitleaks. Deja la configuración v7 como la vigente.'
 Decisiones: 'Encargo de la sesión de control control-3b (2026-11-18); al cerrar la 0.7 añadió las carencias 8 y 9. Versión 0.7.2 (patch), acordada con el usuario el 2026-11-18. Revisión de Sol: ok, sin hallazgos.'
 Bloqueada: []
 Fecha de creación: 2026-11-18T22:05:00+01:00
-Última modificación: 2026-11-18T22:45:00+01:00
+Última modificación: 2026-11-18T23:00:00+01:00
 ---
 
 # Equipo v7
@@ -222,8 +222,12 @@ Rama `feat/equipo-v7` (sobre `main` 256d8ba), en local el 2026-11-18:
   en verde, uno que aún no existe y luego corre y acaba en verde, y uno
   `skipped`, que falla). No se ha ejecutado en GitHub: se verá en la
   primera publicación tras integrar.
-- Versión **0.7.2** (patch), acordada con el usuario el 2026-11-18. Push y
-  PR autorizados por el usuario; la integración, pendiente de su permiso.
+- Versión **0.7.2** (patch), acordada con el usuario el 2026-11-18.
+- **PR #15** integrada por squash con autorización del usuario: commit
+  `0df4e92` en `main`, con los checks `Cambios`, `Fugas`, `Verificar` y
+  `Windows` en verde y gitleaks en cada commit y push. GitHub rechazó
+  `--author-email` con el correo noreply («Invalid email address», como en
+  la PR #4) y se integró sin él. Versión 0.7.2, sin etiqueta ni release.
 
 ## Métricas
 
@@ -276,4 +280,4 @@ el `team.toml`, la skill y los prompts de Sol y del revisor de la v7,
 `shot`/`shots` que reintentan las capturas rechazadas por el foco, el HOME
 `casa/` de la demo y la espera al CI en «Publicar versión». La 0.8.0
 ([[Chat de sesión con Codex y Claude Code]]) queda preparada para el equipo
-v7. Versión 0.7.2; pendiente: integrar la PR.
+v7. Integrada en `main` con la PR #15 (versión 0.7.2).
