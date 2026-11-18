@@ -9,6 +9,9 @@
 //! empty when the session directs nothing.
 
 use titan_agent_core::monitor::TaskId;
+use titan_agent_core::project::project_name;
+use titan_agent_core::protocol::ProjectInfo;
+use titan_agent_core::session::Session;
 use titan_agent_core::team::TeamRun;
 use titan_agent_core::time::ago;
 
@@ -53,6 +56,52 @@ pub fn settle(body: &SessionBody, tasks: &[TaskId]) -> SessionBody {
         },
         _ => body.clone(),
     }
+}
+
+/// The folders the draft's project menu offers, as `(folder, name)`: the
+/// imported projects that exist, by name; then the projects of the other
+/// sessions, by name; then the folders picked with `[d]`, in order. No
+/// folder twice (trailing slashes aside).
+pub fn folder_choices(
+    projects: &[ProjectInfo],
+    sessions: &[Session],
+    picked: &[String],
+) -> Vec<(String, String)> {
+    let trim = |s: &str| {
+        let t = s.trim_end_matches('/');
+        if t.is_empty() { "/" } else { t }.to_string()
+    };
+    let by_name = |list: &mut Vec<(String, String)>| {
+        list.sort_by(|a, b| (a.1.to_lowercase(), &a.0).cmp(&(b.1.to_lowercase(), &b.0)));
+    };
+    let mut choices: Vec<(String, String)> = projects
+        .iter()
+        .filter(|p| !p.missing)
+        .map(|p| (p.root.clone(), p.name.clone()))
+        .collect();
+    by_name(&mut choices);
+    let has =
+        |list: &[(String, String)], folder: &str| list.iter().any(|(f, _)| trim(f) == trim(folder));
+    let mut others: Vec<(String, String)> = Vec::new();
+    for session in sessions {
+        let imported = projects
+            .iter()
+            .any(|p| trim(&p.root) == trim(&session.project_root));
+        if !imported
+            && !has(&choices, &session.project_root)
+            && !has(&others, &session.project_root)
+        {
+            others.push((session.project_root.clone(), session.project.clone()));
+        }
+    }
+    by_name(&mut others);
+    choices.extend(others);
+    for folder in picked {
+        if !has(&choices, folder) {
+            choices.push((folder.clone(), project_name(folder)));
+        }
+    }
+    choices
 }
 
 /// A task's line in the director's task picker: its review round as the

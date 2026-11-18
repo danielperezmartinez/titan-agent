@@ -11,14 +11,12 @@ use gpui::{
     App, ClickEvent, Context, Div, Entity, Focusable, FontWeight, PathPromptOptions, Role, Window,
     div, prelude::*, px, relative,
 };
-use titan_agent_core::launch::{
-    LaunchDefaults, LaunchSpec, efforts, folder_name, models, permissions,
-};
+use titan_agent_core::launch::{LaunchDefaults, LaunchSpec, efforts, models, permissions};
 use titan_agent_core::project::{project_name, tilde};
 use titan_agent_core::protocol::{LaunchRef, LaunchResult, Request};
 use titan_agent_core::session::AgentCli;
 
-use titan_agent::conversation::SessionBody;
+use titan_agent::conversation::{SessionBody, folder_choices};
 
 use super::composer::Composer;
 use crate::terminal::TerminalView;
@@ -71,6 +69,19 @@ impl MainView {
         cx.notify();
     }
 
+    /// The `+` of a project (or `[+] nueva sesión` of its summary): the
+    /// draft with that project as working folder.
+    pub(super) fn open_new_in(
+        &mut self,
+        root: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_new(window, cx);
+        self.new.folder = Some(root);
+        cx.notify();
+    }
+
     /// `[esc] cerrar`: back to what was selected before the draft. The
     /// text stays for the next time.
     pub(super) fn close_draft(&mut self, cx: &mut Context<Self>) {
@@ -82,25 +93,15 @@ impl MainView {
         cx.notify();
     }
 
-    /// Projects offered as working folder: every project in the tree, then
-    /// the folders picked with `[d]`. As `(folder, name)`.
+    /// Projects offered as working folder (`folder_choices`): the
+    /// imported ones, then those of other sessions, then the folders picked
+    /// with `[d]`. As `(folder, name)`.
     fn folder_choices(&self) -> Vec<(String, String)> {
-        let mut choices: Vec<(String, String)> = Vec::new();
-        for session in &self.sessions {
-            if !choices
-                .iter()
-                .any(|(root, _)| *root == session.project_root)
-            {
-                choices.push((session.project_root.clone(), session.project.clone()));
-            }
-        }
-        choices.sort_by(|a, b| a.1.cmp(&b.1));
-        for folder in &self.folders {
-            if !choices.iter().any(|(root, _)| root == folder) {
-                choices.push((folder.clone(), folder_name(folder).to_string()));
-            }
-        }
-        choices
+        folder_choices(
+            self.projects.as_deref().unwrap_or_default(),
+            &self.sessions,
+            &self.folders,
+        )
     }
 
     fn folder(&self) -> Option<String> {

@@ -76,16 +76,15 @@ impl MainView {
     /// `TITAN_AGENT_THREAD` (screenshots): opens the thread of that role of
     /// the project shown, once its monitor has it.
     pub(super) fn preselect_thread(&mut self, cx: &mut Context<Self>) {
-        let (Ok(role), Selection::Project(root)) =
-            (std::env::var("TITAN_AGENT_THREAD"), self.selection.clone())
-        else {
+        let Ok(role) = std::env::var("TITAN_AGENT_THREAD") else {
             return;
         };
-        let target = self.board_for(&root).and_then(|board| {
-            board
-                .agent(&role)
-                .and_then(|agent| super::monitor::target(&board, agent))
-        });
+        let Some((board, root)) = self.shown_board() else {
+            return;
+        };
+        let target = board
+            .agent(&role)
+            .and_then(|agent| super::monitor::target(&board, agent));
         if let Some(super::monitor::Target::Thread(mut r)) = target {
             r.root = Some(root);
             self.open_thread(r, cx);
@@ -244,7 +243,7 @@ impl MainView {
                             d.hover(|d| d.text_color(color(theme::INK)))
                         })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.selection = Selection::Project(root.clone());
+                            this.select_project(root.clone());
                             cx.notify();
                         }))
                         .child(format!("[#] {name} ›")),

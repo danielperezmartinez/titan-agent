@@ -99,9 +99,13 @@ pub fn remove_project(projects: &mut Vec<ImportedProject>, root: &str) -> bool {
     projects.len() != before
 }
 
-/// The first list: the projects that already have sessions.
+/// The first list: the projects that already have sessions (their roots
+/// normalized as [`project_root`] does).
 pub fn initial_projects(sessions: &[Session], now_ms: i64) -> Vec<ImportedProject> {
-    let mut roots: Vec<String> = sessions.iter().map(|s| s.project_root.clone()).collect();
+    let mut roots: Vec<String> = sessions
+        .iter()
+        .map(|s| project_root(&s.project_root))
+        .collect();
     roots.sort();
     roots.dedup();
     roots
@@ -123,7 +127,10 @@ mod tests {
             r#"{"version":1,"x":true,"projects":[{"root":"/a/","added_ms":1},{"root":"/a","added_ms":2},{"root":"/","added_ms":3}]}"#,
         )
         .unwrap();
-        assert_eq!(list.iter().map(|p| p.root.as_str()).collect::<Vec<_>>(), ["/a", "/"]);
+        assert_eq!(
+            list.iter().map(|p| p.root.as_str()).collect::<Vec<_>>(),
+            ["/a", "/"]
+        );
         assert_eq!(parse_projects(&render_projects(&list)), Ok(list));
         for bad in [
             "",
@@ -140,9 +147,18 @@ mod tests {
     #[test]
     fn adds_once_and_removes() {
         let mut list = Vec::new();
-        assert_eq!(add_project(&mut list, "/p/.claude/worktrees/x/sub", 5), "/p");
+        assert_eq!(
+            add_project(&mut list, "/p/.claude/worktrees/x/sub", 5),
+            "/p"
+        );
         assert_eq!(add_project(&mut list, "/p/", 9), "/p");
-        assert_eq!(list, [ImportedProject { root: "/p".into(), added_ms: 5 }]);
+        assert_eq!(
+            list,
+            [ImportedProject {
+                root: "/p".into(),
+                added_ms: 5
+            }]
+        );
         assert!(!remove_project(&mut list, "/q"));
         assert!(remove_project(&mut list, "/p/"));
         assert!(list.is_empty());

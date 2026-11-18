@@ -141,10 +141,7 @@ impl ProjectStore {
 
     fn writable(&self) -> Result<(), Refusal> {
         match &self.unreadable {
-            Some(error) => Err((
-                "config_error",
-                format!("{error}; no se toca el fichero"),
-            )),
+            Some(error) => Err(("config_error", format!("{error}; no se toca el fichero"))),
             None => Ok(()),
         }
     }

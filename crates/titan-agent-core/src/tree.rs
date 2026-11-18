@@ -213,8 +213,12 @@ pub fn project_tree(
 
     let mut others: Vec<(String, String)> = Vec::new();
     for top in &tops {
-        let known = projects.iter().any(|p| same_root(&p.root, &top.project_root))
-            || others.iter().any(|(root, _)| same_root(root, &top.project_root));
+        let known = projects
+            .iter()
+            .any(|p| same_root(&p.root, &top.project_root))
+            || others
+                .iter()
+                .any(|(root, _)| same_root(root, &top.project_root));
         if !known {
             others.push((top.project_root.clone(), top.project.clone()));
         }

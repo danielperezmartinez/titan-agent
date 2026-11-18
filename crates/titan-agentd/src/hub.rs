@@ -16,8 +16,7 @@ use titan_agent_core::discovery::link_sessions;
 use titan_agent_core::launch::LaunchSpec;
 use titan_agent_core::protocol::{
     ClientMessage, Event, HelloResult, LaunchRef, PROTOCOL_VERSION, ProjectAddResult, Request,
-    ServerMessage,
-    SourceStatus, TeamTask, TerminalRef, encode_line,
+    ServerMessage, SourceStatus, TeamTask, TerminalRef, encode_line,
 };
 use titan_agent_core::quota::Quota;
 

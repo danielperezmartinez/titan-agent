@@ -1,8 +1,7 @@
 use serde_json::json;
 use titan_agent_core::protocol::{
     AttachResult, ClientMessage, Event, PROTOCOL_VERSION, ProjectInfo, Request, ServerMessage,
-    SourceStatus,
-    decode_bytes, decode_line, encode_bytes, encode_line, socket_path,
+    SourceStatus, decode_bytes, decode_line, encode_bytes, encode_line, socket_path,
 };
 use titan_agent_core::session::AgentCli;
 
