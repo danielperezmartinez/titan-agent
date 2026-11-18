@@ -447,7 +447,10 @@ mod tests {
         assert_eq!(t.press(EditKey::Up, Some("hola ñ")), Effect::Edited);
         assert_eq!((t.text.as_str(), t.cursor()), ("hola ñ", 7));
         assert_eq!(t.press(EditKey::Up, Some("otro")), Effect::Unhandled);
-        assert_eq!(t.press(EditKey::Enter, None), Effect::Submit("hola ñ".into()));
+        assert_eq!(
+            t.press(EditKey::Enter, None),
+            Effect::Submit("hola ñ".into())
+        );
         t.marked = Some(0..1);
         assert_eq!(t.press(EditKey::Enter, None), Effect::Unhandled);
         t.marked = None;
@@ -469,7 +472,10 @@ mod tests {
             },
             key_char: None,
         };
-        assert_eq!(edit_key(&key("enter", false, true, false)), Some(EditKey::Enter));
+        assert_eq!(
+            edit_key(&key("enter", false, true, false)),
+            Some(EditKey::Enter)
+        );
         assert_eq!(edit_key(&key("enter", true, true, false)), None);
         assert_eq!(edit_key(&key("enter", false, false, true)), None);
         assert_eq!(edit_key(&key("up", true, false, false)), None);
@@ -480,7 +486,10 @@ mod tests {
         drafts.save("b", "dos");
         drafts.record_sent("a", "uno");
         assert_eq!((drafts.draft("a"), drafts.draft("b")), ("", "dos"));
-        assert_eq!((drafts.last_sent("a"), drafts.last_sent("b")), (Some("uno"), None));
+        assert_eq!(
+            (drafts.last_sent("a"), drafts.last_sent("b")),
+            (Some("uno"), None)
+        );
         drafts.save("b", "");
         assert_eq!(drafts.draft("b"), "");
     }

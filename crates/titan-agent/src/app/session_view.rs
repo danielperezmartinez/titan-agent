@@ -1,6 +1,13 @@
-//! A selected session: its embedded terminal and, beside it, its detail.
+//! The conversation view in its session state: the session's bar and, in
+//! 0.7.0, its embedded terminal with the detail beside it (the chat comes in
+//! 0.8.0). In a director session the bar has `[m] monitor`, which puts the
+//! monitor of its task in place of the terminal.
 
-use gpui::{AnyElement, ClickEvent, Context, Div, FontWeight, Window, div, prelude::*, px};
+use gpui::{
+    AnyElement, ClickEvent, Context, Div, FontWeight, SharedString, Stateful, Window, div,
+    prelude::*, px,
+};
+use titan_agent::conversation::SessionBody;
 use titan_agent_core::project::tilde;
 use titan_agent_core::session::{AgentCli, Session, SessionKind};
 
@@ -15,9 +22,11 @@ impl MainView {
         session: &Session,
         _window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement + use<> {
+    ) -> Div {
         let agent = theme::agent_color(session.agent);
         let model = session.model.clone().unwrap_or_else(|| "modelo ?".into());
+        let director = !self.director_tasks(&session.key).is_empty();
+        let monitor = matches!(self.body, SessionBody::Monitor { .. });
         let bar = div()
             .flex()
             .items_center()
@@ -75,7 +84,30 @@ impl MainView {
                         Some(line) => format!("$ {line}"),
                         None => "sin comando para adjuntar".into(),
                     }),
+            )
+            .when(director, |d| {
+                let key = session.key.clone();
+                d.child(bar_button("bar-monitor", "[m] monitor", monitor).on_click(
+                    cx.listener(move |this, _: &ClickEvent, _, cx| this.toggle_monitor(&key, cx)),
+                ))
+            })
+            .child(
+                bar_button("bar-terminal", "[t] terminal", !monitor).on_click(cx.listener(
+                    |this, _: &ClickEvent, _, cx| {
+                        this.body = SessionBody::Terminal;
+                        this.task_menu = false;
+                        cx.notify();
+                    },
+                )),
             );
+        if let SessionBody::Monitor { task } = self.body.clone() {
+            return div().flex().flex_col().size_full().child(bar).child(
+                div()
+                    .flex_grow_1()
+                    .min_h(px(0.))
+                    .child(self.director_monitor(session, &task, cx)),
+            );
+        }
 
         let terminal: AnyElement = match self.terminals.get(&session.key).cloned() {
             Some(view) => {
@@ -136,6 +168,29 @@ impl MainView {
                 .child(self.detail(session, cx)),
         )
     }
+}
+
+/// A switch of the session's bar; the active one has an `accent` border.
+fn bar_button(id: &'static str, label: &'static str, active: bool) -> Stateful<Div> {
+    div()
+        .id(SharedString::from(id))
+        .flex()
+        .flex_none()
+        .items_center()
+        .h(px(28.))
+        .px(px(10.))
+        .border_1()
+        .rounded(px(4.))
+        .border_color(if active {
+            color(theme::ACCENT).into()
+        } else {
+            gpui::Hsla::from(hairline())
+        })
+        .when(active, |d| d.bg(color(theme::SURFACE_ELEVATED)))
+        .text_color(color(if active { theme::INK } else { theme::BODY }))
+        .whitespace_nowrap()
+        .cursor_pointer()
+        .child(label)
 }
 
 fn not_attachable(session: &Session) -> Div {

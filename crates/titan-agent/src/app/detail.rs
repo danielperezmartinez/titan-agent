@@ -7,6 +7,8 @@ use titan_agent_core::time::ago;
 
 use crate::theme::{self, color, hairline};
 
+use titan_agent::conversation::SessionBody;
+
 use super::widgets::button;
 use super::{MainView, Pending, Selection};
 
@@ -17,6 +19,8 @@ impl MainView {
         cx: &mut Context<Self>,
     ) -> impl IntoElement + use<> {
         let parent = session.parent.as_deref().and_then(|p| self.session(p));
+        let director = !self.director_tasks(&session.key).is_empty();
+        let monitor_key = session.key.clone();
         let launched_by = match parent {
             Some(parent) => format!(
                 "{} ({})",
@@ -152,7 +156,20 @@ impl MainView {
                                     .child(what),
                             )
                     }))
-                    .child(
+                    .child(if director {
+                        // A director's own monitor, in place of its terminal.
+                        let key = monitor_key.clone();
+                        div()
+                            .id("open-monitor")
+                            .text_color(color(theme::ACCENT))
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                if !matches!(this.body, SessionBody::Monitor { .. }) {
+                                    this.toggle_monitor(&key, cx);
+                                }
+                            }))
+                            .child("[m] ver el monitor de su equipo")
+                    } else {
                         div()
                             .id("open-monitor")
                             .text_color(color(theme::ACCENT))
@@ -161,8 +178,8 @@ impl MainView {
                                 this.selection = Selection::Project(project_root.clone());
                                 cx.notify();
                             }))
-                            .child("[>] ver el monitor del proyecto"),
-                    ),
+                            .child("[>] ver el monitor del proyecto")
+                    }),
             )
             .child(div().flex_grow_1())
             .when_some(self.notice.clone(), |d, (text, error)| {

@@ -67,7 +67,7 @@ stop() {
 # Scenes: name, description and the variables the window reads. Each scene
 # sets its own variables here, so a capture never depends on the caller's
 # shell splitting words.
-SCENES="inicio terminal filtro nueva nueva-teclas nueva-menu nueva-error ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-estrecho act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
+SCENES="inicio terminal filtro nueva nueva-teclas nueva-estrecho nueva-menu nueva-error lanzar directora directora-monitor directora-encargos dos-equipos ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-estrecho act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
 
 describe() {
   case "$1" in
@@ -75,7 +75,13 @@ describe() {
     terminal) echo "terminal de la sesión del director (claude attach falso)" ;;
     filtro) echo "árbol filtrado por «sftp»" ;;
     nueva) echo "nueva sesión con un encargo escrito" ;;
-    nueva-teclas) echo "nueva sesión con un encargo y una lista escritos por el guion de teclas" ;;
+    nueva-teclas) echo "borrador con un encargo, una lista y un elemento sangrado escritos por el guion de teclas" ;;
+    nueva-estrecho) echo "borrador con el encargo escrito en una ventana estrecha (1000x800)" ;;
+    lanzar) echo "borrador: el guion escribe un encargo y pulsa Enter; la vista pasa a la sesión lanzada" ;;
+    directora) echo "sesión directora (sftp renombrar): barra con [m] monitor, [*] en el árbol" ;;
+    directora-monitor) echo "[m] de la directora: su monitor en lugar del terminal, con la miga y el selector" ;;
+    directora-encargos) echo "monitor de la directora con el selector de sus dos encargos abierto" ;;
+    dos-equipos) echo "segunda directora del mismo proyecto (sincronizar hosts) con su propio monitor" ;;
     nueva-menu) echo "nueva sesión con el menú de modelo abierto" ;;
     nueva-error) echo "nueva sesión con un lanzamiento rechazado" ;;
     ajustes) echo "ajustes por defecto de nueva sesión" ;;
@@ -106,8 +112,14 @@ scene_env() {
     nueva) export TITAN_AGENT_NEW=1 TITAN_AGENT_DEMO_BRIEF="Añade la orden rename al explorador SFTP.\nSi el destino existe, error claro sin tocar nada." ;;
     nueva-teclas)
       export TITAN_AGENT_NEW=1
-      export TITAN_AGENT_DEMO_KEYS="Añade la orden rename al explorador SFTP.{enter}{enter}- Si el destino existe, error claro.{enter}- Sin tocar nada en el servidor."
+      export TITAN_AGENT_DEMO_KEYS="Añade la orden rename al explorador SFTP.{shift-enter}{shift-enter}- Si el destino existe, error claro.{shift-enter}{tab}con el nombre del fichero{shift-enter}{shift-tab}Sin tocar nada en el servidor."
       ;;
+    nueva-estrecho) scene_env nueva-teclas; export TITAN_AGENT_DEMO_SIZE=1000x800 ;;
+    lanzar) export TITAN_AGENT_NEW=1 TITAN_AGENT_DEMO_KEYS="Revisa el changelog de la 0.7.0{enter}" ;;
+    directora) export TITAN_AGENT_SELECT="sftp renombrar" ;;
+    directora-monitor) scene_env directora; export TITAN_AGENT_BODY=monitor ;;
+    directora-encargos) scene_env directora-monitor; export TITAN_AGENT_DEMO_MENU=task ;;
+    dos-equipos) export TITAN_AGENT_SELECT="sincronizar hosts" TITAN_AGENT_BODY=monitor ;;
     nueva-menu) scene_env nueva; export TITAN_AGENT_DEMO_MENU=model ;;
     nueva-error) scene_env nueva; export TITAN_AGENT_DEMO_ERROR="La carpeta no existe: ~/dev/titan-sh" ;;
     ajustes) export TITAN_AGENT_SETTINGS=1 ;;
@@ -235,7 +247,10 @@ shot() {
   # not depend on where it was left (probar keeps them, for the user).
   NOHOVER=1
   ui "$1"
+  # A key script types for a while after the window opens: give it time.
+  keys=$(clean_env; scene_env "$1"; printf %s "${TITAN_AGENT_DEMO_KEYS:-}")
   sleep "$WAIT"
+  [ -z "$keys" ] || sleep 4
   display_env
   pid=$(cat "$RUN/ui.pid")
   alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }

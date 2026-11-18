@@ -33,7 +33,9 @@ pub const LINE_HEIGHT: f32 = 19.;
 pub enum ComposerEvent {
     Changed,
     /// Enter with some text: the user asks to launch (or send) it.
-    Submit(String),
+    Submit,
+    /// Escape without a selection: the field gives up the focus.
+    Blurred,
 }
 
 /// One hard line of the last layout: its shaped text, where it starts in
@@ -88,16 +90,6 @@ impl Composer {
         &self.content.text
     }
 
-    /// Replaces the whole text (a saved draft), with the cursor at its end.
-    pub fn set_text(&mut self, text: &str, cx: &mut Context<Self>) {
-        self.content = ComposerText::default();
-        self.content.text = text.to_string();
-        self.content.move_to(text.len());
-        self.scroll = px(0.);
-        self.reveal = true;
-        cx.notify();
-    }
-
     pub fn clear(&mut self, cx: &mut Context<Self>) {
         self.content = ComposerText::default();
         self.scroll = px(0.);
@@ -127,13 +119,9 @@ impl Composer {
                     self.goal_x = None;
                     self.changed(window, cx);
                 }
-                Effect::Submit(text) => cx.emit(ComposerEvent::Submit(text)),
-                Effect::Blur => {
-                    // Escape again (with the focus out) closes the view.
-                    window.blur();
-                    cx.notify();
-                    return;
-                }
+                Effect::Submit(_) => cx.emit(ComposerEvent::Submit),
+                // The owner takes the focus; Escape again closes its view.
+                Effect::Blur => cx.emit(ComposerEvent::Blurred),
                 Effect::Unhandled => return self.unhandled(event, window, cx),
             }
             cx.stop_propagation();
