@@ -32,6 +32,8 @@ pub fn describe(request: &Request) -> Option<String> {
         Request::UpdateApply { force } => format!("update_apply (force {force})"),
         Request::UpdateSettings { auto } => format!("update_settings (auto {auto})"),
         Request::UpdateDismiss => "update_dismiss".into(),
+        Request::ProjectAdd { path } => format!("project_add {path}"),
+        Request::ProjectRemove { root } => format!("project_remove {root}"),
     })
 }
 

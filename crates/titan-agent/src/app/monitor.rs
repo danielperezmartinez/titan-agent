@@ -2,8 +2,8 @@
 //! vistas.md): bar with the task, round and the three view buttons, and the
 //! pieces the views share. It opens from a director session's `[m]`
 //! (`director_monitor`, docs/Decisiones visuales/Ventana principal con
-//! proyectos importados y monitor por sesión directora.md) and, until 0.7.1,
-//! from a project's header (`monitor_view`). Each view lives in its own submodule: `graph`,
+//! proyectos importados y monitor por sesión directora.md) and, for a task
+//! without a known director, from its project's summary (`project_monitor`). Each view lives in its own submodule: `graph`,
 //! `lanes` and `desk`. What they draw comes from
 //! `titan_agent_core::monitor::Board`.
 
@@ -13,7 +13,7 @@ use gpui::{
     AnyElement, ClickEvent, Context, Div, FontWeight, Hsla, SharedString, div, prelude::*, px,
 };
 use titan_agent::conversation::{SessionBody, crumb_name, pick_task, task_hint, toggle_monitor};
-use titan_agent_core::monitor::{Agent, Board, TaskId, board, latest_team, run_of};
+use titan_agent_core::monitor::{Agent, Board, TaskId, board, run_of};
 use titan_agent_core::session::{AgentCli, Session, SessionState};
 use titan_agent_core::team::USER;
 
@@ -22,7 +22,7 @@ use crate::theme::{self, color, hairline, hsla};
 use super::menu::{MenuItem, menu_list};
 use super::thread_view::ThreadRef;
 use super::widgets::placeholder;
-use super::{MainView, Selection};
+use super::{MainView, ProjectBody, Selection};
 
 mod desk;
 mod graph;
@@ -203,14 +203,6 @@ pub(super) fn in_state(since_ms: Option<i64>, now_ms: i64) -> String {
 }
 
 impl MainView {
-    /// The board of the project's newest open task, if it has one.
-    pub(super) fn board_for(&self, root: &str) -> Option<Board> {
-        let (task, run) = latest_team(&self.teams, root)?;
-        let mut board = board(&task, &run, &self.sessions, self.now_ms);
-        board.mark_writers(&self.daemon_terminals);
-        Some(board)
-    }
-
     /// The board of one task, while it is open.
     fn board_of(&self, id: &TaskId) -> Option<Board> {
         let task = self.teams.iter().find(|t| id.matches(t))?;
@@ -236,7 +228,7 @@ impl MainView {
     /// Whether the centre shows a live monitor (it then redraws often).
     pub(super) fn monitor_animating(&self) -> bool {
         match &self.selection {
-            Selection::Project(root) => self.teams.iter().any(|t| &t.project_root == root),
+            Selection::Project(_) => matches!(self.project_body, ProjectBody::Monitor(_)),
             Selection::Session(_) => matches!(self.body, SessionBody::Monitor { .. }),
             _ => false,
         }
@@ -369,79 +361,107 @@ impl MainView {
             })
     }
 
-    /// The monitor opened from a project's header: its newest open task
-    /// (until 0.7.1 replaces it with the project's summary).
-    pub(super) fn monitor_view(&self, root: &str, cx: &mut Context<Self>) -> Div {
-        let sessions: Vec<&Session> = self
-            .sessions
+    /// The monitor of a task without a known director session, opened
+    /// from the `[m]` of its project's summary: crumb `[#] proyecto ›
+    /// encargo` and `[<] resumen` to go back.
+    pub(super) fn project_monitor(&self, root: &str, task: &TaskId, cx: &mut Context<Self>) -> Div {
+        let name = self
+            .projects
             .iter()
-            .filter(|s| s.project_root == root)
-            .collect();
-        let name = sessions
-            .first()
-            .map(|s| s.project.clone())
+            .flatten()
+            .find(|p| p.root == root)
+            .map(|p| p.name.clone())
             .unwrap_or_else(|| titan_agent_core::project::project_name(root));
-        let board = self.board_for(root);
-        let subtitle = match &board {
-            Some(b) => {
-                let mut text = format!("encargo {}", b.task);
-                if b.max_rounds > 0 {
-                    text.push_str(&format!(" · ronda {} de {}", b.round.max(1), b.max_rounds));
-                }
-                text.push_str(&format!(" · {} agentes", b.agents.len() - 1));
-                text
-            }
-            None => format!(
-                "{} sesión(es), ninguna en equipo",
-                sessions.iter().filter(|s| s.parent.is_none()).count()
-            ),
-        };
+        let board = self.board_of(task);
+        let round = board
+            .as_ref()
+            .filter(|b| b.max_rounds > 0)
+            .map(|b| format!("ronda {} de {}", b.round.max(1), b.max_rounds));
         let bar = Self::monitor_bar()
             .child(
                 div()
-                    .text_color(color(theme::INK))
-                    .font_weight(FontWeight::BOLD)
+                    .flex()
+                    .flex_none()
+                    .gap(px(6.))
                     .text_size(px(13.))
-                    .child(format!("[#] {name}")),
+                    .child(div().whitespace_nowrap().child(format!("[#] {name} ›")))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .whitespace_nowrap()
+                            .child("encargo")
+                            .child(
+                                div()
+                                    .text_color(color(theme::INK))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(task.task.clone()),
+                            ),
+                    ),
             )
             .child(
                 div()
-                    .min_w(px(0.))
-                    .overflow_hidden()
                     .whitespace_nowrap()
-                    .text_ellipsis()
-                    .child(subtitle),
+                    .text_color(color(theme::MUTE))
+                    .child("sin sesión directora"),
             )
+            .when_some(round, |d, round| {
+                d.child(
+                    div()
+                        .whitespace_nowrap()
+                        .flex_shrink(8.)
+                        .min_w(px(0.))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(round),
+                )
+            })
             .when(board.is_some(), |d| d.child(self.live_marker()))
             .child(div().flex_grow_1())
-            .child(self.monitor_tabs(cx));
+            .child(self.monitor_tabs(cx))
+            .child(
+                div()
+                    .id("back-to-summary")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .h(px(30.))
+                    .px(px(12.))
+                    .border_1()
+                    .rounded(px(4.))
+                    .border_color(hairline())
+                    .text_color(color(theme::BODY))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.project_body = ProjectBody::Summary;
+                        cx.notify();
+                    }))
+                    .child("[<] resumen"),
+            );
         let body = match board {
             Some(board) => self.board_view(&board, cx),
-            None => {
-                let loose: Vec<String> = sessions
-                    .iter()
-                    .filter(|s| s.parent.is_none())
-                    .map(|s| s.name.clone())
-                    .collect();
-                let mut list = loose.iter().take(6).cloned().collect::<Vec<_>>().join(", ");
-                if loose.len() > 6 {
-                    list.push_str(&format!(" y {} más", loose.len() - 6));
-                }
-                placeholder(
-                    &format!("Sin equipo trabajando en {name}"),
-                    vec![
-                        "El monitor se anima cuando las sesiones del proyecto se encargan trabajo entre ellas."
-                            .into(),
-                        format!(
-                            "Sesiones sueltas: {}",
-                            if list.is_empty() { "ninguna".into() } else { list }
-                        ),
-                    ],
-                )
-                .into_any_element()
-            }
+            None => placeholder(
+                "El encargo ya no está abierto",
+                vec!["Vuelve al resumen del proyecto con [<].".into()],
+            )
+            .into_any_element(),
         };
         self.monitor_frame(bar, None, body)
+    }
+
+    /// The board on screen, with its project's root: a director's monitor
+    /// or a project's task monitor.
+    pub(super) fn shown_board(&self) -> Option<(Board, String)> {
+        match (&self.selection, &self.body, &self.project_body) {
+            (Selection::Session(key), SessionBody::Monitor { task }, _) => Some((
+                self.board_of(task)?,
+                self.session(key)?.project_root.clone(),
+            )),
+            (Selection::Project(root), _, ProjectBody::Monitor(task)) => {
+                Some((self.board_of(task)?, root.clone()))
+            }
+            _ => None,
+        }
     }
 
     /// The monitor of one of a director's tasks, in place of its terminal

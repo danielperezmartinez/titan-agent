@@ -10,7 +10,7 @@ use crate::theme::{self, color, hairline};
 use titan_agent::conversation::SessionBody;
 
 use super::widgets::button;
-use super::{MainView, Pending, Selection};
+use super::{MainView, Pending};
 
 impl MainView {
     pub(super) fn detail(
@@ -175,10 +175,10 @@ impl MainView {
                             .text_color(color(theme::ACCENT))
                             .cursor_pointer()
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.selection = Selection::Project(project_root.clone());
+                                this.select_project(project_root.clone());
                                 cx.notify();
                             }))
-                            .child("[>] ver el monitor del proyecto")
+                            .child("[>] ver el resumen del proyecto")
                     }),
             )
             .child(div().flex_grow_1())

@@ -8,7 +8,7 @@ Consecuencias: Cualquier cambio incompatible sube PROTOCOL_VERSION y el daemon r
 Reemplaza: []
 Reemplazada por: []
 Fecha de creación: 2026-11-15T11:36:00+01:00
-Última modificación: 2026-11-16T23:05:00+01:00
+Última modificación: 2026-11-18T10:00:00+01:00
 ---
 
 # ADR-0007 · Protocolo local de titan-agentd en NDJSON versionado
@@ -92,6 +92,17 @@ nuevos que un cliente anterior no usa.
   `thread/read` y sus turnos como respaldo) y nunca llama a nada que escriba
   ni carga el hilo. Errores: `not_codex`, `codex_unavailable`, `not_found` y
   `codex_error`. El contrato completo está en la tarea.
+- **Proyectos importados** (0.7.1, 2026-11-18,
+  [[ADR-0014 Proyectos importados en el daemon|ADR-0014]]):
+  `{"method":"project_add","params":{"path":"/ruta"}}` importa el
+  `project_root` de una carpeta que exista (ruta absoluta) y devuelve
+  `{"root": …}` (`ProjectAddResult`); importar uno que ya está no es un
+  error. `{"method":"project_remove","params":{"root":"/ruta"}}` lo quita de
+  la lista (nunca toca la carpeta) y devuelve `{}`, también si no estaba.
+  Errores: `not_a_folder` y `config_error`. El evento `sessions` gana
+  `projects` (lista de `ProjectInfo`: `root`, `name`, `added_ms`, `missing`)
+  y `projects_error` (por qué no se pudo leer `projects.json`), los dos
+  opcionales: un cliente sin `projects` agrupa las sesiones como antes.
 - **`attach` de un hilo de Codex no listado**: el daemon lo resuelve con
   `thread/read` y lo abre con el mismo `codex resume` que uno listado; si Codex
   tampoco lo conoce, sigue saliendo `unknown_session`.

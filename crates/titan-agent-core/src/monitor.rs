@@ -10,6 +10,9 @@ use crate::protocol::{TeamTask, TerminalRef};
 use crate::session::{AgentCli, Session, SessionState, short_model};
 use crate::team::{EventKind, FeedItem, TeamRun, USER, parse_event};
 
+mod summary;
+pub use summary::{TeamLine, project_teams};
+
 /// A message counts as travelling (dot on the edge, «hablando») this long.
 pub const MESSAGE_LIVE_MS: i64 = 6_000;
 

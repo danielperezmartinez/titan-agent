@@ -6,9 +6,9 @@ Feature: "Base"
 Estado: "Vigente"
 Ámbito: "Compartido"
 Fuente: "crates/titan-agent-core/src/protocol.rs"
-Entrada pública: "titan_agent_core::protocol::{ClientMessage, Request, ServerMessage, Event, LaunchResult, LaunchRef, PROTOCOL_VERSION, encode_line, decode_line, encode_bytes, decode_bytes, socket_path, socket_path_named, socket_name, PID_FILE, UpdateStatus, UpdateState}"
-Resumen: "Mensajes NDJSON v1 entre titan-agentd y sus clientes: peticiones {id, method, params} (hello, subscribe, attach, input, resize, detach, close_terminal, stop, open_folder, launch {token, spec, command} sin campos desconocidos), respuestas {id, result | error} (id null si la línea no se pudo leer) y eventos {event, params} (sessions con launches, teams y quotas, output, terminal_closed, update). Desde la 0.6.0, peticiones aditivas update_status, update_check, update_apply {force}, update_settings {auto} y update_dismiss y el evento update con UpdateStatus (ADR-0011 §6), sin subir PROTOCOL_VERSION. Bytes de terminal en base64. socket_path resuelve la ruta del socket por usuario; socket_name da agentd-dev.sock a las builds de debug y agentd.sock a las de release. Sin E/S."
-Última modificación: "2026-11-17T20:40:00+01:00"
+Entrada pública: "titan_agent_core::protocol::{ClientMessage, Request, ServerMessage, Event, LaunchResult, LaunchRef, PROTOCOL_VERSION, encode_line, decode_line, encode_bytes, decode_bytes, socket_path, socket_path_named, socket_name, PID_FILE, UpdateStatus, UpdateState, ProjectInfo, ProjectAddResult}"
+Resumen: "Mensajes NDJSON v1 entre titan-agentd y sus clientes: peticiones {id, method, params} (hello, subscribe, attach, input, resize, detach, close_terminal, stop, open_folder, launch {token, spec, command} sin campos desconocidos), respuestas {id, result | error} (id null si la línea no se pudo leer) y eventos {event, params} (sessions con launches, teams y quotas, output, terminal_closed, update). Desde la 0.6.0, peticiones aditivas update_status, update_check, update_apply {force}, update_settings {auto} y update_dismiss y el evento update con UpdateStatus (ADR-0011 §6), sin subir PROTOCOL_VERSION. Desde la 0.7.1, project_add {path} y project_remove {root}, y projects y projects_error en sessions (ADR-0014). Bytes de terminal en base64. socket_path resuelve la ruta del socket por usuario; socket_name da agentd-dev.sock a las builds de debug y agentd.sock a las de release. Sin E/S."
+Última modificación: "2026-11-18T10:00:00+01:00"
 ---
 
 # Protocolo de titan-agentd

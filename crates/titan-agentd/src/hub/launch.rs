@@ -38,6 +38,8 @@ impl Hub {
                 return;
             }
         };
+        // Launching in a folder imports its project (ADR-0014).
+        state.projects.import_launch(&spec.cwd, now_ms());
         rebuild(&mut state);
         broadcast_snapshot(&mut state, true);
         let argv = spec.argv();
@@ -431,6 +433,7 @@ mod tests {
             codex: "codex".into(),
             poll: Duration::from_secs(1),
             home: None,
+            config_dir: None,
         })
     }
 

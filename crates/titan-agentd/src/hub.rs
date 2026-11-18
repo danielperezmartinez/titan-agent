@@ -15,11 +15,12 @@ use portable_pty::{ChildKiller, MasterPty};
 use titan_agent_core::discovery::link_sessions;
 use titan_agent_core::launch::LaunchSpec;
 use titan_agent_core::protocol::{
-    ClientMessage, Event, HelloResult, LaunchRef, PROTOCOL_VERSION, Request, ServerMessage,
-    SourceStatus, TeamTask, TerminalRef, encode_line,
+    ClientMessage, Event, HelloResult, LaunchRef, PROTOCOL_VERSION, ProjectAddResult, Request,
+    ServerMessage, SourceStatus, TeamTask, TerminalRef, encode_line,
 };
 use titan_agent_core::quota::Quota;
 
+use crate::projects::ProjectStore;
 use crate::teams::TeamScanner;
 use titan_agent_core::session::{AgentCli, Session, SessionState};
 
@@ -38,6 +39,8 @@ pub struct Config {
     pub codex: String,
     pub poll: Duration,
     pub home: Option<PathBuf>,
+    /// Settings folder of titan-agent, for `projects.json`.
+    pub config_dir: Option<PathBuf>,
 }
 
 pub struct Hub {
@@ -91,6 +94,10 @@ struct State {
     teams: Vec<TeamTask>,
     /// Quotas reported by each CLI, by agent.
     quotas: HashMap<AgentCli, Vec<Quota>>,
+    /// The imported projects (ADR-0014).
+    projects: ProjectStore,
+    /// Each source (Claude Code, Codex) has reported at least once.
+    reported: [bool; 2],
 }
 
 /// A session launched by this daemon (ADR-0002).
@@ -124,6 +131,7 @@ impl Hub {
     }
 
     pub fn with_updater(config: Config, updater: crate::update::Updater) -> Arc<Hub> {
+        let projects = ProjectStore::load(config.config_dir.as_deref());
         Arc::new(Hub {
             config,
             updater,
@@ -156,6 +164,8 @@ impl Hub {
                 ended_early: HashMap::new(),
                 teams: Vec::new(),
                 quotas: HashMap::new(),
+                projects,
+                reported: [false; 2],
             }),
         })
     }
@@ -207,8 +217,15 @@ impl Hub {
             }
         }
         rebuild(&mut state);
+        // First start without projects.json: once both sources have
+        // spoken, the projects that have sessions are imported.
+        state.reported[index] = true;
+        if state.reported == [true; 2] {
+            let sessions = state.sessions.clone();
+            state.projects.first_discovery(&sessions, now_ms());
+        }
         // The teams of the sessions just found go in the same snapshot.
-        let folders = team_folders(&state.sessions);
+        let folders = team_folders(&state);
         state.teams = self.scan_teams(&folders);
         broadcast_snapshot(&mut state, false);
     }
@@ -222,7 +239,7 @@ impl Hub {
 
     /// Reads new team events; called on every poll.
     pub fn refresh_teams(&self) {
-        let folders = team_folders(&self.lock().sessions);
+        let folders = team_folders(&self.lock());
         let teams = self.scan_teams(&folders);
         let mut state = self.lock();
         if state.teams != teams {
@@ -422,7 +439,47 @@ impl Hub {
             | Request::UpdateApply { .. }
             | Request::UpdateSettings { .. }
             | Request::UpdateDismiss) => self.update_request(client, id, request),
+            Request::ProjectAdd { path } => {
+                let mut state = self.lock();
+                let answer = state.projects.add(&path, now_ms());
+                if answer.is_ok() {
+                    self.refresh_projects(&mut state);
+                }
+                if let Some(id) = id {
+                    reply(
+                        &state,
+                        match answer {
+                            Ok(root) => ServerMessage::result(id, &ProjectAddResult { root }),
+                            Err((code, text)) => ServerMessage::error(id, code, text),
+                        },
+                    );
+                }
+            }
+            Request::ProjectRemove { root } => {
+                let mut state = self.lock();
+                let answer = state.projects.remove(&root);
+                if answer.is_ok() {
+                    self.refresh_projects(&mut state);
+                }
+                if let Some(id) = id {
+                    reply(
+                        &state,
+                        match answer {
+                            Ok(()) => ServerMessage::result(id, &serde_json::json!({})),
+                            Err((code, text)) => ServerMessage::error(id, code, text),
+                        },
+                    );
+                }
+            }
         }
+    }
+
+    /// After the list of projects changed: their team tasks and the
+    /// snapshot (only sent if it changed).
+    fn refresh_projects(&self, state: &mut State) {
+        let folders = team_folders(state);
+        state.teams = self.scan_teams(&folders);
+        broadcast_snapshot(state, false);
     }
 
     fn stop(&self, key: &str) -> Result<(), String> {
@@ -519,16 +576,23 @@ fn snapshot(state: &State) -> ServerMessage {
             .flatten()
             .cloned()
             .collect(),
+        projects: Some(state.projects.infos()),
+        projects_error: state.projects.error(),
     })
 }
 
 /// Folders where a team may work: the folder and the project of every
 /// known session.
-fn team_folders(sessions: &[Session]) -> Vec<String> {
-    sessions
+/// Folders where team tasks are looked for: those of the sessions and the
+/// imported projects (ADR-0014, which extends ADR-0010 §4.2).
+fn team_folders(state: &State) -> Vec<String> {
+    let mut folders: Vec<String> = state
+        .sessions
         .iter()
         .flat_map(|s| [s.cwd.clone(), s.project_root.clone()])
-        .collect()
+        .collect();
+    folders.extend(state.projects.roots());
+    folders
 }
 
 fn broadcast_snapshot(state: &mut State, force: bool) {

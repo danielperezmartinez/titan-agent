@@ -128,6 +128,30 @@ pub enum Request {
     UpdateSettings { auto: bool },
     /// Forget the notice of the last rollback.
     UpdateDismiss,
+    /// Import a folder as a project (ADR-0014): its `project_root`, kept in
+    /// `projects.json`. Answered with [`ProjectAddResult`]; errors
+    /// `not_a_folder` and `config_error`.
+    ProjectAdd { path: String },
+    /// Forget an imported project; its folder is never touched. Answered
+    /// with `{}`, also when it was not imported.
+    ProjectRemove { root: String },
+}
+
+/// Answer of `project_add`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectAddResult {
+    pub root: String,
+}
+
+/// One imported project as the `sessions` event carries it (ADR-0014).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectInfo {
+    pub root: String,
+    /// Last component of the root.
+    pub name: String,
+    pub added_ms: i64,
+    /// The folder is gone (or is not a folder).
+    pub missing: bool,
 }
 
 /// State of the updater of the daemon.
@@ -258,6 +282,13 @@ pub enum Event {
         /// Remaining quota of each CLI that reports it.
         #[serde(default)]
         quotas: Vec<Quota>,
+        /// Imported projects, in the order of `projects.json` (ADR-0014).
+        /// `None` from a daemon that does not know about them.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        projects: Option<Vec<ProjectInfo>>,
+        /// Why `projects.json` could not be read, if it could not.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        projects_error: Option<String>,
     },
     /// Output of a terminal, in base64.
     Output { terminal: String, data: String },

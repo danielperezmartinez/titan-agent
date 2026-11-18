@@ -2,10 +2,10 @@
 Nombre: Versión 0.7.0 - Proyectos importados y monitor por sesión directora
 Estado: En curso
 Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrador con el campo de texto común, que sustituye a «Nueva sesión»; sesión con su barra y el terminal) y el monitor por sesión directora con `[m]`. B: proyectos importados en el daemon (ADR-0014) con `+` por proyecto, grupo «otras carpetas» y resumen del proyecto. Después de la ronda «Equipo v6». El chat va después, en la 0.8.0 (tarea «Chat de sesión con Codex y Claude Code»).'
-Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos). PR A: 0.7.0 (minor), acordada con el usuario el 2026-11-18.'
+Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos). PR A: 0.7.0 (minor) y PR B: 0.7.1 (patch), acordadas con el usuario el 2026-11-18.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-18T02:20:00+01:00
+Última modificación: 2026-11-18T10:25:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -465,6 +465,330 @@ scripts/demo/demo.sh probar nueva
     como en la 0.6 (el encargo más reciente). Cambia en la PR B.
 18. Cierra la ventana → la demo se para sola.
 
+## PR B · Contrato (para los tests de aceptación)
+
+### B.C1. Fichero `projects.json` (núcleo, puro)
+
+Módulo nuevo `titan_agent_core::projects` (`crates/titan-agent-core/src/projects.rs`).
+
+```rust
+pub const PROJECTS_FILE: &str = "projects.json";
+pub const PROJECTS_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ImportedProject { pub root: String, pub added_ms: i64 }
+
+pub fn parse_projects(text: &str) -> Result<Vec<ImportedProject>, String>;
+pub fn render_projects(projects: &[ImportedProject]) -> String;
+pub fn add_project(projects: &mut Vec<ImportedProject>, path: &str, now_ms: i64) -> String;
+pub fn remove_project(projects: &mut Vec<ImportedProject>, root: &str) -> bool;
+pub fn initial_projects(sessions: &[Session], now_ms: i64) -> Vec<ImportedProject>;
+```
+
+Formato v1: `{"version": 1, "projects": [{"root": "/ruta/absoluta", "added_ms": 1763400000000}]}`.
+
+- **`parse_projects`**: `Ok` solo si el texto es un objeto JSON con `version`
+  igual a 1 y `projects` un array de objetos con `root` (cadena) y
+  `added_ms` (entero). Los campos de más se ignoran. Cualquier otra cosa
+  (JSON inválido, sin `version`, otra versión, `projects` ausente o que no es
+  array, una entrada sin `root` o `added_ms` o con otro tipo) → `Err` con un
+  texto no vacío. Cada `root` se devuelve sin las `/` finales (salvo que sea
+  `/`). Si dos entradas tienen el mismo `root` (tras quitar las `/` finales),
+  se queda la primera. Orden: el del fichero.
+- **`render_projects`**: el JSON v1 de la lista, terminado en `\n`. Para
+  toda lista `l` válida (roots sin `/` final y sin repetir),
+  `parse_projects(&render_projects(&l)) == Ok(l)`.
+- **`add_project`**: `root = project_root(path)` (de
+  `titan_agent_core::project`: quita las `/` finales y, si la ruta está dentro
+  de `/.claude/worktrees/` o `/.agents/worktrees/`, la corta antes de ese
+  tramo; p. ej. `/p/.claude/worktrees/x/sub` → `/p`). Si ya hay un proyecto
+  con ese `root`, no cambia nada; si no, añade
+  `ImportedProject { root, added_ms: now_ms }` **al final**. Devuelve `root`
+  en los dos casos.
+- **`remove_project`**: quita el proyecto cuyo `root` es igual a `root` sin
+  sus `/` finales. Devuelve si quitó alguno.
+- **`initial_projects`**: un `ImportedProject` por cada `project_root`
+  distinto de `sessions`, con `added_ms = now_ms`, ordenados por `root`
+  ascendente.
+
+### B.C2. Protocolo (núcleo)
+
+En `titan_agent_core::protocol` (`crates/titan-agent-core/src/protocol.rs`).
+Ampliación compatible: `PROTOCOL_VERSION` sigue siendo 1.
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectInfo { pub root: String, pub name: String, pub added_ms: i64, pub missing: bool }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectAddResult { pub root: String }
+
+// Request (serde: tag = "method", content = "params", snake_case), variantes nuevas:
+ProjectAdd { path: String },     // {"id":N,"method":"project_add","params":{"path":"/a/b"}}
+ProjectRemove { root: String },  // {"id":N,"method":"project_remove","params":{"root":"/a"}}
+
+// Event::Sessions (serde: {"event":"sessions","params":{…}}) gana dos campos opcionales:
+#[serde(default, skip_serializing_if = "Option::is_none")]
+projects: Option<Vec<ProjectInfo>>,
+#[serde(default, skip_serializing_if = "Option::is_none")]
+projects_error: Option<String>,
+```
+
+- `project_add` → resultado `{"root": "<root>"}` (un `ProjectAddResult`).
+  Errores (`{"id":N,"error":{"code":…,"message":…}}`): `not_a_folder` si
+  `path` no es absoluta (no empieza por `/`; en Windows, `C:\…`), no existe o no es una carpeta;
+  `config_error` si no se pudo escribir el fichero (o si el fichero existente
+  no se podía leer: ver C3). Importar uno que ya está no es un error.
+- `project_remove` → resultado `{}`. Nunca toca la carpeta. Si no estaba, no
+  es un error (también `{}`). Con el fichero ilegible: `config_error`.
+- En `sessions`, el daemon envía siempre `projects` (la lista, en el orden del
+  fichero), con `name` = `project_name(root)` (último tramo de la ruta) y
+  `missing` = la carpeta `root` no existe o no es una carpeta. Un cliente que
+  recibe `projects` ausente (daemon antiguo) no sabe de proyectos importados.
+- Un mensaje `sessions` antiguo sin los campos nuevos sigue decodificando
+  (`projects: None`, `projects_error: None`).
+
+### B.C3. Comportamiento del daemon
+
+Fichero: `<carpeta de configuración>/projects.json`, donde la carpeta es
+`$TITAN_AGENT_CONFIG_DIR` si está definida y no vacía (los tests la usan),
+si no `$XDG_CONFIG_HOME/titan-agent`, si no `$HOME/.config/titan-agent`. Solo
+el daemon lo lee y escribe; si la carpeta no existe, la crea al escribir.
+
+1. **Arranque**: lee el fichero. Si no existe, lista vacía y **sin**
+   `projects_error`.
+2. **Primera vez**: si el fichero no existía al arrancar, en cuanto las dos
+   fuentes de sesiones (Claude Code y Codex) han informado una vez cada una
+   (con éxito o con error), escribe el fichero con
+   `initial_projects(sesiones conocidas)` y lo envía en `projects`. Solo una
+   vez por arranque.
+3. **Ilegible** (`parse_projects` da `Err`): el fichero **no se sobrescribe
+   nunca** en ese arranque (ni en la primera vez, ni en `project_add` o
+   `project_remove`, que dan `config_error`); `projects` es `[]` y
+   `projects_error` lleva un texto no vacío.
+4. **Escritura**: a un fichero temporal en la misma carpeta y renombrado
+   sobre `projects.json` (nunca queda a medias).
+5. **`project_add` / `project_remove`**: C1 sobre la lista, escritura, y un
+   `sessions` nuevo con la lista cambiada a todos los suscritos (si cambió).
+6. **Lanzar** (`launch`) en una carpeta cuyo `project_root` no está
+   importado la importa (`add_project`) cuando el lanzamiento pasa las
+   salvaguardas.
+7. **Equipos**: la raíz de cada proyecto importado (que exista) es también
+   una carpeta candidata donde buscar `.agents/team.toml`, así que sus
+   encargos abiertos llegan en `teams` aunque no haya ninguna sesión.
+8. La lista sobrevive a reiniciar el daemon (se lee del fichero).
+
+### B.C4. Árbol con proyectos importados (núcleo, puro)
+
+En `titan_agent_core::tree` (`crates/titan-agent-core/src/tree.rs`), junto a
+`build_rows` (que no cambia).
+
+```rust
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NavRow {
+    Project { root: String, name: String, count: usize, imported: bool, missing: bool },
+    Session { key: String, depth: usize, branch: &'static str },
+    /// An imported project without sessions shown under it.
+    Empty { root: String },
+    /// Title of the group of projects that are not imported.
+    Others,
+}
+
+pub fn project_tree(sessions: &[Session], projects: &[ProjectInfo], teams: &[TeamTask], filter: &str) -> Vec<NavRow>;
+```
+
+- Una sesión es de un proyecto importado si su `project_root` es igual a su
+  `root` (sin `/` finales en ninguno de los dos).
+- **Importados** primero: cada proyecto de `projects` es una fila
+  `Project { imported: true, missing: <su missing>, name: <su name>, root }`
+  seguida de sus filas de sesión, con las mismas reglas que `build_rows`
+  (una sesión cuyo `parent` está en la lista cuelga de él con `depth + 1` y
+  rama `|-` o `` `- `` (el último hijo); las de primer nivel van con
+  `depth 0` y rama `""`; orden: vivas antes que terminadas, luego
+  `started_at_ms` más reciente, luego nombre). `count` = número de filas
+  de sesión que lleva debajo. Si no lleva ninguna, va seguida de
+  `Empty { root }`.
+- **Orden de los importados**: por actividad, de más reciente a más
+  antigua. La actividad de un proyecto es el mayor de: `started_at_ms` y
+  `state_since_ms` de sus sesiones, y el `ts_ms` del **último** evento de
+  `events` de cada `TeamTask` con `project_root` igual a su `root`. Los que
+  no tienen actividad van después, por `name` en minúsculas y luego `root`.
+- **Otras carpetas**: si alguna sesión no es de un proyecto importado, va
+  `Others` y después un grupo por `project_root` (fila
+  `Project { imported: false, missing: false, name: <project de la
+  sesión>, root }` y sus sesiones, como arriba), ordenados por `name` en
+  minúsculas y luego `root`. Sin ninguna, no hay `Others`.
+- **Filtro** (`filter`, sin distinguir mayúsculas, tras quitar espacios de
+  los extremos; vacío = todo), igual en los dos grupos: un proyecto se
+  muestra entero (todas sus sesiones, o `Empty`) si su `name` contiene el
+  filtro; si no, se muestra solo si alguna sesión coincide (por nombre,
+  agente, modelo o proyecto, como `build_rows`), con las sesiones que
+  coinciden y sus antepasados; si no, no aparece. `Empty` solo aparece con
+  el filtro vacío o si el nombre del proyecto coincide. `Others` solo si
+  queda algún grupo.
+
+### B.C5. Equipos de un proyecto para su resumen (núcleo, puro)
+
+En `titan_agent_core::monitor` (junto a `board`, `director_of`, `TaskId`).
+
+```rust
+#[derive(Debug, Clone, PartialEq)]
+pub struct TeamLine {
+    pub id: TaskId,
+    /// Key of its director session, when known (`director_of`).
+    pub director: Option<String>,
+    pub state: SessionState,
+    pub headline: String,
+    pub round: u32,
+    pub max_rounds: u32,
+    pub last_ts_ms: i64,
+}
+
+pub fn project_teams(root: &str, teams: &[TeamTask], sessions: &[Session], now_ms: i64) -> Vec<TeamLine>;
+```
+
+- Una línea por encargo **abierto** (`run_of(task)` existe y no está
+  cerrado) con `task.project_root` igual a `root` (sin `/` finales).
+- `id = TaskId { folder: task.folder, task: task.task }`;
+  `director = director_of(task, &run, sessions).map(|s| s.key.clone())`.
+- Con `b = board(task, &run, sessions, now_ms)`: `state` = `NeedsYou` si
+  algún agente de `b.agents` está en `NeedsYou`; si no, `Working` si alguno
+  está en `Working`; si no, `Waiting`. `headline = b.headline(now_ms)`,
+  `round = b.round`, `max_rounds = b.max_rounds`.
+- `last_ts_ms = run.last_ts_ms`. Orden: `last_ts_ms` descendente, luego
+  nombre del encargo ascendente.
+
+### B.C6. Carpetas del borrador (interfaz, puro)
+
+En `titan_agent::conversation` (`crates/titan-agent/src/conversation.rs`).
+
+```rust
+pub fn folder_choices(projects: &[ProjectInfo], sessions: &[Session], picked: &[String]) -> Vec<(String, String)>;
+```
+
+Las carpetas que ofrece el menú de proyecto del borrador, como
+`(carpeta, nombre)`, sin repetir carpeta (comparando sin `/` finales):
+
+1. los proyectos importados que no faltan (`missing == false`), por `name`
+   en minúsculas y luego `root`;
+2. los `project_root` de las sesiones que no son de un importado, con el
+   `project` de la sesión como nombre, por nombre en minúsculas y luego
+   carpeta;
+3. las carpetas de `picked` (elegidas con `[d]`) que no estén ya, en su
+   orden, con `project_name(carpeta)` como nombre.
+
+Firmas completas, formato de los eventos y cómo se prueba el daemon: especificación del encargo `v07b` (fuera del repo). Tests en `crates/titan-agent-core/tests/projects_acceptance.rs`, `crates/titan-agentd/tests/projects_acceptance.rs` y `crates/titan-agent/tests/folders_acceptance.rs`.
+
+## PR B · Criterios visuales (evaluador)
+
+Frente a `design/preview/Proyectos.dc.html` (estados 1 y 3) y la decisión
+visual de la ventana. Escritos al acabar la implementación (no antes, como
+pide la skill: carencia 4) y no se cambian para que el resultado pase.
+
+1. **Árbol**: título `PROYECTOS` con `[+] importar` en `accent`; cada
+   importado `[#] nombre`, contador y `+` al pasar o con la cabecera
+   seleccionada; sin sesiones, una línea `mute` «sin sesiones · [+] nueva»;
+   carpeta borrada, `[!]` en `warning` y «[!] carpeta no encontrada · [x]
+   quitar».
+2. **Otras carpetas**: título `OTRAS CARPETAS` en `mute` al final; cada grupo
+   con `[+] importar`; sus cabeceras más apagadas que las importadas; nada
+   se rompe a 1000 px.
+3. **Resumen**: `[#] nombre` (`ink`, negrita) y la carpeta en `mute`;
+   acciones `[+] nueva sesión`, `[d] abrir carpeta` y `[x] quitar`
+   (`danger`), o `[+] importar`; «EQUIPOS · N» con una línea por encargo
+   (estado en su color, encargo, ronda, directora o «sin sesión directora»,
+   actividad en `mute` y `[m] monitor`); «SESIONES · N vivas» con su estado
+   y desde cuándo; una columna, sin paneles.
+4. **Borrador desde el `+`**: el proyecto puesto en la barra y en el chip.
+5. **Monitor sin directora**: miga `[#] proyecto › encargo`, «sin sesión
+   directora» y `[<] resumen`; las tres vistas sin cambios.
+
+## PR B · Revisión de Sol (high, con `--gate`)
+
+Hilo nuevo (`v07b-revision`) sobre el commit `9ad078e`, con la
+especificación y la compuerta (en verde). Veredicto `changes_requested`:
+la protección del fichero ilegible, el renombrado atómico y la importación
+al lanzar están bien; fallos en la primera importación, en el árbol y en la
+vista del resumen.
+
+| Hallazgo | Severidad | Decisión |
+| --- | --- | --- |
+| `first_discovery` dejaba la lista cambiada aunque no se pudiera escribir: los clientes veían proyectos sin guardar y un `project_add` posterior daba éxito sin escribir | mayor | Aceptado: la primera importación es una transacción como las demás (se queda solo si se escribió); test propio con la carpeta de configuración bloqueada |
+| Un hijo cuyo padre es de otra raíz colgaba del proyecto del padre (y su propio proyecto salía sin sesiones o no salía en «otras carpetas») | mayor | Aceptado: la jerarquía se arma dentro de cada raíz; el hijo de otra raíz empieza su grupo. Test propio con la raíz importada y sin importar |
+| Qué sesiones lista el resumen y a dónde lleva el `[m]` de un equipo estaban en la vista | mayor | Aceptado: `summary_sessions` y `team_open` en `titan_agent::conversation`, con tests (también con un daemon sin proyectos) |
+| `folder_choices` no quitaba un importado repetido (`/a` y `/a/`) | menor | Aceptado, con test |
+| `projects_error` y los rechazos de importar o quitar no se veían | menor | Aceptado: salen en `danger` bajo el título del árbol, con cualquier selección |
+
+Su pregunta (¿y si lanzar pasa las salvaguardas pero no se puede importar?):
+el lanzamiento sigue y el fallo va al log del daemon. Importar es una
+comodidad; no vale la pena negar un lanzamiento que el usuario ya pidió y vio.
+
+## PR B · Evaluador visual
+
+**Ronda 1** (subagente de Opus nuevo, 6 capturas): árbol 7, otras carpetas 9,
+resumen 7, borrador 9, monitor sin directora 8,5. Aplicado: el contador del
+árbol es el de sesiones vivas (como el resumen); `[!]` en el sitio del
+contador en una carpeta borrada; la directora en `accent` (pulsable) y
+«directora» en `mute`; la actividad alineada a la derecha antes de `[m]`;
+`[+] nueva sesión` con borde `accent` y `[x] quitar` con borde `danger`; el
+resumen limitado a 880 px; «sin sesión directora» en `mute`; el `+` en una
+cajita con borde. No aplicado: anclar el chip del borrador al `+` con borde
+`accent` y marcar el proyecto en el árbol mientras el borrador está abierto
+(el botón «Nueva sesión» ya lo marca).
+
+**Ronda 2** (otro subagente nuevo): árbol 9, otras carpetas 8,5, resumen
+8,5, borrador 8, monitor sin directora 9. Aplicado sin más rondas (máximo
+2): columnas de «EQUIPOS» con ancho fijo y el «hace N» aparte para que no se
+corte; el `[!]` de una carpeta borrada en la columna de los contadores;
+«encargo» en `mute` en la miga del monitor sin directora (comprobado con
+capturas). Aplazado: el chip de proyecto del borrador con borde `accent` y el
+proyecto marcado en el árbol mientras el borrador está abierto, la última
+fila del árbol a 800 px de alto bajo la leyenda (ya pasaba en la 0.6) y los
+colores de la previa para «[+] nueva», «[+] importar» y «[x] quitar» del
+árbol (aquí en `accent`/`danger`, como enlace y acción destructiva).
+
+## PR B · Prueba a mano
+
+Qué se prueba: la interacción con los proyectos importados (hover del `+`,
+importar, quitar, lanzar en una carpeta nueva y abrir el monitor desde el
+resumen), que el evaluador no puede ver. Datos inventados y un daemon privado
+con su propio `projects.json`: no toca la lista de la app instalada.
+
+```
+scripts/demo/demo.sh probar inicio
+```
+
+1. Se abre la ventana → `PROYECTOS [+] importar`; titan-ssh con sus
+   sesiones; recetas con «sin sesiones · [+] nueva»; borrado con `[!]` y
+   «carpeta no encontrada · [x] quitar»; al final `OTRAS CARPETAS` con
+   web-notas y su `[+] importar`.
+2. Pasa el ratón por la cabecera de recetas → aparece un `+` a la derecha.
+   Clic en el `+` → borrador «Nueva sesión en [#] recetas», con recetas en
+   el chip de proyecto.
+3. Esc dos veces → se cierra el borrador.
+4. Clic en la cabecera de titan-ssh → su resumen: carpeta, `[+] nueva
+   sesión`, `[d] abrir carpeta`, `[x] quitar`; «EQUIPOS · 3 encargos
+   abiertos» (sincronizar-hosts, sftp-renombrar y sftp-enlaces, cada uno con
+   su directora) y «SESIONES · 4 vivas».
+5. `[m] monitor` de sincronizar-hosts → se abre la sesión «sincronizar
+   hosts» con el monitor de ese encargo.
+6. Clic en la cabecera de recetas → su resumen con limpieza-docs y «sin
+   sesión directora». Su `[m] monitor` → el monitor ahí mismo, con la miga
+   «[#] recetas › encargo limpieza-docs» y `[<] resumen`.
+7. `[<] resumen` → vuelve el resumen.
+8. En web-notas (otras carpetas), `[+] importar` → pasa a `PROYECTOS` y
+   desaparece `OTRAS CARPETAS`.
+9. Clic en la cabecera de web-notas y `[x] quitar` → vuelve a `OTRAS
+   CARPETAS` con sus sesiones; la carpeta no se toca.
+10. En borrado, `[x] quitar` → desaparece del árbol.
+11. `[+] importar` del título → selector de carpetas; elige cualquier
+    carpeta (solo cambia la lista de esta demo) → aparece en `PROYECTOS`
+    con «sin sesiones».
+12. ctrl+n, chip de proyecto → «[d] elegir otra carpeta…», elige otra
+    carpeta que no esté en la lista, escribe un encargo y Enter → se lanza
+    (con el `claude` falso) y su proyecto aparece importado en `PROYECTOS`.
+13. Cierra la ventana → la demo se para sola.
+
 ## Criterios de finalización
 
 **PR A**:
@@ -493,6 +817,38 @@ scripts/demo/demo.sh probar nueva
 
 ## Verificación
 
+**PR A** (rama `feat/v0.7.0`, 2026-11-18):
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde en local: **204 tests**
+  (189 en `main`): 8 de aceptación de Sol (commit `9e563f5`, sin tocar) y
+  los propios (modelo del campo, cuerpo de la sesión, `task_hint`,
+  `crumb_name` y `crates/titan-agent-core/tests/directors.rs`). Hooks de
+  gitleaks en cada commit y en el push.
+- Revisión de Sol y dos rondas del evaluador visual (arriba).
+- Prueba a mano del usuario: **bien** (2026-11-18).
+- **PR #13** integrada por squash con autorización del usuario: commit
+  `4d5172c` en `main`, con `Cambios`, `Fugas`, `Verificar` y `Windows` en
+  verde. GitHub rechazó `--author-email` con el correo noreply («Invalid
+  email address», como en las PR #4 y #12) y se integró sin él. Versión
+  0.7.0, sin etiqueta ni release.
+
+### Métricas de la PR A
+
+- **Tiempo**: de 01:25 a 02:15 del 2026-11-18 (unos 50 min), más la espera
+  a la prueba a mano del usuario.
+- **Claude**: el director (Opus 5.5, unas 140 llamadas a herramientas) y
+  dos evaluadores visuales de Opus (unos 124 k tokens cada uno).
+- **Codex**:
+
+  | Encargo | Rol | Entrada (caché) | Salida | Tiempo |
+  | --- | --- | --- | --- | --- |
+  | `v07a` | Sol, tests | 114 k (95 k) | 5,7 k | 138 s |
+  | `v07a-revision` | Sol, revisión high con `--gate` | 984 k (888 k) | 7,3 k | 236 s |
+
+- **Luna**: no se usó; no hubo ediciones repetitivas.
+- **Hallazgos**: Sol, 3 mayores y 2 menores, todos aceptados.
+
 ## Carencias del equipo
 
 Encontradas en esta versión (equipo v6), con su causa y una propuesta para la
@@ -512,5 +868,33 @@ siguiente:
    (`crates/titan-agent-core/tests/directors.rs`). *Propuesta*: cuando un
    apartado dice «la misma regla que X», el contrato da también la firma de
    X.
+
+4. **Criterios visuales de la B escritos tras implementar**: con la
+   especificación y Sol en marcha, el director pasó directo al daemon y a la
+   interfaz. *Propuesta*: que `bin/team new` recuerde el paso 2 (criterios
+   visuales) cuando la especificación nombre una decisión visual.
+5. **Un falso positivo de gitleaks** en `demo.sh` (la regla de rutas
+   personales confunde el HOME inventado de la demo, la carpeta `home/` con
+   su subcarpeta `dev/`, con una carpeta personal). Resuelto
+   con `gitleaks:allow` en esa línea, como dice el README. *Propuesta*: que
+   el HOME inventado de la demo no se llame `home/` (p. ej. `casa/`).
+6. **Un test de Sol no compilaba** (`json!` con un entero que no cabe en
+   `i32`): su turno solo compila los tests de su crate con los demás
+   fallando, y no lo vio. Corregido por Sol en un segundo turno corto.
+   *Propuesta*: que el prompt de Sol le pida mirar en su `.checks.txt` que
+   no haya errores de compilación, solo fallos.
+
+7. **El usuario no veía los pasos de la prueba a mano de la B**: estaban
+   solo en esta nota, en la rama de la PR, y el usuario abre la bóveda de
+   `main`. Lo señaló la sesión de control. *Ajuste*: los pasos de la prueba
+   a mano van siempre en el propio mensaje al usuario, además de en la nota
+   (la skill ya pide darlos «tal cual»; falta decir que la nota de la rama
+   no le llega).
+
+8. **El CI de Windows encontró que `project_add` exigía una ruta que
+   empezara por `/`** (el contrato lo decía así, pensando solo en Unix): en
+   Windows ninguna carpeta se podía importar. Lo vio un test propio del
+   director. *Corregido*: ruta absoluta según la plataforma. *Propuesta*: que
+   el contrato diga «ruta absoluta» y no su forma en Unix.
 
 ## Resultado

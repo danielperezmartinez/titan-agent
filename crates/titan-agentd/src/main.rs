@@ -6,6 +6,7 @@
 mod claude;
 mod codex;
 mod hub;
+mod projects;
 mod teams;
 mod update;
 
@@ -63,6 +64,12 @@ fn main() {
         home: std::env::var_os("HOME")
             .or_else(|| std::env::var_os("USERPROFILE"))
             .map(PathBuf::from),
+        // projects.json (ADR-0014) lives with the interface's defaults.json.
+        config_dir: titan_agent_core::update::config_dir(
+            std::env::var("TITAN_AGENT_CONFIG_DIR").ok().as_deref(),
+            std::env::var("XDG_CONFIG_HOME").ok().as_deref(),
+            std::env::var("HOME").ok().as_deref(),
+        ),
     };
     let hub = Hub::with_updater(config, update::Updater::from_env());
     spawn_claude_poller(Arc::clone(&hub));

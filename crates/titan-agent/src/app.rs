@@ -25,8 +25,8 @@ use titan_agent::conversation::{SessionBody, settle};
 use titan_agent_core::launch::LaunchDefaults;
 use titan_agent_core::monitor::{TaskId, directors};
 use titan_agent_core::protocol::{
-    AttachResult, Event, LaunchResult, ServerMessage, SourceStatus, TeamTask, TerminalRef,
-    TranscriptResult, UpdateState, decode_bytes,
+    AttachResult, Event, LaunchResult, ProjectInfo, ServerMessage, SourceStatus, TeamTask,
+    TerminalRef, TranscriptResult, UpdateState, decode_bytes,
 };
 use titan_agent_core::quota::Quota;
 use titan_agent_core::session::{AgentCli, Session};
@@ -44,6 +44,7 @@ mod monitor;
 mod nav;
 mod session_view;
 mod settings;
+mod summary;
 mod thread_view;
 mod update_notice;
 mod widgets;
@@ -76,6 +77,17 @@ enum Pending {
     Update,
     /// `update_apply`: on success the window reopens through the launcher.
     UpdateApply,
+    /// `project_add` or `project_remove`: the new list comes in `sessions`.
+    Projects,
+}
+
+/// What a project's selection shows: its summary or, from the summary's
+/// `[m]` of a team without a known director, that team's monitor.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(super) enum ProjectBody {
+    #[default]
+    Summary,
+    Monitor(TaskId),
 }
 
 pub struct MainView {
@@ -117,6 +129,14 @@ pub struct MainView {
     body: SessionBody,
     /// The director monitor's task picker is open.
     task_menu: bool,
+    /// Imported projects from the daemon (ADR-0014); `None` from a daemon
+    /// that does not know them (the tree then groups every session).
+    projects: Option<Vec<ProjectInfo>>,
+    projects_error: Option<String>,
+    /// The last `project_add`/`project_remove` refused, shown in the tree.
+    projects_refused: Option<String>,
+    /// What the selected project shows.
+    project_body: ProjectBody,
     /// Open the preselected session's monitor once it appears (screenshots).
     demo_body: bool,
     /// The field gave up the focus (Escape): the window keeps it.
@@ -283,6 +303,10 @@ impl MainView {
             drafts: Drafts::default(),
             directors: BTreeMap::new(),
             body: SessionBody::Terminal,
+            projects: None,
+            projects_error: None,
+            projects_refused: None,
+            project_body: ProjectBody::Summary,
             demo_body,
             task_menu,
             blur_composer: false,
@@ -382,6 +406,7 @@ impl MainView {
                         }
                     }),
                 ),
+                Some(Pending::Projects) => self.projects_refused = None,
                 Some(Pending::Open) | None => {}
             },
             ServerMessage::Error { id, error } => {
@@ -402,6 +427,7 @@ impl MainView {
                         self.new.error = Some(error.message);
                     }
                     Some(Pending::Transcript(key)) => self.transcript_answer(&key, Err(error)),
+                    Some(Pending::Projects) => self.projects_refused = Some(error.message),
                     // Sessions started working since the status: ask.
                     Some(Pending::UpdateApply) if error.code == "confirm_needed" => {
                         self.update.confirm = true;
@@ -421,7 +447,11 @@ impl MainView {
                 teams,
                 quotas,
                 terminals,
+                projects,
+                projects_error,
             }) => {
+                self.projects = projects;
+                self.projects_error = projects_error;
                 self.daemon_terminals = terminals;
                 self.sessions = sessions;
                 self.sources = sources;
@@ -451,12 +481,37 @@ impl MainView {
                 if let Ok(name) = std::env::var("TITAN_AGENT_PROJECT")
                     && self.selection == Selection::None
                     && let Some(root) = self
-                        .sessions
+                        .projects
                         .iter()
-                        .find(|s| s.project == name)
-                        .map(|s| s.project_root.clone())
+                        .flatten()
+                        .find(|p| p.name == name)
+                        .map(|p| p.root.clone())
+                        .or_else(|| {
+                            self.sessions
+                                .iter()
+                                .find(|s| s.project == name)
+                                .map(|s| s.project_root.clone())
+                        })
                 {
-                    self.selection = Selection::Project(root);
+                    self.select_project(root.clone());
+                    // Screenshots: the monitor of its newest team, here.
+                    if std::mem::take(&mut self.demo_body)
+                        && let Some(line) = titan_agent_core::monitor::project_teams(
+                            &root,
+                            &self.teams,
+                            &self.sessions,
+                            self.now_ms,
+                        )
+                        .into_iter()
+                        .next()
+                    {
+                        self.project_body = ProjectBody::Monitor(line.id);
+                    }
+                }
+                if let ProjectBody::Monitor(task) = &self.project_body
+                    && !self.teams.iter().any(|t| task.matches(t))
+                {
+                    self.project_body = ProjectBody::Summary;
                 }
                 self.preselect_thread(cx);
             }
@@ -551,6 +606,13 @@ impl MainView {
         }
     }
 
+    /// A project's header: its summary.
+    fn select_project(&mut self, root: String) {
+        self.selection = Selection::Project(root);
+        self.project_body = ProjectBody::Summary;
+        self.notice = None;
+    }
+
     fn session(&self, key: &str) -> Option<&Session> {
         self.sessions.iter().find(|s| s.key == key)
     }
@@ -570,14 +632,19 @@ impl MainView {
                 )
                 .into_any_element(),
             },
-            Selection::Project(root) => self.monitor_view(&root, cx).into_any_element(),
+            Selection::Project(root) => match self.project_body.clone() {
+                ProjectBody::Summary => self.summary_view(&root, cx).into_any_element(),
+                ProjectBody::Monitor(task) => {
+                    self.project_monitor(&root, &task, cx).into_any_element()
+                }
+            },
             Selection::New => self.draft_view(window, cx).into_any_element(),
             Selection::Settings => self.settings_view(cx).into_any_element(),
             Selection::None => placeholder(
                 "Elige una sesión",
                 vec![
                     "Su terminal aparece aquí y lo que escribes va directo al CLI oficial.".into(),
-                    "Pulsa un proyecto para ver su monitor.".into(),
+                    "Pulsa un proyecto para ver su resumen, con sus equipos y sesiones.".into(),
                 ],
             )
             .into_any_element(),
