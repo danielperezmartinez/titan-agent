@@ -488,7 +488,20 @@ impl MainView {
                                 .map(|s| s.project_root.clone())
                         })
                 {
-                    self.select_project(root);
+                    self.select_project(root.clone());
+                    // Screenshots: the monitor of its newest team, here.
+                    if std::mem::take(&mut self.demo_body)
+                        && let Some(line) = titan_agent_core::monitor::project_teams(
+                            &root,
+                            &self.teams,
+                            &self.sessions,
+                            self.now_ms,
+                        )
+                        .into_iter()
+                        .next()
+                    {
+                        self.project_body = ProjectBody::Monitor(line.id);
+                    }
                 }
                 if let ProjectBody::Monitor(task) = &self.project_body
                     && !self.teams.iter().any(|t| task.matches(t))

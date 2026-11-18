@@ -10,7 +10,7 @@ use crate::theme::{self, color, hairline};
 use titan_agent::conversation::SessionBody;
 
 use super::widgets::button;
-use super::{MainView, Pending, Selection};
+use super::{MainView, Pending};
 
 impl MainView {
     pub(super) fn detail(

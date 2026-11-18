@@ -15,9 +15,10 @@ relative to now so the "working" states look live:
   user) and one by "sincronizar hosts", a second director in a worktree of
   the same project (two teams in one project).
 - config/projects.json: the imported projects (ADR-0014, read by the daemon
-  through TITAN_AGENT_CONFIG_DIR): titan-ssh, recetas (no sessions) and
-  borrado (its folder is gone); web-notas is left out, so its sessions go to
-  "otras carpetas".
+  through TITAN_AGENT_CONFIG_DIR): titan-ssh, recetas (no sessions, but a
+  team task with no director session: the daemon finds it because recetas
+  is imported) and borrado (its folder is gone); web-notas is left out, so
+  its sessions go to "otras carpetas".
 
 Every name, path, message and number here is made up: never put real
 sessions, users, hosts or paths in it.
@@ -35,6 +36,7 @@ HOME = os.path.join(DIR, "home")
 DEV = os.path.join(HOME, "dev")
 SSH = os.path.join(DEV, "titan-ssh")
 WEB = os.path.join(DEV, "web-notas")
+RECETAS = os.path.join(DEV, "recetas")
 # A Claude Code worktree of titan-ssh: its sessions fold into the project.
 SYNC = os.path.join(SSH, ".claude", "worktrees", "sincronizar")
 NOW_MS = int(time.time() * 1000)
@@ -94,7 +96,7 @@ ROLES = [
 DIRECTOR = "00000000-0000-4000-8000-0000000000d1"
 
 
-def run(task, steps, director=DIRECTOR):
+def run(task, steps, director=DIRECTOR, folder=SSH):
     """Events of one task; each step is (seconds ago, type, fields)."""
     team = {"name": "titan-ssh", "director": "director", "roles": ROLES,
             "steps": ["disenador_tests", "revisor"], "review_role": "revisor",
@@ -106,7 +108,7 @@ def run(task, steps, director=DIRECTOR):
     for ago, kind, fields in steps:
         events.append({"v": 1, "ts_ms": NOW_MS - ago * 1000, "task": task, "type": kind,
                        "director_session": director, **fields})
-    path = os.path.join(SSH, ".agents", "state", task, "events.jsonl")
+    path = os.path.join(folder, ".agents", "state", task, "events.jsonl")
     write(path, "".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events))
 
 
@@ -260,8 +262,18 @@ write(os.path.join(DIR, "codex.json"), json.dumps({"threads": threads, "quota": 
 
 # --- Imported projects (ADR-0014, projects.json v1) -------------------------
 
-RECETAS = os.path.join(DEV, "recetas")
 write(os.path.join(RECETAS, "README.md"), "# recetas\n\nUn proyecto inventado sin sesiones.\n")
+# A team task of recetas with no live director session (it ran from a
+# terminal that is closed now): its [m] opens the monitor in the summary.
+write(os.path.join(RECETAS, ".agents", "team.toml"),
+      'version = 1\nname = "recetas"\nstate_dir = ".agents/state"\n')
+run("limpieza-docs", [
+    (9000, "brief_sent", brief("revisor", 1, "El diff a revisar es git diff 3c4d5e6..HEAD")),
+    (8999, "turn_started", started("revisor", 1, "gpt-6.1-sol", None, 1)),
+    (8700, "turn_finished", finished("revisor", 1, "th-docs", "2 menores; sin bloqueantes",
+                                     60_000, 3_000, 299)),
+    (8600, "decision", {"by": "director", "text": "Acepto los 2 menores; los corrijo yo."}),
+], director="00000000-0000-4000-8000-0000000000ff", folder=RECETAS)
 projects = [
     {"root": SSH, "added_ms": NOW_MS - 9 * 86_400_000},
     {"root": RECETAS, "added_ms": NOW_MS - 2 * 86_400_000},

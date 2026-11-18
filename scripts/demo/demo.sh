@@ -67,11 +67,11 @@ stop() {
 # Scenes: name, description and the variables the window reads. Each scene
 # sets its own variables here, so a capture never depends on the caller's
 # shell splitting words.
-SCENES="inicio terminal filtro nueva nueva-teclas nueva-estrecho nueva-menu nueva-error lanzar directora directora-monitor directora-encargos dos-equipos ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-estrecho act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
+SCENES="inicio terminal filtro nueva nueva-teclas nueva-estrecho nueva-menu nueva-error lanzar directora directora-monitor directora-encargos dos-equipos resumen resumen-sin-directora monitor-sin-directora borrador-proyecto proyectos-estrecho ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-estrecho act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
 
 describe() {
   case "$1" in
-    inicio) echo "árbol de sesiones, nada elegido" ;;
+    inicio) echo "árbol de proyectos importados (uno sin sesiones, uno borrado) y otras carpetas" ;;
     terminal) echo "terminal de la sesión del director (claude attach falso)" ;;
     filtro) echo "árbol filtrado por «sftp»" ;;
     nueva) echo "nueva sesión con un encargo escrito" ;;
@@ -82,12 +82,17 @@ describe() {
     directora-monitor) echo "[m] de la directora: su monitor en lugar del terminal, con la miga y el selector" ;;
     directora-encargos) echo "monitor de la directora con el selector de sus dos encargos abierto" ;;
     dos-equipos) echo "segunda directora del mismo proyecto (sincronizar hosts) con su propio monitor" ;;
+    resumen) echo "resumen de titan-ssh: acciones, sus tres equipos (dos directoras) y sus sesiones" ;;
+    resumen-sin-directora) echo "resumen de recetas (importado, sin sesiones): un equipo sin sesión directora" ;;
+    monitor-sin-directora) echo "[m] del equipo sin directora: el monitor en el resumen, con [<] resumen" ;;
+    borrador-proyecto) echo "el + de recetas: borrador con ese proyecto puesto" ;;
+    proyectos-estrecho) echo "árbol con importados, sin sesiones, carpeta borrada y otras carpetas a 1000x800" ;;
     nueva-menu) echo "nueva sesión con el menú de modelo abierto" ;;
     nueva-error) echo "nueva sesión con un lanzamiento rechazado" ;;
     ajustes) echo "ajustes por defecto de nueva sesión" ;;
-    grafo) echo "monitor de titan-ssh, vista grafo (revisor trabajando, otro encargo te necesita)" ;;
-    carriles) echo "monitor de titan-ssh, vista carriles" ;;
-    mesa) echo "monitor de titan-ssh, vista mesa" ;;
+    grafo) echo "monitor de la directora sftp renombrar, vista grafo (revisor trabajando)" ;;
+    carriles) echo "monitor de la directora sftp renombrar, vista carriles" ;;
+    mesa) echo "monitor de la directora sftp renombrar, vista mesa" ;;
     hilo) echo "hilo de Sol (tests) en solo lectura" ;;
     hilo-largo) echo "hilo largo de Luna (terminado): debe abrir abajo" ;;
     hilo-confirmar) echo "hilo con la confirmación de tomar el control" ;;
@@ -123,7 +128,13 @@ scene_env() {
     nueva-menu) scene_env nueva; export TITAN_AGENT_DEMO_MENU=model ;;
     nueva-error) scene_env nueva; export TITAN_AGENT_DEMO_ERROR="La carpeta no existe: ~/dev/titan-sh" ;;
     ajustes) export TITAN_AGENT_SETTINGS=1 ;;
-    grafo | carriles | mesa) export TITAN_AGENT_PROJECT=titan-ssh TITAN_AGENT_MONITOR="$1" ;;
+    grafo | carriles | mesa) export TITAN_AGENT_SELECT="sftp renombrar" TITAN_AGENT_BODY=monitor TITAN_AGENT_MONITOR="$1" ;;
+    resumen) export TITAN_AGENT_PROJECT=titan-ssh ;;
+    resumen-sin-directora) export TITAN_AGENT_PROJECT=recetas ;;
+    monitor-sin-directora) export TITAN_AGENT_PROJECT=recetas TITAN_AGENT_BODY=monitor ;;
+    # The invented HOME of the demo, not a personal folder.
+    borrador-proyecto) export TITAN_AGENT_NEW=1 TITAN_AGENT_FOLDER="$DIR/home/dev/recetas" ;; # gitleaks:allow
+    proyectos-estrecho) export TITAN_AGENT_DEMO_SIZE=1000x800 ;;
     hilo) scene_env grafo; export TITAN_AGENT_THREAD=disenador_tests ;;
     hilo-largo) scene_env grafo; export TITAN_AGENT_THREAD=mecanico ;;
     hilo-confirmar) scene_env hilo; export TITAN_AGENT_DEMO_CONFIRM=1 ;;
