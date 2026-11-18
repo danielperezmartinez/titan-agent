@@ -17,7 +17,7 @@ base = "main"                      # rama de la que sale cada encargo
 worktrees_dir = ".agents/worktrees" # un worktree por encargo (no se versiona)
 branch_prefix = "encargo/"
 test_cmd = "cargo test --workspace"
-# Equipo v5: formato y compuerta que titan-team ejecuta por los roles
+# Desde el equipo v5: formato y compuerta que titan-team ejecuta por los roles
 # (checks tras su turno y ask --gate para el revisor, que no puede ejecutar nada).
 fmt_cmd = "cargo fmt --all"
 gate_cmd = "cargo fmt --all --check && cargo clippy --workspace --all-targets --quiet -- -D warnings && cargo test --workspace --quiet"
@@ -43,8 +43,9 @@ config = [
 ]
 
 [flow]
-# Equipo v5 (2026-11-17; v4 del 2026-11-16, v3 del 2026-11-15): se reparte por
-# contexto, no por rol. La v5 corrige las carencias de la v4 (docs/Tareas/Equipo v5.md).
+# Equipo v6 (2026-11-18; v5 del 2026-11-17, v4 del 2026-11-16, v3 del 2026-11-15): se
+# reparte por contexto, no por rol. La v6 corrige las carencias de la v5
+# (docs/Tareas/Equipo v6.md): sin cambios de reparto en este fichero.
 # Opus (director) fija el contrato en la especificación e implementa cada parte
 # con sus propios tests; Codex solo escribe antes los tests de aceptación (desde
 # el contrato, sin inventar detalles) y hace UNA revisión al final con contexto

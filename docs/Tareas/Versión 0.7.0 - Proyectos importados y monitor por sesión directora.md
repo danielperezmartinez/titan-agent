@@ -1,11 +1,11 @@
 ---
 Nombre: Versión 0.7.0 - Proyectos importados y monitor por sesión directora
-Estado: Planificando
+Estado: Pendiente
 Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrador con el campo de texto común, que sustituye a «Nueva sesión»; sesión con su barra y el terminal) y el monitor por sesión directora con `[m]`. B: proyectos importados en el daemon (ADR-0014) con `+` por proyecto, grupo «otras carpetas» y resumen del proyecto. Después de la ronda «Equipo v6». El chat va después, en la 0.8.0 (tarea «Chat de sesión con Codex y Claude Code»).'
 Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos).'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-18T00:05:00+01:00
+Última modificación: 2026-11-18T01:00:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -38,16 +38,27 @@ Previas:
 
 | Orden | Trabajo | Depende de | Versión (propuesta) |
 | --- | --- | --- | --- |
-| 0 | Ronda «Equipo v6» (la planifica la sesión de control; carencias en [[Versión 0.6.0 - Instalador y actualización automática]] → «Carencias del equipo», con las 7 a 9 añadidas para esta versión) | — | la suya |
+| 0 | Ronda [[Equipo v6]]: corrige las carencias de [[Versión 0.6.0 - Instalador y actualización automática]] → «Carencias del equipo», con las 7 a 9 añadidas para esta versión | — | la suya |
 | 1 | **PR A**: conversación y monitor por sesión directora | 0 | 0.7.0 |
 | 2 | **PR B**: proyectos importados y resumen del proyecto | A | 0.7.1 |
 | 3 | Release 0.7.x, con autorización del usuario | A y B | — |
 | 4 | [[Chat de sesión con Codex y Claude Code]] (0.8.0, tres PR) | A (y B para la estructura final) | 0.8.x |
 
-- Cada PR la hace el [[Equipo v5]] (o el v6, si ya está) con su encargo: un
-  contrato numerado con firmas, tests de aceptación de Sol, revisión de Sol,
-  evaluador visual con el kit de `scripts/demo/` y una prueba manual del
-  usuario con pasos numerados.
+- Cada PR la hace el [[Equipo v6]] con su encargo (skill `equipo`): un
+  contrato numerado con firmas y rutas, tests de aceptación de Sol,
+  revisión de Sol, evaluador visual con el kit de `scripts/demo/` y una
+  prueba manual del usuario con pasos numerados.
+- **Lo que la v6 trae para esta versión**:
+  - la lógica de interacción nueva (edición del campo, reglas del árbol con
+    dos grupos, qué encargos tiene una directora) va en modelos puros con
+    firmas en el contrato, para que Sol la pruebe; la vista solo pinta;
+  - escenas con texto escrito por el guion de teclas
+    (`TITAN_AGENT_DEMO_KEYS`, p. ej. `nueva-teclas`), con otro tamaño de
+    ventana (`TITAN_AGENT_DEMO_SIZE`) y un `projects.json` de demo
+    (proyecto sin sesiones, carpeta borrada, `web-notas` sin importar) que
+    lee el daemon de la demo cuando B lo implemente;
+  - ninguna PR de esta versión cambia titan-team, así que no hace falta
+    `bin/team pin` (sí en la 0.8.0, que lo reescribe).
 - B empieza cuando A está integrada (rebase sobre `main`).
 
 ## PR A · Conversación y monitor por sesión directora

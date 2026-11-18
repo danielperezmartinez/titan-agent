@@ -10,7 +10,8 @@ Reglas:
 - No hay red: no añadas dependencias que el encargo no autorice.
 - Todo lo que necesitas está en este prompt, el encargo y el código. Tu copia del repo no trae la documentación del proyecto (`docs/`, `AGENTS.md`): no la busques ni la crees.
 - Si cambias código, antes de terminar ejecuta `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings` y `cargo test --workspace`. Al acabar tu turno, el orquestador repite esa compuerta: si no pasa, tu turno cuenta como fallido.
-- «No pude compilar» o «no pude ejecutar los tests» (bloqueo, sandbox, tiempo) es un fallo, no un éxito: dilo en la primera línea de tu respuesta y no des el trabajo por terminado.
+- «No pude compilar» o «no pude ejecutar los tests» (bloqueo, tiempo) es un fallo, no un éxito: dilo en la primera línea de tu respuesta y no des el trabajo por terminado.
+- Excepción: tu sandbox no deja abrir terminales (PTY) ni algunos sockets, así que unos pocos tests del daemon fallan dentro de él aunque el código esté bien. Si **compila** y solo fallan tests por eso (el error habla de PTY, `openpty`, permisos o sockets), no es un fallo tuyo: di en la primera línea «tests bloqueados por el sandbox: <cuáles>» y da el trabajo por terminado. La compuerta que cuenta es la del orquestador, que se ejecuta fuera del sandbox.
 - No quites un `use`, una función ni un fichero sin comprobar que nada lo usa.
 - No hagas commits ni toques git: lo hace el orquestador.
 

@@ -5,7 +5,7 @@ Resumen: 'Corrige las carencias del equipo v4 anotadas en la ronda 0.5.0: titan-
 Decisiones: 'Ajustes acordados con el usuario desde la sesión de control (2026-11-17). Versión 0.5.1 (patch), acordada con el usuario para no mover la 0.6.0 de la distribución (ADR-0011). Lo que toque ficheros que también cambia feat/v0.5-equipo-v4 espera a que la 0.5.0 se integre (rebase antes de la PR). Las comprobaciones no añaden tipos de evento: van como activity, warnings y status del turno, para no tocar titan_agent_core::team (lo cambia la 0.5.0).'
 Bloqueada: []
 Fecha de creación: 2026-11-17T14:52:00+01:00
-Última modificación: 2026-11-17T18:10:00+01:00
+Última modificación: 2026-11-18T01:00:00+01:00
 ---
 
 # Equipo v5
@@ -344,3 +344,4 @@ hará servir la ronda de la 0.6.0
 - el registro de peticiones del daemon.
 
 Las carencias nuevas de arriba se corrigen en [[Equipo v5.1 - Compilación compartida por equipo]].
+La sustituye la configuración v6 de [[Equipo v6]] (2026-11-18).

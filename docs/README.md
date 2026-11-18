@@ -415,7 +415,7 @@ ventana.
   implementa, Sol escribe los tests de aceptación y revisa, Luna solo para
   ediciones repetitivas). Ver
   [[Decisiones/ADR-0005 Herramienta del equipo en Rust dentro de titan-agent]];
-  la configuración vigente es la de [[Tareas/Equipo v5]].
+  la configuración vigente es la de [[Tareas/Equipo v6]].
 - **Remoto**: más adelante, desde Android a través de titan-ssh.
 
 Plan de construcción por fases:

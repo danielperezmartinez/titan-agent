@@ -11,6 +11,7 @@
 #   shots [escena...]   one capture per scene (all of them by default)
 #   probar [escena]     open the window for the user to click by hand and wait
 #                       until it is closed
+#   flujos              list the end-to-end kits (real flows, not fixed states)
 #   down                close the window, the daemon and the app-server
 #
 # shot, shots and probar start the demo themselves when it is not running
@@ -21,7 +22,16 @@
 # $XDG_RUNTIME_DIR, one per checkout), TITAN_DEMO_SHOTS
 # (captures, default <repo>/.previa/demo), TITAN_DEMO_BIN (binaries, default
 # <repo>/target/debug), TITAN_DEMO_WAIT (seconds before a capture, default 6)
-# and TITAN_DEMO_SIZE (default 1440x900).
+# and TITAN_DEMO_SIZE (window size of the scenes that do not set their own,
+# default 1440x900).
+#
+# A scene may set, besides the window's own variables, TITAN_AGENT_DEMO_SIZE
+# (its window size, WxH) and TITAN_AGENT_DEMO_KEYS (keys the window applies
+# 1.5 s after opening: text, {enter}, {shift-enter}, {ctrl-n}, {pause 500};
+# syntax in crates/titan-agent/src/demo.rs). The invented config folder has
+# a projects.json (ADR-0014) with an imported project without sessions, one
+# whose folder is gone and web-notas left out (its sessions go to "otras
+# carpetas").
 #
 # The daemon listens on its own socket and the window never connects to the
 # user's daemon: no real session is ever shown. Build first with
@@ -57,7 +67,7 @@ stop() {
 # Scenes: name, description and the variables the window reads. Each scene
 # sets its own variables here, so a capture never depends on the caller's
 # shell splitting words.
-SCENES="inicio terminal filtro nueva nueva-menu nueva-error ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
+SCENES="inicio terminal filtro nueva nueva-teclas nueva-menu nueva-error ajustes grafo carriles mesa hilo hilo-largo hilo-confirmar act-lista act-estrecho act-descarga act-confirmar act-aplicando act-fallo act-atras act-daemon act-ajustes"
 
 describe() {
   case "$1" in
@@ -65,6 +75,7 @@ describe() {
     terminal) echo "terminal de la sesión del director (claude attach falso)" ;;
     filtro) echo "árbol filtrado por «sftp»" ;;
     nueva) echo "nueva sesión con un encargo escrito" ;;
+    nueva-teclas) echo "nueva sesión con un encargo y una lista escritos por el guion de teclas" ;;
     nueva-menu) echo "nueva sesión con el menú de modelo abierto" ;;
     nueva-error) echo "nueva sesión con un lanzamiento rechazado" ;;
     ajustes) echo "ajustes por defecto de nueva sesión" ;;
@@ -75,6 +86,7 @@ describe() {
     hilo-largo) echo "hilo largo de Luna (terminado): debe abrir abajo" ;;
     hilo-confirmar) echo "hilo con la confirmación de tomar el control" ;;
     act-lista) echo "aviso [^] con una versión nueva lista (actualizar)" ;;
+    act-estrecho) echo "aviso [^] con una versión lista en una ventana estrecha (1000x800)" ;;
     act-descarga) echo "aviso [^] descargando la versión nueva" ;;
     act-confirmar) echo "aviso [^] con la confirmación en línea (2 sesiones trabajando)" ;;
     act-aplicando) echo "aviso [^] actualizando" ;;
@@ -92,6 +104,10 @@ scene_env() {
     terminal) export TITAN_AGENT_SELECT="sftp renombrar" ;;
     filtro) export TITAN_AGENT_FILTER="sftp" ;;
     nueva) export TITAN_AGENT_NEW=1 TITAN_AGENT_DEMO_BRIEF="Añade la orden rename al explorador SFTP.\nSi el destino existe, error claro sin tocar nada." ;;
+    nueva-teclas)
+      export TITAN_AGENT_NEW=1
+      export TITAN_AGENT_DEMO_KEYS="Añade la orden rename al explorador SFTP.{enter}{enter}- Si el destino existe, error claro.{enter}- Sin tocar nada en el servidor."
+      ;;
     nueva-menu) scene_env nueva; export TITAN_AGENT_DEMO_MENU=model ;;
     nueva-error) scene_env nueva; export TITAN_AGENT_DEMO_ERROR="La carpeta no existe: ~/dev/titan-sh" ;;
     ajustes) export TITAN_AGENT_SETTINGS=1 ;;
@@ -102,6 +118,7 @@ scene_env() {
     # The updater of the demo daemon is off (a build tree): the window shows
     # a fixed state of the notice instead.
     act-lista) export TITAN_AGENT_DEMO_UPDATE=ready ;;
+    act-estrecho) export TITAN_AGENT_DEMO_UPDATE=ready TITAN_AGENT_DEMO_SIZE=1000x800 ;;
     act-descarga) export TITAN_AGENT_DEMO_UPDATE=downloading ;;
     act-confirmar) export TITAN_AGENT_DEMO_UPDATE=confirm ;;
     act-aplicando) export TITAN_AGENT_DEMO_UPDATE=applying ;;
@@ -126,7 +143,7 @@ up() {
   nohup python3 -I "$KIT/appserver.py" "$RUN/codex.sock" "$DIR/codex.json" >"$DIR/appserver.log" 2>&1 &
   echo $! >"$RUN/appserver.pid"
   HOME="$DIR/home" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENTD_CLAUDE="$KIT/bin/claude" \
-    TITAN_AGENTD_CODEX="$KIT/bin/codex" TITAN_AGENTD_POLL_MS=1000 \
+    TITAN_AGENTD_CODEX="$KIT/bin/codex" TITAN_AGENTD_POLL_MS=1000 TITAN_AGENT_CONFIG_DIR="$DIR/config" \
     nohup "$BIN/titan-agentd" >"$DIR/daemon.log" 2>&1 &
   echo $! >"$RUN/daemon.pid"
   sleep 1
@@ -149,6 +166,7 @@ ui() {
   stop ui
   (
     display_env
+    export TITAN_AGENT_DEMO_SIZE="$SIZE"
     scene_env "$1"
     export HOME="$DIR/home" TITAN_AGENTD_SOCKET="$RUN/agentd.sock" TITAN_AGENT_CONFIG_DIR="$DIR/config"
     # If the private daemon dies, the window starts another one with its
@@ -196,6 +214,8 @@ shot() {
   # A failed capture returns 1 instead of exiting, so shots goes on.
   miss() { echo "demo: $*" >&2; return 1; }
   out=${2:-$SHOTS/$1.png}
+  # The size the scene asks for (scene_env runs in a subshell: no leak).
+  want=$(TITAN_AGENT_DEMO_SIZE="$SIZE"; scene_env "$1"; printf %s "$TITAN_AGENT_DEMO_SIZE")
   mkdir -p "$(dirname "$out")"
   # An old capture with this name must not survive a failed one.
   rm -f "$out"
@@ -206,10 +226,12 @@ shot() {
   sleep "$WAIT"
   display_env
   pid=$(cat "$RUN/ui.pid")
-  alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró ($DIR/ui.log)"; return 1; }
+  alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
   tag="titandemo$$"
   got=$(focus "$pid" "$tag")
   if [ "$got" != "$pid" ]; then
+    # A window that died (a panic) also loses the focus: say which.
+    alive ui || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
     stop ui
     miss "SIN CAPTURA de $1: la ventana activa es el PID '$got', no la nuestra ($pid)"
     return 1
@@ -219,17 +241,20 @@ shot() {
   # Checked again after capturing: if another window took the focus in
   # between, the file may show it and is deleted.
   after=$(active_pid "${tag}b")
+  closed=0
+  alive ui || closed=1
   stop ui
   if [ "$after" != "$pid" ]; then
     rm -f "$out"
+    [ "$closed" = 0 ] || { miss "SIN CAPTURA de $1: la ventana se cerró: $(tail -n 2 "$DIR/ui.log")"; return 1; }
     miss "SIN CAPTURA de $1: el foco pasó al PID '$after' durante la captura"
     return 1
   fi
   [ -f "$out" ] || { miss "SIN CAPTURA de $1: spectacle no escribió $out"; return 1; }
   size=$(magick identify -format '%wx%h' "$out" 2>/dev/null || echo "?")
-  if [ "$size" != "$SIZE" ]; then
+  if [ "$size" != "$want" ]; then
     rm -f "$out"
-    miss "SIN CAPTURA de $1: mide $size y se esperaba $SIZE"
+    miss "SIN CAPTURA de $1: mide $size y se esperaba $want"
     return 1
   fi
   echo "$1 → $out"
@@ -239,6 +264,14 @@ case "${1:-}" in
   up) up ;;
   down) down ;;
   escenas) for s in $SCENES; do printf '%-15s %s\n' "$s" "$(describe "$s")"; done ;;
+  flujos)
+    # Kits that drive a real flow end to end (a service, an update…),
+    # next to this one: their second line says what they test.
+    for kit in "$KIT"/*.sh; do
+      [ "$kit" = "$KIT/demo.sh" ] && continue
+      printf '%-18s %s\n' "$(basename "$kit")" "$(sed -n '2s/^# *//p' "$kit")"
+    done
+    ;;
   ui) shift; ui "$@"; echo "ventana abierta (PID $(cat "$RUN/ui.pid"))" ;;
   shot) shift; session; shot "$@" ;;
   shots)
@@ -255,5 +288,5 @@ case "${1:-}" in
     echo "Sigue los pasos de la nota de la tarea. Al cerrar la ventana se para todo."
     while alive ui; do sleep 1; done
     ;;
-  *) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac

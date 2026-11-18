@@ -1,0 +1,351 @@
+---
+Nombre: Equipo v6
+Estado: En curso
+Resumen: 'Corrige las carencias del equipo v5 anotadas en la 0.6.0 (incluidas las 7–9 del diseño de la 0.7.0): git de una orden por llamada y mensajes por fichero (ask --message-file, mensaje vacío rechazado), rutas en el contrato, titan-team --version y un binario fijado (bin/team pin) para las tareas sobre el propio equipo, kit de demo con tamaño de ventana, guion de teclas, flujos reales y projects.json, Luna sin dar por fallido un turno por el sandbox, y la lógica de interacción en modelos puros con tests. Deja la configuración v6 como la vigente.'
+Decisiones: 'Encargo de la sesión de control control-3b (2026-11-18). Versión 0.6.1 (patch), acordada con el usuario el 2026-11-18. Revisión de Sol: 3 hallazgos aceptados (uno ya corregido).'
+Bloqueada: []
+Fecha de creación: 2026-11-18T00:10:00+01:00
+Última modificación: 2026-11-18T01:10:00+01:00
+---
+
+# Equipo v6
+
+## Objetivo
+
+Corregir las carencias del equipo v5 anotadas en
+[[Versión 0.6.0 - Instalador y actualización automática]] → «Carencias del
+equipo» (1–5 y las 7–9 añadidas al diseñar la 0.7.0), y dejar la
+**configuración v6** como la vigente, para que la haga servir
+[[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]]
+(su paso 0 es esta ronda). Sustituye a la v5 de [[Equipo v5]] (con los
+ajustes de [[Equipo v5.1 - Compilación compartida por equipo]]).
+
+Se lanzó desde la sesión de control `control-3b`; trabajo en la rama
+`feat/equipo-v6`, que sale de `main`.
+
+## Carencias que corrige
+
+Numeración de la nota de la 0.6.0 (C = carencia) y el ajuste:
+
+| Carencia | Ajuste |
+| --- | --- |
+| C1. El aislamiento del worktree rechaza órdenes compuestas con git y vació el `-m` del revisor | A1: la skill pide git de una orden por llamada y mensajes escritos con la herramienta de ficheros; `ask --message-file`; un mensaje vacío se rechaza |
+| C2. El contrato nombró el icono sin su ruta | A2: la skill exige la ruta exacta de todo fichero o recurso que nombre el contrato |
+| C3. El kit no cambia el ancho de la ventana | A3: `TITAN_AGENT_DEMO_SIZE` y escenas con su tamaño en `demo.sh` |
+| C4. Escenas fijas, no el flujo real | A3: la skill pide un kit de punta a punta para los estados que dependen de un servicio; `demo.sh flujos` los lista |
+| C5. Luna da por fallido su turno por los tests de PTY del sandbox | A4: su prompt dice que la compuerta del orquestador es la que cuenta |
+| C7. `bin/team` compila titan-team desde la carpeta del director | A5: `TITAN_TEAM_BIN`, `bin/team pin [REV]` y `unpin`; `titan-team --version` |
+| C8. El kit no puede escribir en la ventana | A3: guion de teclas `TITAN_AGENT_DEMO_KEYS` y `projects.json` de demo (ADR-0014) |
+| C9. La interfaz no tiene tests de ventana | A6: la skill exige la lógica de interacción en modelos puros con tests de aceptación; la vista solo pinta; el revisor lo comprueba |
+
+C6 (el evaluador visual funcionó) no pide ajuste.
+
+## Diseño
+
+- **A1. Órdenes y mensajes.** La skill pide, en una sesión en segundo plano
+  o en un worktree, git de una orden por llamada (sin `&&`, `;` ni
+  tuberías) y los mensajes largos escritos con la herramienta de ficheros y
+  pasados por fichero (`git commit -F`, `ask --message-file`). titan-team
+  acepta `--message-file` (sinónimo de `-f`) y rechaza un mensaje vacío
+  (salida 2, sin turno ni eventos).
+- **A2. Rutas en el contrato.** Todo fichero o recurso que nombre el
+  contrato lleva su ruta exacta.
+- **A3. Kit de demo.** La app lee `TITAN_AGENT_DEMO_SIZE` (tamaño inicial)
+  y `TITAN_AGENT_DEMO_KEYS` (guion de teclas que despacha a la ventana con
+  `Window::dispatch_keystroke` 1,5 s después de abrirse); su análisis va en
+  `titan_agent::demo`, con tests. `demo.sh`: escenas `nueva-teclas` y
+  `act-estrecho` (1000x800), `shot` comprueba el tamaño de cada escena,
+  `demo.sh flujos` lista los kits de punta a punta, y el daemon de la demo
+  recibe `TITAN_AGENT_CONFIG_DIR` con un `projects.json` inventado
+  (ADR-0014). La skill pide un kit de punta a punta para los estados que
+  dependen de un servicio.
+- **A4. Luna y el sandbox.** Su prompt dice que unos tests de PTY o sockets
+  fallan dentro de su sandbox: si compila, lo dice («tests bloqueados por
+  el sandbox») sin darlo por fallido; cuenta la compuerta de titan-team.
+- **A5. titan-team fijado.** `bin/team` usa `TITAN_TEAM_BIN`, si no el
+  binario fijado `.agents/team-bin/titan-team`, y si no `cargo run`.
+  `bin/team pin [REV]` lo compila desde esa revisión (`git archive` en una
+  carpeta temporal y la carpeta de compilación del equipo:
+  unos 6 s con las dependencias calientes) y `unpin` lo quita.
+  `titan-team --version`. La skill pide `bin/team pin origin/main` en las
+  tareas sobre el propio equipo.
+- **A6. Lógica de interacción en modelos puros.** La skill exige que la
+  lógica de interacción nueva de la interfaz vaya en funciones o modelos
+  puros con firmas en el contrato y tests de Sol; el prompt del revisor lo
+  añade a sus criterios.
+
+## Configuración v6 (vigente)
+
+Sustituye a la v5 ([[Equipo v5]] y [[Equipo v5.1 - Compilación compartida por equipo]]).
+El reparto no cambia; lo nuevo va marcado:
+
+1. El director (Opus) escribe la especificación con el contrato numerado,
+   las firmas que usan los tests **y la ruta exacta de todo fichero o
+   recurso que nombre** (nuevo). **La lógica de interacción de la interfaz
+   va en modelos puros con sus firmas en el contrato** (nuevo). En las
+   tareas sobre el propio equipo, **dirige con titan-team fijado**
+   (`bin/team pin origin/main`, nuevo).
+2. Sol (gpt-6.1-sol, medium) escribe pocos tests de aceptación, al menos uno
+   por apartado; titan-team los formatea y ejecuta tras su turno.
+3. El director implementa cada parte con sus tests; los movimientos de
+   código, con `scripts/mover-lineas.sh`. **git de una orden por llamada y
+   mensajes por fichero** (nuevo).
+4. Luna (gpt-6-luna) solo para ediciones repetitivas; su turno pasa la
+   compuerta o cuenta como fallido, y **unos tests bloqueados por su
+   sandbox no son un fallo suyo** (nuevo).
+5. Una revisión final de Sol (high) en un hilo nuevo, con la compuerta, sin
+   evaluar lo visual y **comprobando que la lógica de interacción no quede
+   en la vista** (nuevo). El mensaje va con `--message-file` (nuevo).
+6. Evaluador visual: un subagente de Opus nuevo en cada ronda (máximo 2),
+   con capturas del kit por escena y estado, **también estrechas y con
+   texto escrito por el guion de teclas**, y **un kit de punta a punta para
+   los estados que dependen de un servicio** (nuevo); el usuario prueba a
+   mano la lista de clics de la nota.
+
+Fuente de verdad del reparto: `.agents/team.toml` y la skill `equipo`.
+
+## Contrato (para los tests de aceptación)
+
+### C1. `titan-team --version`
+
+- `titan-team --version` y `titan-team -V` escriben en stdout exactamente
+  `titan-team <versión>\n`, donde `<versión>` es la del paquete
+  (`env!("CARGO_PKG_VERSION")` en un test de integración del mismo crate da
+  la misma), y salen con 0.
+- Funcionan en cualquier carpeta, sin `.agents/team.toml` y sin ninguna otra
+  palabra. No leen ni escriben nada.
+
+### C2. Mensaje por fichero y mensaje vacío en `ask`
+
+- `ask` acepta `--message-file FICHERO` (y `--message-file=FICHERO`) como
+  sinónimo de `-f FICHERO` / `--file FICHERO`, que ya existen: lee el
+  fichero (ruta relativa a la carpeta actual) y lo usa como mensaje del
+  director. El mensaje llega a Codex por su entrada estándar, al final del
+  prompt, bajo la línea `# Mensaje del director` (como hoy con `-m`).
+- Dar a la vez `-m`/`--message` y `-f`/`--file`/`--message-file` es un error
+  de uso: salida 2.
+- Un fichero de mensaje que no existe: salida 2 (como hoy con `-f`).
+- **Mensaje vacío**: un `-m ""`, un `-m` con solo espacios o saltos de línea,
+  o un fichero vacío o con solo espacios o saltos de línea → salida 2, con un
+  mensaje en stderr que contiene `vacío`. No se lanza Codex, no se escribe
+  ningún evento en `events.jsonl` ni ninguna entrada nueva en el historial.
+  Vale igual para el primer turno de un rol (sin hilo) que para continuar
+  un hilo.
+- No dar ningún mensaje en el primer turno de un rol sigue siendo válido
+  (como hoy).
+
+### C3. `bin/team` con binario fijado
+
+`bin/team` es un script `sh` en `<raíz>/bin/team`; `<raíz>` es la carpeta
+padre de la carpeta `bin/` donde está el script (se calcula desde la ruta del
+propio script, no desde la carpeta actual). Orden de elección del binario de
+titan-team:
+
+1. Si `TITAN_TEAM_BIN` está definida y no vacía: ejecuta ese fichero con los
+   mismos argumentos, intactos (con espacios y en el mismo orden), y sale
+   con su código de salida. Si no existe o no es ejecutable: salida 2 y
+   stderr con `TITAN_TEAM_BIN`, sin ejecutar nada más.
+2. Si no, si existe y es ejecutable `<raíz>/.agents/team-bin/titan-team`
+   (el binario fijado): lo ejecuta igual (mismos argumentos, mismo código de
+   salida).
+3. Si no, como hoy: `cargo run --quiet --release --manifest-path
+   <raíz>/Cargo.toml -p titan-team -- <argumentos>`.
+
+Dos órdenes las resuelve el propio script y nunca llegan a titan-team (aunque
+haya `TITAN_TEAM_BIN` o binario fijado):
+
+- `bin/team pin [REV]` (REV por defecto `main`): resuelve REV con
+  `git -C <raíz> rev-parse --verify "REV^{commit}"`. Si no es una revisión
+  válida (o `<raíz>` no es un repositorio git): salida 2, stderr con
+  `revisión`, y **no crea** `<raíz>/.agents/team-bin/`. Si lo es: extrae el
+  árbol de ese commit (`git archive`) en una carpeta temporal, compila
+  `cargo build --release -p titan-team` con
+  `CARGO_TARGET_DIR=<raíz>/.agents/target`, copia el binario a
+  `<raíz>/.agents/team-bin/titan-team`, escribe
+  `<raíz>/.agents/team-bin/rev` con una línea `REV <sha completo>`, borra la
+  carpeta temporal e imprime
+  `titan-team fijado en REV (<sha de 7>): titan-team <versión>`. Si falla la
+  compilación: salida 1 y no deja un binario fijado nuevo.
+- `bin/team unpin`: borra `<raíz>/.agents/team-bin/` (si no existía, no es
+  un error), imprime una línea que contiene `sin fijar` y sale con 0.
+
+### C4. Análisis de las variables de demo de la interfaz (funciones puras)
+
+La app lee dos variables nuevas solo para el kit de demo:
+
+- `TITAN_AGENT_DEMO_SIZE=<ancho>x<alto>`: tamaño inicial de la ventana en
+  píxeles lógicos (hoy siempre 1440x900).
+- `TITAN_AGENT_DEMO_KEYS=<guion>`: teclas que la app aplica a la ventana tras
+  abrirse, como si se pulsaran (para capturar el campo de texto con texto,
+  listas, menús…).
+
+Su análisis está en el módulo público `titan_agent::demo`
+(`crates/titan-agent/src/demo.rs`), sin ventana:
+
+**`parse_size(text: &str) -> Result<(u32, u32), String>`**
+
+- Acepta exactamente `<ancho>x<alto>`: dos enteros decimales sin signo, sin
+  espacios, separados por una `x` minúscula. `"1100x800"` → `Ok((1100, 800))`.
+- Límites: ancho 640..=7680 y alto 480..=4320, ambos incluidos. Fuera de
+  ellos, o cualquier otra forma (`""`, `"1100"`, `"1100X800"`,
+  `" 1100x800"`, `"1100x800x2"`, `"-1100x800"`, `"axb"`) → `Err`.
+
+**`parse_keys(script: &str) -> Result<Vec<DemoStep>, String>`**
+
+```rust
+pub enum DemoStep {
+    /// A keystroke dispatched to the window as if it were pressed.
+    Key(gpui::Keystroke),
+    /// Wait before the next step.
+    Pause(std::time::Duration),
+}
+```
+
+`DemoStep` deriva `Debug`, `Clone` y `PartialEq`. `gpui::Keystroke` es el de
+GPUI (dependencia `gpui` del crate, ya disponible en sus tests):
+
+```rust
+pub struct Keystroke { pub modifiers: Modifiers, pub key: String, pub key_char: Option<String> }
+pub struct Modifiers { pub control: bool, pub alt: bool, pub shift: bool, pub platform: bool, pub function: bool }
+```
+
+(`Modifiers` y `Keystroke` implementan `Default`.)
+
+Sintaxis del guion:
+
+- **Texto**: cada carácter fuera de llaves es una tecla que lo escribe:
+  `Key(Keystroke { key, key_char: Some(<el carácter>), modifiers })` con
+  `key` = el carácter en minúscula (`to_lowercase`) y `modifiers.shift` =
+  `true` solo si el carácter es mayúscula (`char::is_uppercase`); el resto
+  de modificadores a `false`. El espacio es `key = "space"`,
+  `key_char = Some(" ")`. Ejemplos: `a` → key `"a"`, key_char `"a"`; `A` →
+  key `"a"`, shift, key_char `"A"`; `ñ` → key `"ñ"`, key_char `"ñ"`; `Á` →
+  key `"á"`, shift, key_char `"Á"`; `-` → key `"-"`, key_char `"-"`.
+- **Tecla con nombre**: `{<modificadores><tecla>}`. Modificadores, cero o
+  más, en cualquier orden y cada uno como mucho una vez: `ctrl-`
+  (`control`), `alt-` y `shift-`. Teclas: `enter`, `tab`, `escape`,
+  `backspace`, `delete`, `up`, `down`, `left`, `right`, `home`, `end`,
+  `pageup`, `pagedown`, `space`, o un único carácter imprimible (`{ctrl-n}`).
+  Da `Key(Keystroke { key: <tecla en minúscula>, key_char: None, modifiers })`.
+  Ejemplos: `{enter}` → key `"enter"`; `{shift-enter}` → key `"enter"` con
+  shift; `{ctrl-n}` → key `"n"` con control; `{alt-shift-up}` → key `"up"`
+  con alt y shift.
+- **Pausa**: `{pause N}` (un espacio; N entero decimal 0..=10000) →
+  `Pause(Duration::from_millis(N))`.
+- **Llaves literales**: `{{` escribe `{` y `}}` escribe `}` (como texto).
+- **Errores** (`Err` con un texto que nombra el fragmento): una `{` sin
+  cerrar, una `}` suelta, una tecla o modificador desconocido (`{f13}`,
+  `{meta-a}`, `{}`), un modificador repetido, una pausa fuera de rango o no
+  numérica, y un salto de línea, retorno de carro o tabulador reales en el
+  texto (se escriben `{enter}`, `{shift-enter}`, `{tab}`).
+- Un guion vacío → `Ok(vec![])`. El orden de los pasos es el del guion.
+
+Comportamiento en la app (no lo prueban los tests: lo verifica el director
+con capturas): un valor inválido en cualquiera de las dos variables escribe
+el error en stderr y sale con 2 sin abrir la ventana; las teclas empiezan
+1,5 s después de abrir la ventana, con 20 ms entre una y otra.
+
+### C5. Documentación
+
+- `titan-team --help` (y `titan-team` sin argumentos) nombra
+  `--message-file` y `--version`.
+- `titan-team doc` nombra `--message-file`.
+
+
+## Criterios de finalización
+
+- A1–A6 implementados, con los tests de aceptación de Sol y los propios.
+- La skill `equipo`, los prompts y `.agents/team.toml` describen la v6.
+- El kit captura una escena estrecha y una con texto escrito por el guion.
+- fmt, clippy `-D warnings`, tests y gitleaks en verde; PR integrada por
+  squash con la versión acordada con el usuario.
+
+## Revisión de Sol (high, con `--gate`)
+
+Hilo nuevo (`equipo-v6-revision`) sobre el commit `fff7f6a`, con la
+especificación, la skill tras el cambio y la compuerta. Dirigido con titan-team fijado en `origin/main`
+(`bin/team pin`), como pide ya la skill. Veredicto `changes_requested`:
+
+| Hallazgo | Severidad | Decisión |
+| --- | --- | --- |
+| La compuerta falla: clippy pide `matches!` en `demo.rs` | bloqueante | Aceptado; ya corregido en `0e12473` (el director lanzó la revisión antes de pasar clippy: carencia 3) |
+| `TITAN_TEAM_BIN` con un nombre sin barra se comprueba en la carpeta actual pero `exec` lo busca en `PATH` | mayor | Aceptado: se ejecuta como `./<nombre>`; test propio en `crates/titan-team/tests/cli.rs` |
+| `pin` de una revisión anterior a la v6 no imprime `titan-team <versión>` | menor | Aceptado: la lee del `Cargo.toml` del árbol extraído |
+
+## Verificación
+
+Rama `feat/equipo-v6`, en local el 2026-11-18:
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde: **189 tests** (179 en
+  `main`): 8 de aceptación de Sol (`equipo_v6_acceptance.rs` y
+  `demo_acceptance.rs`, commit `c70176b`, en verde a la primera y sin tocar
+  desde entonces) y 2 propios (casos del guion de teclas en `demo.rs` y
+  `TITAN_TEAM_BIN` sin barra en `cli.rs`), más casos nuevos en el test de
+  argumentos de titan-team (`-V`, `--message-file`). Hooks de gitleaks en
+  cada commit.
+- `bin/team pin main`, `pin origin/main`, `pin HEAD` (unos 6 s con la
+  carpeta del equipo caliente), `pin` de una revisión inexistente (salida 2,
+  sin carpeta) y `unpin`, a mano.
+- Kit de demo (`demo.sh shots`, PID comprobado, sin datos del entorno):
+  `nueva-teclas` (el guion escribe el encargo con acentos y una lista),
+  `act-estrecho` (1000x800, el aviso corto `[^] actualizar` que la 0.6.0 no
+  pudo capturar) e `inicio`. Un guion inválido cierra la ventana y `shot`
+  lo dice con el error. No queda ningún proceso de la demo al salir.
+- `demo.sh flujos` lista `actualizacion.sh`.
+- Versión **0.6.1** (patch, acordada con el usuario el 2026-11-18).
+- Pendiente: push, PR e integración, con autorización del usuario.
+
+## Métricas
+
+- **Tiempo**: de 00:04 a 01:10 del 2026-11-18, con una parada de **31 min**
+  por el límite de uso de Claude (00:13–00:44): unos **35 min** de trabajo.
+  Espera al usuario: la pregunta de versión.
+- **Uso de Claude** (transcript, Opus 5.5) hasta el cierre de la nota: unas
+  90 respuestas y 100 llamadas a herramientas, unos **65 k tokens de
+  salida, 0,2 M de escritura en caché y 14,6 M de lectura de caché**. Sin
+  subagentes: lo visual se limita a dos variables de demo, comprobadas con
+  capturas por el director.
+- **Codex**: 2 llamadas, 0,74 M de entrada (0,63 M en caché) y 10,8 k de
+  salida.
+
+  | Encargo | Rol | Entrada (caché) | Salida | Tiempo |
+  | --- | --- | --- | --- | --- |
+  | `equipo-v6` | Sol, tests | 197 k (162 k) | 6,8 k | 153 s (141 s de sus `checks`) |
+  | `equipo-v6-revision` | Sol, revisión high con `--gate` | 545 k (468 k) | 3,9 k | 131 s |
+
+- **Luna**: no se usó; no hubo ediciones repetitivas.
+- **Hallazgos**: Sol, 1 bloqueante, 1 mayor y 1 menor, todos aceptados.
+
+## Carencias nuevas encontradas
+
+1. **El director lanzó la revisión sin pasar clippy**, y Sol gastó su única
+   ronda en un bloqueante que ya se veía. *Corregido en la skill*: la
+   compuerta propia en verde antes del paso 4.
+2. **`shot` atribuía un panic de la ventana a otra ventana con el foco**
+   («el foco pasó a firefox»): al cerrarse la app, el foco pasa a otra.
+   *Corregido en el kit*: si la ventana ya no vive, dice «la ventana se
+   cerró» con las últimas líneas de `ui.log`. (El panic era del primer
+   intento del guion de teclas, que despachaba dentro de `window.update` y
+   reentraba en la vista; se despacha con `update_window`.)
+3. **El `main` local estaba atrasado** (`bin/team pin main` fijó una
+   revisión vieja). La skill ya dice `git fetch origin` y
+   `bin/team pin origin/main`. *Propuesta*: que `pin` sin revisión use
+   `origin/main` si existe.
+4. **Las variables `TITAN_AGENT_*` del entorno de quien llama pasan a las
+   escenas** (salvo el tamaño, que fija `ui`). Útil para probar un guion a
+   mano, pero una variable olvidada cambia todas las capturas.
+   *Propuesta*: que `ui` limpie las `TITAN_AGENT_*` heredadas antes de
+   `scene_env`.
+
+## Resultado
+
+Configuración v6 vigente (sección «Configuración v6»), con A1–A6 en la
+rama `feat/equipo-v6`: titan-team `--version`, `--message-file` y mensaje
+vacío rechazado; `bin/team pin`/`unpin` y `TITAN_TEAM_BIN`; las variables
+de demo `TITAN_AGENT_DEMO_SIZE` y `TITAN_AGENT_DEMO_KEYS` en la app (con
+`titan_agent::demo`); escenas, `flujos` y `projects.json` en el kit; la
+skill, los prompts de Luna y del revisor y `team.toml` de la v6. La hará
+servir [[Versión 0.7.0 - Proyectos importados y monitor por sesión directora]].
+Falta publicar la PR (0.6.1) con autorización del usuario; hasta entonces
+la tarea sigue `En curso`.

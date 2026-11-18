@@ -12,6 +12,10 @@ relative to now so the "working" states look live:
 - codex.json: threads, items and quota served by the fake app-server.
 - home/dev/titan-ssh/.agents/: a team.toml and the events of two team runs
   (one in progress, one waiting on the user).
+- config/projects.json: the imported projects (ADR-0014, read by the daemon
+  through TITAN_AGENT_CONFIG_DIR): titan-ssh, recetas (no sessions) and
+  borrado (its folder is gone); web-notas is left out, so its sessions go to
+  "otras carpetas".
 
 Every name, path, message and number here is made up: never put real
 sessions, users, hosts or paths in it.
@@ -238,4 +242,17 @@ quota = {"rateLimits": {"limitId": "codex",
                                       "resetsAt": NOW_S + 4 * 86400}}}
 write(os.path.join(DIR, "codex.json"), json.dumps({"threads": threads, "quota": quota},
                                                   ensure_ascii=False))
+
+# --- Imported projects (ADR-0014, projects.json v1) -------------------------
+
+RECETAS = os.path.join(DEV, "recetas")
+write(os.path.join(RECETAS, "README.md"), "# recetas\n\nUn proyecto inventado sin sesiones.\n")
+projects = [
+    {"root": SSH, "added_ms": NOW_MS - 9 * 86_400_000},
+    {"root": RECETAS, "added_ms": NOW_MS - 2 * 86_400_000},
+    # A folder that no longer exists: the tree marks it as not found.
+    {"root": os.path.join(DEV, "borrado"), "added_ms": NOW_MS - 30 * 86_400_000},
+]
+write(os.path.join(DIR, "config", "projects.json"),
+      json.dumps({"version": 1, "projects": projects}, ensure_ascii=False))
 print(DIR)

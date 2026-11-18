@@ -79,9 +79,11 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
     };
     let message = match (
         args.option(&["-m", "--message"]),
-        args.option(&["-f", "--file"]),
+        args.option(&["-f", "--file", "--message-file"]),
     ) {
-        (Some(_), Some(_)) => return Err(Failure::usage("Usa -m o -f, no los dos")),
+        (Some(_), Some(_)) => {
+            return Err(Failure::usage("Usa -m o -f/--message-file, no los dos"));
+        }
         (Some(text), None) => Some(text.to_string()),
         (None, Some(file)) => Some(
             std::fs::read_to_string(resolve(cwd, Path::new(file)))
@@ -89,6 +91,17 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         ),
         (None, None) => None,
     };
+    // An empty message is a mistake upstream (a file that was never
+    // written, an empty `$(cat …)`): never hand it to a role as if it
+    // were the director's word.
+    if message
+        .as_deref()
+        .is_some_and(|text| text.trim().is_empty())
+    {
+        return Err(Failure::usage(
+            "El mensaje está vacío (-m o -f/--message-file): no se lanza el turno",
+        ));
+    }
     if thread_id.is_some() && message.is_none() {
         return Err(Failure::usage(
             "Para continuar un hilo es obligatorio indicar -m o -f",

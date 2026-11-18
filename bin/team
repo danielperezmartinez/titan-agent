@@ -1,8 +1,71 @@
 #!/bin/sh
 # Wrapper of titan-team (crates/titan-team), the team tool in Rust that
-# replaced the Python prototype in phase 3 (ADR-0005, ADR-0010). It builds
-# on first use (only titan-team and the core, not the interface) and passes
+# replaced the Python prototype in phase 3 (ADR-0005, ADR-0010). It passes
 # the arguments through: bin/team roles, bin/team ask <role> <task>...
-set -e
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+#
+# Which titan-team runs, first match wins:
+#   1. $TITAN_TEAM_BIN, when set and not empty;
+#   2. the pinned binary, .agents/team-bin/titan-team (bin/team pin);
+#   3. cargo run from this checkout (builds only titan-team and the core).
+# A task that changes titan-team itself pins one first, so the director
+# never drives the team with the half-done tool it is writing.
+#
+#   bin/team pin [REV]   build titan-team from REV (default main) and pin it
+#   bin/team unpin       go back to building from this checkout
+set -eu
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
+pinned="$root/.agents/team-bin"
+
+die() { echo "bin/team: $1" >&2; exit "${2:-2}"; }
+
+pin() {
+  rev=${1:-main}
+  sha=$(git -C "$root" rev-parse --quiet --verify "$rev^{commit}" 2>/dev/null) ||
+    die "revisión desconocida: $rev"
+  src=$(mktemp -d "${TMPDIR:-/tmp}/titan-team-pin.XXXXXX")
+  trap 'rm -rf "$src"' EXIT
+  git -C "$root" archive "$sha" | tar -x -C "$src"
+  # The team's build folder: the dependencies are already there.
+  CARGO_TARGET_DIR="$root/.agents/target" \
+    cargo build --quiet --release --manifest-path "$src/Cargo.toml" -p titan-team ||
+    die "no se pudo compilar titan-team de $rev; sigue el binario anterior" 1
+  mkdir -p "$pinned"
+  cp "$root/.agents/target/release/titan-team" "$pinned/titan-team.new"
+  mv "$pinned/titan-team.new" "$pinned/titan-team"
+  printf '%s %s\n' "$rev" "$sha" >"$pinned/rev"
+  short=$(printf %s "$sha" | cut -c1-7)
+  # Revisions before the team v6 have no --version: read it from the tree.
+  version=$("$pinned/titan-team" --version 2>/dev/null) ||
+    version="titan-team $(awk '/^\[workspace\.package\]/ { s = 1; next } /^\[/ { s = 0 }
+      s && /^[[:space:]]*version[[:space:]]*=/ { gsub(/^[^"]*"|".*$/, ""); print; exit }' "$src/Cargo.toml")"
+  echo "titan-team fijado en $rev ($short): $version"
+}
+
+case "${1:-}" in
+  pin)
+    [ $# -le 2 ] || die "uso: bin/team pin [REV]"
+    shift
+    pin "$@"
+    exit 0
+    ;;
+  unpin)
+    [ $# -eq 1 ] || die "uso: bin/team unpin"
+    rm -rf "$pinned"
+    echo "titan-team sin fijar: se compila desde $root"
+    exit 0
+    ;;
+esac
+
+if [ -n "${TITAN_TEAM_BIN:-}" ]; then
+  bin=$TITAN_TEAM_BIN
+  # A bare name is a file here, as the checks below read it, never a
+  # command looked up in PATH.
+  case "$bin" in */*) ;; *) bin="./$bin" ;; esac
+  [ -f "$bin" ] && [ -x "$bin" ] ||
+    die "TITAN_TEAM_BIN no es un ejecutable: $TITAN_TEAM_BIN"
+  exec "$bin" "$@"
+fi
+if [ -f "$pinned/titan-team" ] && [ -x "$pinned/titan-team" ]; then
+  exec "$pinned/titan-team" "$@"
+fi
 exec cargo run --quiet --release --manifest-path "$root/Cargo.toml" -p titan-team -- "$@"

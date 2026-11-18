@@ -1,8 +1,9 @@
 //! Own end-to-end tests of titan-team (the acceptance tests are in
 //! `phase3_acceptance.rs`): what must not run, the task lock, a turn that is
 //! recorded even when its commit fails, a thread open elsewhere, the
-//! director's session, `init`/`doc`, the gate inside the turn and the
-//! team's shared build folder. Fake Codex, temporary repo.
+//! director's session, `init`/`doc`, the gate inside the turn, the
+//! team's shared build folder and how `bin/team` picks a bare
+//! `TITAN_TEAM_BIN`. Fake Codex, temporary repo.
 #![cfg(unix)]
 
 use std::fs;
@@ -388,4 +389,34 @@ fn the_team_shares_one_build_folder_in_its_commands_and_writing_roles() {
     let check = repo.run(&["check", "--json"]);
     assert_ne!(check.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&check.stdout).contains("project.target_dir"));
+}
+
+#[test]
+fn bin_team_runs_a_bare_titan_team_bin_from_here_not_from_path() {
+    let dir = std::env::temp_dir().join(format!(
+        "titan-team-bare-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let here = dir.join("here");
+    let path = dir.join("path");
+    fs::create_dir_all(&here).unwrap();
+    fs::create_dir_all(&path).unwrap();
+    for (folder, word) in [(&here, "here"), (&path, "path")] {
+        let fake = folder.join("kite-team");
+        fs::write(&fake, format!("#!/bin/sh\necho {word} \"$@\"\n")).unwrap();
+        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let script = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../bin/team");
+    let out = Command::new("sh")
+        .arg(&script)
+        .args(["roles", "--json"])
+        .current_dir(&here)
+        .env("TITAN_TEAM_BIN", "kite-team")
+        .env("PATH", format!("{}:/usr/bin:/bin", path.display()))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "here roles --json\n");
+    fs::remove_dir_all(&dir).unwrap();
 }
