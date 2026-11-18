@@ -33,7 +33,7 @@ jobs:
     outputs:
       codigo: ${{ steps.diff.outputs.codigo }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: diff
@@ -53,7 +53,7 @@ jobs:
     if: needs.cambios.outputs.codigo == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: La versión supera la de la rama principal
@@ -101,7 +101,7 @@ jobs:
     if: needs.cambios.outputs.codigo == 'true'
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Caché de Cargo
         uses: actions/cache@v4
         with:
@@ -120,7 +120,7 @@ jobs:
     name: Fugas
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: gitleaks (historial, mensajes, rama y PR)
