@@ -3,7 +3,9 @@
 # Publication). Manually triggered on main only, with user authorization
 # for that version: gh workflow run release.yml --ref main
 # - Prepare: the Cargo.toml version is 0.x.y, its tag does not exist, and the
-#   commit's Cambios, Verificar, and Fugas checks have passed.
+#   commit's Cambios, Verificar, and Fugas checks have passed. If they are
+#   still running (the workflow was launched right after merging), it waits
+#   for them (40 min at most) instead of failing.
 # - Linux and Windows: build in release mode and package.
 # - Publish (environment `release`, the only one with signing secrets):
 #   manifest signed with minisign and verified with packaging/minisign.pub,
@@ -26,6 +28,7 @@ jobs:
     name: Preparar
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 50
     permissions:
       contents: read
       checks: read
@@ -46,13 +49,27 @@ jobs:
             echo "La etiqueta v$version ya existe: sube la versión en una PR." >&2
             exit 1
           fi
+          # Launched right after merging, the commit's CI may still be running
+          # (or not have started yet): wait for it rather than fail.
+          deadline=$(( $(date +%s) + 2400 ))
           for check in Cambios Verificar Fugas; do
-            result=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=$check" \
-              --jq '[.check_runs[] | select(.conclusion == "success")] | length')
-            if [ "$result" -lt 1 ]; then
+            while :; do
+              runs=$(gh api "repos/$REPO/commits/$SHA/check-runs?check_name=$check" \
+                --jq '[([.check_runs[] | select(.conclusion == "success")] | length),
+                       ([.check_runs[] | select(.status != "completed")] | length),
+                       (.check_runs | length)] | @tsv')
+              passed=$(printf '%s' "$runs" | cut -f1)
+              running=$(printf '%s' "$runs" | cut -f2)
+              total=$(printf '%s' "$runs" | cut -f3)
+              [ "$passed" -ge 1 ] && break
+              if { [ "$running" -ge 1 ] || [ "$total" -eq 0 ]; } && [ "$(date +%s)" -lt "$deadline" ]; then
+                echo "El check $check del commit $SHA aún no ha terminado; espero."
+                sleep 30
+                continue
+              fi
               echo "El check $check del commit $SHA no terminó en verde." >&2
               exit 1
-            fi
+            done
           done
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"

@@ -34,9 +34,11 @@ Numeración de la nota de la 0.7.0 (C = carencia) y el ajuste:
 | C8. El contrato fijó una ruta absoluta con forma de Unix | A4: el contrato describe rutas y formatos por su significado, no por su forma en una plataforma |
 | C2. Capturas rechazadas cuando el usuario usa el escritorio | A5: `shot` y `shots` reintentan las rechazadas por el foco |
 | C5. Falso positivo de gitleaks por el HOME de la demo (`home/dev`) | A6: el HOME inventado se llama `casa/`; sin `gitleaks:allow` y sin tocar las reglas |
+| C9. «Publicar versión» lanzado justo tras integrar, con el CI de `main` en marcha: se negó y llegó un correo de «build failed» | A7: la skill y el README piden esperar al CI de `main` en verde, y el workflow espera (40 min como mucho) a los checks que aún corren en vez de fallar |
 
 C1 (guion de teclas a medio escribir) ya se corrigió en el kit durante la
-0.7.0.
+0.7.0. C8 y C9 las añadió la sesión de control al cerrar la 0.7 (nota cerrada
+en `main`, 256d8ba).
 
 ## Diagnóstico de C6
 
@@ -72,7 +74,7 @@ ejecutarse sigue siendo lo normal.
   `## build · exit N` y su ejecución en `checks` del historial con
   `name = "build"`).
 - Un rol que usa `"build"` sin `project.build_cmd` es un error de
-  configuración: `titan-team check` sale con 1 y el error tiene
+  configuración: `titan-team check` sale con 2 (como hoy) y el error tiene
   `path = "project.build_cmd"` y `code = "missing_key"` (como ya pasa con las
   otras tres).
 - Un valor fuera de `fmt`, `test`, `gate`, `build` sigue siendo
@@ -94,7 +96,7 @@ nombres de comprobación**:
   comprobaciones de la lista `checks` se ejecutan aunque falle una.
 - Cada comprobación fallida, obligatoria o no, sigue dando el aviso
   `comprobación <nombre> falló (exit N)`.
-- Errores de `titan-team check` (sale con 1):
+- Errores de `titan-team check` (sale con 2, como hoy):
   - un nombre de la lista que no está en `checks` de ese rol →
     `path = "roles.<n>.checks_required"`, `code = "unknown_value"`;
   - un valor que no es ni booleano ni lista de cadenas (p. ej. `"yes"` o

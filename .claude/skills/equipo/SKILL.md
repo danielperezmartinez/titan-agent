@@ -82,7 +82,7 @@ El evaluador no puede probar la interacción (clics, hover, cursor, foco, scroll
 ## 6. Cierre
 - Si queda una prueba a mano, el mensaje final al usuario la trae completa (paso 5), aunque ya esté en la nota.
 - Métricas para la nota de la tarea: tiempo, uso de Claude, `bin/team show <id>` (llamadas y tokens de Codex), número de tests (de aceptación y propios), hallazgos de revisión aceptados/descartados, resultado del evaluador visual y **carencias del equipo** encontradas (con su causa y una propuesta), para la siguiente versión del equipo.
-- La rama se publica según `docs/README.md` → Publicación. **Push, PR, integrar y borrar worktrees los decide el usuario.** `bin/team close <id> [--delete-branch]` para los encargos de Codex.
+- La rama se publica según `docs/README.md` → Publicación. Si el usuario autoriza publicar una versión, lanza «Publicar versión» **cuando el CI de `main` sobre el commit integrado esté en verde** (`gh run list --branch main --commit <sha>`), no justo al integrar (0.7.1: el workflow se negó y al usuario le llegó el correo de «build failed»). **Push, PR, integrar y borrar worktrees los decide el usuario.** `bin/team close <id> [--delete-branch]` para los encargos de Codex.
 
 ## Reglas
 - Los roles de Codex mantienen su sandbox (`workspace-write` o `read-only`); nunca `danger-full-access`.
