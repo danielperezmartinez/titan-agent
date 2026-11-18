@@ -5,7 +5,7 @@ Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrad
 Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos). PR A: 0.7.0 (minor), acordada con el usuario el 2026-11-18.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-18T02:20:00+01:00
+Última modificación: 2026-11-18T02:40:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -492,6 +492,38 @@ scripts/demo/demo.sh probar nueva
 - PR integrada con la versión acordada.
 
 ## Verificación
+
+**PR A** (rama `feat/v0.7.0`, 2026-11-18):
+
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-targets -- -D
+  warnings` y `cargo test --workspace` en verde en local: **204 tests**
+  (189 en `main`): 8 de aceptación de Sol (commit `9e563f5`, sin tocar) y
+  los propios (modelo del campo, cuerpo de la sesión, `task_hint`,
+  `crumb_name` y `crates/titan-agent-core/tests/directors.rs`). Hooks de
+  gitleaks en cada commit y en el push.
+- Revisión de Sol y dos rondas del evaluador visual (arriba).
+- Prueba a mano del usuario: **bien** (2026-11-18).
+- **PR #13** integrada por squash con autorización del usuario: commit
+  `4d5172c` en `main`, con `Cambios`, `Fugas`, `Verificar` y `Windows` en
+  verde. GitHub rechazó `--author-email` con el correo noreply («Invalid
+  email address», como en las PR #4 y #12) y se integró sin él. Versión
+  0.7.0, sin etiqueta ni release.
+
+### Métricas de la PR A
+
+- **Tiempo**: de 01:25 a 02:15 del 2026-11-18 (unos 50 min), más la espera
+  a la prueba a mano del usuario.
+- **Claude**: el director (Opus 5.5, unas 140 llamadas a herramientas) y
+  dos evaluadores visuales de Opus (unos 124 k tokens cada uno).
+- **Codex**:
+
+  | Encargo | Rol | Entrada (caché) | Salida | Tiempo |
+  | --- | --- | --- | --- | --- |
+  | `v07a` | Sol, tests | 114 k (95 k) | 5,7 k | 138 s |
+  | `v07a-revision` | Sol, revisión high con `--gate` | 984 k (888 k) | 7,3 k | 236 s |
+
+- **Luna**: no se usó; no hubo ediciones repetitivas.
+- **Hallazgos**: Sol, 3 mayores y 2 menores, todos aceptados.
 
 ## Carencias del equipo
 
