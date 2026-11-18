@@ -2,10 +2,10 @@
 Nombre: Versión 0.7.0 - Proyectos importados y monitor por sesión directora
 Estado: En curso
 Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrador con el campo de texto común, que sustituye a «Nueva sesión»; sesión con su barra y el terminal) y el monitor por sesión directora con `[m]`. B: proyectos importados en el daemon (ADR-0014) con `+` por proyecto, grupo «otras carpetas» y resumen del proyecto. Después de la ronda «Equipo v6». El chat va después, en la 0.8.0 (tarea «Chat de sesión con Codex y Claude Code»).'
-Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos). PR A: 0.7.0 (minor), acordada con el usuario el 2026-11-18.'
+Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos). PR A: 0.7.0 (minor) y PR B: 0.7.1 (patch), acordadas con el usuario el 2026-11-18.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-18T02:40:00+01:00
+Última modificación: 2026-11-18T10:25:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -883,5 +883,12 @@ siguiente:
    fallando, y no lo vio. Corregido por Sol en un segundo turno corto.
    *Propuesta*: que el prompt de Sol le pida mirar en su `.checks.txt` que
    no haya errores de compilación, solo fallos.
+
+7. **El usuario no veía los pasos de la prueba a mano de la B**: estaban
+   solo en esta nota, en la rama de la PR, y el usuario abre la bóveda de
+   `main`. Lo señaló la sesión de control. *Ajuste*: los pasos de la prueba
+   a mano van siempre en el propio mensaje al usuario, además de en la nota
+   (la skill ya pide darlos «tal cual»; falta decir que la nota de la rama
+   no le llega).
 
 ## Resultado
