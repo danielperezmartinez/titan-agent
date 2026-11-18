@@ -386,9 +386,8 @@ impl MainView {
                     .flex()
                     .flex_grow_1()
                     .min_h(px(0.))
-                    .items_end()
+                    .items_center()
                     .justify_center()
-                    .pb(px(24.))
                     .text_size(px(12.))
                     .text_color(color(theme::MUTE))
                     .child("la conversación empieza aquí"),

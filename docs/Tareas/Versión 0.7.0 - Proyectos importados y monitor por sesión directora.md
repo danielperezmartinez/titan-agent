@@ -394,6 +394,16 @@ barra de sesión 8, monitor 6, árbol 10. Correcciones aplicadas:
 - capturas del guion a medio escribir: la app escribe en `ui.log` cuándo
   acaba el guion y `shot` lo espera (carencia 1, resuelta en el kit).
 
+**Ronda 2** (otro subagente nuevo): borrador 9, campo 9, barra de sesión 9,
+monitor 6, árbol 10. El 6 del monitor salía de una captura de
+`directora-monitor` anterior al último ajuste de la miga (solo se habían
+repetido las otras dos); repetida, la miga sale entera y la ronda con «…»,
+igual con el selector abierto y cerrado. Aplicado además: el texto de la
+conversación vacía, centrado en su zona. Aplazado, sin más rondas (máximo 2):
+anclar el menú de los chips al chip que lo abre (hoy flota sobre el borde
+izquierdo de la fila) y las capturas del campo sin foco y con más de 8 líneas,
+que quedan para la prueba a mano (pasos 6 y 7).
+
 Fuera de los criterios y no aplicado: el panel de detalle corta una línea sin
 «…» (ya pasaba en la 0.6) y el texto del error de la escena `nueva-error` (es
 el dato inventado de la escena).
