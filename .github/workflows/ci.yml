@@ -68,7 +68,7 @@ jobs:
             libwayland-dev libfontconfig-dev libfreetype-dev
       - name: Caché de Cargo
         if: hashFiles('Cargo.toml') != ''
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
@@ -103,7 +103,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Caché de Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry
