@@ -5,7 +5,7 @@ Resumen: 'Dos PR para el equipo, en orden. A: la vista «conversación» (borrad
 Decisiones: 'Diseño con el usuario el 2026-11-17 (sesión «chat-sesion», encargo de control-3b): 0.7.0 = estructura (proyectos, conversación sin chat, monitor por directora) y chat en 0.8.0; lista de proyectos en el daemon; sesiones de carpetas no importadas en «otras carpetas»; la cabecera del proyecto abre un resumen; para elegir proyecto en el borrador basta el selector [d]. ADR-0014 y la decisión visual de la ventana aceptadas por el usuario el 2026-11-18, tras ver la previa. Versión de cada PR: se acuerda en ella (propuesta: A 0.7.0 y B 0.7.1, y una release cuando estén las dos). PR A: 0.7.0 (minor) y PR B: 0.7.1 (patch), acordadas con el usuario el 2026-11-18.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:45:00+01:00
-Última modificación: 2026-11-18T10:25:00+01:00
+Última modificación: 2026-11-18T21:00:00+01:00
 ---
 
 # Versión 0.7.0 - Proyectos importados y monitor por sesión directora
@@ -849,6 +849,39 @@ scripts/demo/demo.sh probar inicio
 - **Luna**: no se usó; no hubo ediciones repetitivas.
 - **Hallazgos**: Sol, 3 mayores y 2 menores, todos aceptados.
 
+**PR B** (rama `feat/v0.7.1`, 2026-11-18):
+
+- fmt, clippy `-D warnings` y `cargo test --workspace` en verde en local:
+  **221 tests**: 8 de aceptación de Sol (commits `59299ca` y `0155be3`, sin
+  tocar por el director) y los propios (`projects.rs` del núcleo y del
+  daemon, `crates/titan-agentd/tests/projects_teams.rs` y
+  `crates/titan-agent/tests/summary.rs`). Hooks de gitleaks en cada commit y
+  push (un falso positivo marcado con `gitleaks:allow`, carencia 5).
+- Revisión de Sol y dos rondas del evaluador visual (arriba).
+- Prueba a mano del usuario: **bien** (2026-11-18, 13 pasos).
+- **PR #14** integrada por squash con autorización del usuario: commit
+  `2f24b75` en `main`. El primer CI falló en `Windows` (carencia 8); con el
+  arreglo, `Cambios`, `Fugas`, `Verificar` y `Windows` en verde. Integrada
+  sin `--author-email` (GitHub rechaza el noreply). Versión 0.7.1, sin
+  etiqueta ni release.
+
+### Métricas de la PR B
+
+- **Tiempo**: de 08:50 a 10:15 del 2026-11-18 (unos 85 min) más el arreglo
+  de Windows y las esperas al usuario y al CI.
+- **Claude**: el director (Opus 5.5) y dos evaluadores visuales de Opus
+  (unos 100 k tokens cada uno).
+- **Codex**:
+
+  | Encargo | Rol | Entrada (caché) | Salida | Tiempo |
+  | --- | --- | --- | --- | --- |
+  | `v07b` | Sol, tests (2 turnos) | 476 k (≈400 k) | 19 k | 234 s |
+  | `v07b-revision` | Sol, revisión high con `--gate` | 764 k (664 k) | 6,6 k | 216 s |
+
+- **Luna**: no se usó.
+- **Hallazgos**: Sol, 3 mayores y 2 menores, todos aceptados; el CI de
+  Windows, 1 más.
+
 ## Carencias del equipo
 
 Encontradas en esta versión (equipo v6), con su causa y una propuesta para la
@@ -898,3 +931,14 @@ siguiente:
    el contrato diga «ruta absoluta» y no su forma en Unix.
 
 ## Resultado
+
+Las dos PR de la 0.7 integradas en `main`:
+
+- **0.7.0** (PR #13): la vista «conversación» con el campo de texto común
+  (borrador → sesión al lanzar) y el monitor por sesión directora con `[m]`,
+  el selector de encargo y el `[*]` en la fila de la directora.
+- **0.7.1** (PR #14): proyectos importados en el daemon (`projects.json`,
+  `project_add`/`project_remove`, importación inicial y al lanzar),
+  «otras carpetas», el `+` por proyecto y el resumen del proyecto.
+
+Falta el paso 3 del plan, la Release 0.7.1, que decide el usuario.
