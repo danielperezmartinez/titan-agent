@@ -18,6 +18,10 @@ use serde_json::{Value, json};
 
 use crate::process::{kill_tree, own_group};
 
+/// Messages kept while waiting for an answer, at most: a server that
+/// floods notifications must not fill the memory (the rest are dropped).
+const INBOX_LIMIT: usize = 10_000;
+
 /// How long a setup request (`initialize`, `thread/*`) may take.
 pub const SETUP_LIMIT: Duration = Duration::from_secs(120);
 
@@ -45,7 +49,8 @@ pub fn daemon_socket(program: &str) -> Option<PathBuf> {
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
-        .ok()?;
+        .ok()
+        .filter(|output| output.status.success())?;
     let value: Value = serde_json::from_slice(&output.stdout).ok()?;
     if value.get("status").and_then(Value::as_str) != Some("running") {
         return None;
@@ -83,17 +88,33 @@ pub struct Client {
 #[derive(Debug)]
 pub struct Closed(pub String);
 
+/// Why [`Client::connect`] failed.
+#[derive(Debug)]
+pub enum ConnectError {
+    /// The program could not be run at all.
+    Unavailable(String),
+    /// It ran but the greeting failed (with its stderr, if any).
+    Failed(String),
+}
+
 impl Client {
     /// Connects to the shared daemon if it runs, or starts `<codex>
     /// app-server` in `cwd` with `env`, and says `initialize`.
-    pub fn connect(program: &str, cwd: &Path, env: &[(&str, PathBuf)]) -> Result<Client, String> {
+    pub fn connect(
+        program: &str,
+        cwd: &Path,
+        env: &[(&str, PathBuf)],
+    ) -> Result<Client, ConnectError> {
         #[cfg(unix)]
         if let Some(path) = daemon_socket(program)
             && let Ok(client) = Client::socket(&path)
         {
-            return client.greet();
+            return client.greet().map_err(ConnectError::Failed);
         }
-        Client::stdio(program, cwd, env)?.greet()
+        Client::stdio(program, cwd, env)
+            .map_err(ConnectError::Unavailable)?
+            .greet()
+            .map_err(ConnectError::Failed)
     }
 
     #[cfg(unix)]
@@ -166,16 +187,21 @@ impl Client {
         })
     }
 
+    /// Says `initialize` and `initialized`; on failure the connection is
+    /// closed (an own server is ended) and its stderr goes in the error.
     fn greet(mut self) -> Result<Client, String> {
         let deadline = Instant::now() + SETUP_LIMIT;
-        match self.request("initialize", &initialize_params(), deadline) {
-            Ok(Ok(_)) => {}
-            Ok(Err(error)) => return Err(format!("initialize: {error}")),
-            Err(Closed(error)) => return Err(format!("initialize: {error}")),
-        }
-        self.send(r#"{"method":"initialized"}"#)
-            .map_err(|Closed(error)| error)?;
-        Ok(self)
+        let error = match self.request("initialize", &initialize_params(), deadline) {
+            Ok(Ok(_)) => match self.send(r#"{"method":"initialized"}"#) {
+                Ok(()) => return Ok(self),
+                Err(Closed(error)) => error,
+            },
+            Ok(Err(error)) | Err(Closed(error)) => error,
+        };
+        let stderr = self.close();
+        Err(format!("initialize: {error}\n{stderr}")
+            .trim_end()
+            .to_string())
     }
 
     fn send(&mut self, line: &str) -> Result<(), Closed> {
@@ -200,15 +226,34 @@ impl Client {
     /// the deadline passes first.
     fn read(&mut self, deadline: Instant) -> Result<Option<Value>, Closed> {
         loop {
+            // The deadline wins even over a server that never stops writing.
+            if Instant::now() >= deadline {
+                return Ok(None);
+            }
             let left = deadline.saturating_duration_since(Instant::now());
             let text = match &mut self.transport {
-                Transport::Stdio { lines, .. } => match lines.recv_timeout(left) {
-                    Ok(line) => line,
-                    Err(mpsc::RecvTimeoutError::Timeout) => return Ok(None),
-                    Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        return Err(Closed("Codex cerró la conexión".into()));
+                Transport::Stdio { lines, child, .. } => {
+                    match lines.recv_timeout(left.min(Duration::from_millis(200))) {
+                        Ok(line) => line,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            // A server that exited counts as closed, even if
+                            // something it left running holds its stdout.
+                            if matches!(child.try_wait(), Ok(Some(_))) {
+                                match lines.try_recv() {
+                                    Ok(line) => line,
+                                    Err(_) => {
+                                        return Err(Closed("el servidor de Codex salió".into()));
+                                    }
+                                }
+                            } else {
+                                continue;
+                            }
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => {
+                            return Err(Closed("Codex cerró la conexión".into()));
+                        }
                     }
-                },
+                }
                 #[cfg(unix)]
                 Transport::Socket(socket) => match socket.read() {
                     Ok(tungstenite::Message::Text(text)) => text.to_string(),
@@ -270,12 +315,17 @@ impl Client {
                 }
                 return Ok(Ok(message.get("result").cloned().unwrap_or(Value::Null)));
             }
-            self.inbox.push_back(message);
+            if self.inbox.len() < INBOX_LIMIT {
+                self.inbox.push_back(message);
+            }
         }
     }
 
     /// The next message that is not an answer to a request of ours.
     pub fn next(&mut self, deadline: Instant) -> Result<Option<Value>, Closed> {
+        if Instant::now() >= deadline {
+            return Ok(None);
+        }
         if let Some(message) = self.inbox.pop_front() {
             return Ok(Some(message));
         }
@@ -287,6 +337,11 @@ impl Client {
                 other => return Ok(other),
             }
         }
+    }
+
+    /// The messages kept by [`Client::request`] and not handed out yet.
+    pub fn drain(&mut self) -> Vec<Value> {
+        self.inbox.drain(..).collect()
     }
 
     /// Closes the connection; with an own server, ends it and returns its

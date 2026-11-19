@@ -300,6 +300,11 @@ fn a_running_daemon_is_used_through_its_socket() {
 /// A repo with a writing role `writer` and the task `kite`, whose fake
 /// Codex lives in the repo root.
 fn kite_repo() -> PathBuf {
+    kite_repo_with("")
+}
+
+/// Like [`kite_repo`], with extra `[project]` lines.
+fn kite_repo_with(project: &str) -> PathBuf {
     let root = temp_dir("kite");
     let git = |args: &[&str]| {
         let out = Command::new("git")
@@ -318,10 +323,12 @@ fn kite_repo() -> PathBuf {
     fs::write(root.join("brief.md"), "Fold the kite.").unwrap();
     fs::write(
         root.join(".agents/team.toml"),
-        "version = 1\nname = \"paper\"\n[project]\nautocommit = true\n\
-         [roles.lead]\ncli = \"claude\"\nmodel = \"lead\"\nlaunch = false\n\
-         [roles.writer]\ncli = \"codex\"\nmodel = \"paper-model\"\nsandbox = \"workspace-write\"\n\
-         prompt_file = \"prompt.md\"\ntimeout_s = 10\n",
+        format!(
+            "version = 1\nname = \"paper\"\n[project]\nautocommit = true\n{project}\n\
+             [roles.lead]\ncli = \"claude\"\nmodel = \"lead\"\nlaunch = false\n\
+             [roles.writer]\ncli = \"codex\"\nmodel = \"paper-model\"\nsandbox = \"workspace-write\"\n\
+             prompt_file = \"prompt.md\"\ntimeout_s = 2\n"
+        ),
     )
     .unwrap();
     FakeCodex::default().install(&root);
@@ -375,4 +382,157 @@ fn a_busy_resume_records_no_user_turns_so_they_are_told_once() {
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert!(String::from_utf8_lossy(&out.stdout).contains("Turnos del usuario con writer: 1"));
     assert_eq!(events().matches("\"user_turn\"").count(), 1);
+}
+
+/// Writes `root/codex`: a hand-made app-server whose loop body is `on_line`
+/// (sh, with `$line` and `$id` set); `daemon version` says it is stopped.
+fn script_codex(root: &std::path::Path, on_line: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    let script = format!(
+        r#"#!/bin/sh
+if [ "$2" = daemon ]; then echo '{{"status":"stopped"}}'; exit 0; fi
+echo $$ > "$(dirname "$0")/server.pid"
+while IFS= read -r line; do
+  id=$(printf '%s\n' "$line" | sed -n 's/^{{"id":\([0-9][0-9]*\),.*/\1/p')
+  [ -n "$id" ] || continue
+{on_line}
+done
+"#
+    );
+    let path = root.join("codex");
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+const ANSWER_SETUP: &str = r#"  case "$line" in
+  *'"method":"initialize"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
+  *'"method":"thread/start"'*) printf '{"id":%s,"result":{"thread":{"id":"t"}}}\n' "$id" ;;
+  esac"#;
+
+fn last_finished(root: &std::path::Path, task: &str) -> Value {
+    fs::read_to_string(root.join(format!(".agents/state/{task}/events.jsonl")))
+        .unwrap()
+        .lines()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .rfind(|e| e["type"] == "turn_finished")
+        .unwrap()
+}
+
+#[test]
+fn a_server_that_never_stops_writing_still_times_out_and_is_not_waited_twice() {
+    let root = kite_repo();
+    // After turn/start it floods notifications and never answers again,
+    // not even turn/interrupt.
+    script_codex(
+        &root,
+        &format!(
+            "{ANSWER_SETUP}\n  case \"$line\" in *'\"method\":\"turn/start\"'*)\n    printf '{{\"id\":%s,\"result\":{{\"turn\":{{\"id\":\"u\"}}}}}}\\n' \"$id\"\n    while :; do printf '%s\\n' '{{\"method\":\"noise\",\"params\":{{\"threadId\":\"t\",\"turnId\":\"u\"}}}}'; done ;;\n  esac"
+        ),
+    );
+    let started = std::time::Instant::now();
+    let out = titan(&root, &["ask", "writer", "kite"]);
+    let took = started.elapsed();
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(last_finished(&root, "kite")["status"], "timeout");
+    // 2 s of turn, at most 10 s for the interrupt, 3 s for the unsubscribe
+    // and 3 s to end the server.
+    assert!(took < std::time::Duration::from_secs(20), "took {took:?}");
+}
+
+#[test]
+fn a_failed_initialize_ends_its_server() {
+    let root = kite_repo();
+    script_codex(
+        &root,
+        r#"  printf '{"id":%s,"error":{"code":1,"message":"no init"}}\n' "$id"
+  trap '' TERM HUP
+  exec sleep 60 < /dev/null"#,
+    );
+    let out = titan(&root, &["ask", "writer", "kite"]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    let stderr = fs::read_to_string(root.join(".agents/state/kite/01-writer.stderr")).unwrap();
+    assert!(stderr.contains("no init"), "{stderr}");
+    let pid = fs::read_to_string(root.join("server.pid")).unwrap();
+    let alive = Command::new("kill")
+        .args(["-0", pid.trim()])
+        .status()
+        .unwrap();
+    assert!(!alive.success(), "the server must not outlive ask");
+}
+
+#[test]
+fn a_server_that_exits_mid_turn_is_an_error_even_if_a_child_holds_its_output() {
+    let root = kite_repo();
+    script_codex(
+        &root,
+        &format!(
+            "{ANSWER_SETUP}\n  case \"$line\" in *'\"method\":\"turn/start\"'*)\n    printf '{{\"id\":%s,\"result\":{{\"turn\":{{\"id\":\"u\"}}}}}}\\n' \"$id\"\n    sleep 30 &\n    exit 0 ;;\n  esac"
+        ),
+    );
+    let started = std::time::Instant::now();
+    let out = titan(&root, &["ask", "writer", "kite"]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert_eq!(last_finished(&root, "kite")["status"], "error");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2) + std::time::Duration::from_secs(5)
+    );
+}
+
+#[test]
+fn a_codex_that_cannot_run_writes_nothing_and_exits_2() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = kite_repo();
+    fs::write(root.join("codex"), "not a program").unwrap();
+    fs::set_permissions(root.join("codex"), fs::Permissions::from_mode(0o644)).unwrap();
+    let out = titan(&root, &["ask", "writer", "kite"]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("no está disponible"));
+    let events = fs::read_to_string(root.join(".agents/state/kite/events.jsonl")).unwrap();
+    assert!(!events.contains("brief_sent"), "{events}");
+}
+
+#[test]
+fn a_busy_thread_runs_no_gate() {
+    let root = kite_repo_with("gate_cmd = \"touch gate-ran\"");
+    assert_eq!(
+        titan(&root, &["ask", "writer", "kite"]).status.code(),
+        Some(0)
+    );
+    FakeCodex {
+        thread_status: "active".into(),
+        ..FakeCodex::default()
+    }
+    .install(&root);
+    let out = titan(&root, &["ask", "writer", "kite", "-m", "again", "--gate"]);
+    assert_eq!(out.status.code(), Some(4), "{out:?}");
+    assert!(!root.join(".agents/worktrees/kite/gate-ran").exists());
+}
+
+#[test]
+fn a_failed_commit_of_the_user_turns_stops_the_turn() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = kite_repo();
+    assert_eq!(
+        titan(&root, &["ask", "writer", "kite"]).status.code(),
+        Some(0)
+    );
+    FakeCodex {
+        turns: json!([support::user_turn("u1", "fold"), {"id": "paper-turn", "items": []}]),
+        turn_id: "paper-turn-2".into(),
+        ..FakeCodex::default()
+    }
+    .install(&root);
+    fs::write(root.join(".agents/worktrees/kite/user.txt"), "by the user").unwrap();
+    let hook = root.join(".git/hooks/pre-commit");
+    fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
+    let out = titan(&root, &["ask", "writer", "kite", "-m", "again"]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let starts = support::methods(&root)
+        .iter()
+        .filter(|m| *m == "turn/start")
+        .count();
+    assert_eq!(starts, 1, "only the first ask started a turn");
+    let events = fs::read_to_string(root.join(".agents/state/kite/events.jsonl")).unwrap();
+    assert_eq!(events.matches("brief_sent").count(), 1, "no second turn");
 }

@@ -83,8 +83,8 @@ pub struct UserTurns {
 
 /// Finds the user's turns with the role since its last turn of
 /// titan-team; if there are any, commits what they left (a writing role
-/// with `autocommit`) and writes `user_turn`. Problems only warn: the
-/// director's turn still runs.
+/// with `autocommit`) and writes `user_turn`. A failure stops the turn:
+/// the user's changes must not end up in the role's commit.
 pub fn record(
     team: &TeamConfig,
     role: &Role,
@@ -93,7 +93,7 @@ pub fn record(
     thread: &str,
     turns: &[Value],
     log: &EventLog,
-) -> Option<UserTurns> {
+) -> Result<Option<UserTurns>, Failure> {
     let own: Vec<String> = state
         .history
         .iter()
@@ -102,36 +102,33 @@ pub fn record(
         .collect();
     let found = user_turns(turns, &own);
     if found.is_empty() {
-        return None;
+        return Ok(None);
     }
     let text = first_text(&found);
     let (commit, changed_files) = if team.project.autocommit && role.sandbox == "workspace-write" {
         let message = format!("team: turnos del usuario con {}", role.name);
-        commit_all(wt, &message).unwrap_or_else(|error| {
-            eprintln!(
-                "aviso: no se pudo hacer el commit de los turnos del usuario: {}",
-                error.message
-            );
-            (None, Vec::new())
-        })
+        commit_all(wt, &message).map_err(|error| {
+            Failure::usage(format!(
+                "No se pudo hacer el commit de los turnos del usuario con {}: {}",
+                role.name, error.message
+            ))
+        })?
     } else {
         (None, Vec::new())
     };
-    if let Err(error) = log.append(EventKind::UserTurn {
+    log.append(EventKind::UserTurn {
         role: role.name.clone(),
         thread_id: Some(thread.to_string()),
         turns: found.len() as u32,
         text: text.clone(),
         commit: commit.clone(),
         changed_files,
-    }) {
-        eprintln!("aviso: {}", error.message);
-    }
-    Some(UserTurns {
+    })?;
+    Ok(Some(UserTurns {
         turns: found.len() as u32,
         text,
         commit,
-    })
+    }))
 }
 
 #[cfg(test)]

@@ -179,8 +179,12 @@ Cada turno habla JSON-RPC con el **app-server** de Codex (ADR-0013):
   y `shell_environment_policy.set.CARGO_TARGET_DIR`).
 - **Hilo que continúa**: `thread/read` (si tiene un turno en curso, el turno
   es `busy`), `thread/turns/list` (turnos del usuario, abajo) y
-  `thread/resume` con los mismos ajustes. «already has an active writer» es
-  `busy`.
+  `thread/resume` con los mismos ajustes, todo antes de anunciar el turno.
+  «already has an active writer» es `busy`. Con `--gate`, justo antes de
+  `turn/start` se vuelve a leer el estado (el usuario puede haber empezado un
+  turno mientras corría la compuerta): si está en curso, el turno es `busy` y
+  nunca lo dirige. Con el
+  hilo ocupado no se ejecuta nada, tampoco `--gate`.
 - **Turno**: `turn/start` con el prompt como entrada de texto y
   `outputSchema` si el rol tiene `output_schema`. `item/started` da los
   `activity`; el último `agentMessage` es la respuesta; la suma de

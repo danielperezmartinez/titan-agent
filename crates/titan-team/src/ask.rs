@@ -271,20 +271,31 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         worktree: &wt,
         prompt: "",
         limit: Duration::from_secs(role.timeout_s),
+        recheck: args.flag("--gate"),
     };
     // Connected (and the thread resumed) before the turn is announced: the
     // thread may be busy, and the user's turns since the role's last one go
     // first on the log.
     let prepared = codex::prepare(&program, &build_env, &request);
+    if let Some(error) = prepared.unavailable.clone() {
+        return Err(Failure::usage(error));
+    }
 
     let turn = known.map_or(0, |r| r.turns) + 1;
     let log = EventLog::new(team, task);
     let user_turns = match (&thread_id, prepared.busy) {
         (Some(thread), false) => {
-            user_turns::record(team, role, &state, &wt, thread, &prepared.turns, &log)
+            match user_turns::record(team, role, &state, &wt, thread, &prepared.turns, &log) {
+                Ok(found) => found,
+                Err(error) => {
+                    prepared.close();
+                    return Err(error);
+                }
+            }
         }
         _ => None,
     };
+    let busy_before = prepared.busy;
     let director = team.director().map(str::to_string);
     log.append(EventKind::BriefSent {
         from: director.clone(),
@@ -316,7 +327,8 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         .project
         .gate_cmd
         .as_deref()
-        .filter(|_| args.flag("--gate"))
+        // A busy thread runs nothing, not even the gate.
+        .filter(|_| args.flag("--gate") && !busy_before)
     {
         if let Err(error) = log.append(EventKind::Activity {
             role: role_name.clone(),

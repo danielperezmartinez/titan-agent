@@ -10,7 +10,9 @@ use std::time::{Duration, Instant};
 use serde_json::{Map, Value, json};
 use titan_agent_core::team::{STATUS_BUSY, TEXT_LIMIT, Usage, clip};
 
-use crate::appserver::{Client, Closed, SETUP_LIMIT, initialize_params, request_line};
+use crate::appserver::{
+    Client, Closed, ConnectError, SETUP_LIMIT, initialize_params, request_line,
+};
 use crate::config::{Role, TeamConfig};
 
 /// Activity events written per turn, at most.
@@ -178,7 +180,18 @@ pub struct Prepared {
     pub turns: Vec<Value>,
     /// The continued thread is already resumed (subscribed).
     resumed: bool,
+    /// `<codex>` could not be run at all: `ask` stops before the turn.
+    pub unavailable: Option<String>,
     error: Option<String>,
+}
+
+impl Prepared {
+    /// Ends the connection without a turn (when `ask` stops early).
+    pub fn close(self) {
+        if let Some(client) = self.client {
+            client.close();
+        }
+    }
 }
 
 /// Connects and, for a continued thread, reads its state and its turns and
@@ -191,11 +204,16 @@ pub fn prepare(program: &str, env: &[(&str, PathBuf)], request: &TurnRequest) ->
         busy: false,
         turns: Vec::new(),
         resumed: false,
+        unavailable: None,
         error: None,
     };
     let mut client = match Client::connect(program, request.worktree, env) {
         Ok(client) => client,
-        Err(error) => {
+        Err(ConnectError::Unavailable(error)) => {
+            prepared.unavailable = Some(error);
+            return prepared;
+        }
+        Err(ConnectError::Failed(error)) => {
             prepared.error = Some(error);
             return prepared;
         }
@@ -249,6 +267,9 @@ pub struct TurnRequest<'a> {
     pub worktree: &'a Path,
     pub prompt: &'a str,
     pub limit: Duration,
+    /// Something ran between the resume and the turn (`--gate`): the
+    /// thread is read again right before `turn/start`.
+    pub recheck: bool,
 }
 
 /// Starts or resumes the thread and runs one turn. `on_activity` is called
@@ -289,8 +310,12 @@ pub fn run(
         );
     }
     if let Some(thread) = out.thread_id.clone().filter(|_| !busy) {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        // Short: a server that does not answer must not hold `ask`.
+        let deadline = Instant::now() + Duration::from_secs(3);
         let _ = client.request("thread/unsubscribe", &json!({"threadId": thread}), deadline);
+    }
+    for message in client.drain() {
+        log_message(&mut out, &message);
     }
     let server = client.close();
     let mut stderr = server;
@@ -342,6 +367,25 @@ fn turn(
     let Some(thread) = out.thread_id.clone() else {
         return fail(out, "thread/start no devolvió el hilo".into());
     };
+    // After `--gate` (minutes) a continued thread is read once more right
+    // before the turn: the user may have started one meanwhile, and
+    // `turn/start` would steer it.
+    if resumed && request.recheck {
+        match client.request("thread/read", &json!({"threadId": thread}), setup) {
+            Ok(Ok(result))
+                if result
+                    .pointer("/thread/status/type")
+                    .and_then(Value::as_str)
+                    == Some("active") =>
+            {
+                out.status = STATUS_BUSY;
+                return;
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => return fail(out, format!("thread/read: {error}")),
+            Err(Closed(error)) => return fail(out, error),
+        }
+    }
     let params = turn_params(&thread, request.prompt, schema.as_ref());
     match client.request("turn/start", &params, setup) {
         Ok(Ok(result)) => {
@@ -358,17 +402,20 @@ fn turn(
     };
     let deadline = Instant::now() + request.limit;
     let mut activities = 0;
+    // Once out of time: how long `turn/interrupt` and its `turn/completed`
+    // may take, together.
     let mut interrupted_at: Option<Instant> = None;
     loop {
-        let until = interrupted_at.map_or(deadline, |at| at + INTERRUPT_WAIT);
+        let until = interrupted_at.unwrap_or(deadline);
         let message = match client.next(until) {
             Ok(Some(message)) => message,
             Ok(None) if interrupted_at.is_none() => {
                 // Out of time: ask Codex to stop the turn and wait a little
                 // for it to say so.
+                let stop = Instant::now() + INTERRUPT_WAIT;
+                interrupted_at = Some(stop);
                 let params = json!({"threadId": thread, "turnId": turn});
-                let _ = client.request("turn/interrupt", &params, Instant::now() + INTERRUPT_WAIT);
-                interrupted_at = Some(Instant::now());
+                let _ = client.request("turn/interrupt", &params, stop);
                 continue;
             }
             Ok(None) => break,
@@ -387,8 +434,7 @@ fn turn(
         if message_thread.is_some_and(|t| t != thread) {
             continue;
         }
-        out.log.push_str(&message.to_string());
-        out.log.push('\n');
+        log_message(out, &message);
         let message_turn = params
             .get("turnId")
             .and_then(Value::as_str)
@@ -451,6 +497,20 @@ fn turn(
     if interrupted_at.is_some() {
         out.status = "timeout";
     }
+}
+
+/// Adds a server message to the turn's `.jsonl`: one with a `method`
+/// whose `threadId`, if any, is the turn's thread.
+fn log_message(out: &mut TurnOutput, message: &Value) {
+    if message.get("method").is_none() {
+        return;
+    }
+    let thread = message.pointer("/params/threadId").and_then(Value::as_str);
+    if thread.is_some() && thread != out.thread_id.as_deref() {
+        return;
+    }
+    out.log.push_str(&message.to_string());
+    out.log.push('\n');
 }
 
 /// `/usr/bin/bash -lc 'cargo test'` → `cargo test`: Codex runs every
