@@ -94,7 +94,10 @@ fn the_fake_codex_answers_a_whole_turn() {
         ]
     );
     assert_eq!(answers[1]["result"]["thread"]["id"], "paper-thread");
-    assert_eq!(answers[5]["params"]["item"]["text"], "It's \"done\"\nreally");
+    assert_eq!(
+        answers[5]["params"]["item"]["text"],
+        "It's \"done\"\nreally"
+    );
     assert_eq!(answers[7]["params"]["turn"]["status"], "completed");
     assert_eq!(
         fs::read_to_string(dir.join("kite.txt")).unwrap(),

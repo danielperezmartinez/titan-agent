@@ -1,21 +1,24 @@
-//! One `codex exec` turn: its exact argv, running it without a shell with a
-//! time limit, and reading its JSONL as it arrives (thread, usage, errors,
-//! last answer, and `item.started` as live activity).
+//! One turn of a Codex role through the app-server (ADR-0013): the thread
+//! settings, the turn's requests and how its notifications become the
+//! answer, the usage and the live activity. [`prepare`] connects and reads
+//! the thread before the turn is announced (busy, the user's turns);
+//! [`run`] starts or resumes the thread and runs the turn.
 
-use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 use titan_agent_core::team::{STATUS_BUSY, TEXT_LIMIT, Usage, clip};
 
+use crate::appserver::{Client, Closed, SETUP_LIMIT, initialize_params, request_line};
 use crate::config::{Role, TeamConfig};
-use crate::process::{kill_tree, own_group};
 
 /// Activity events written per turn, at most.
 pub const ACTIVITY_LIMIT: usize = 200;
+/// How long to wait for `turn/completed` after `turn/interrupt`.
+const INTERRUPT_WAIT: Duration = Duration::from_secs(10);
+/// Turns asked to `thread/turns/list` to find the user's turns.
+pub const TURNS_LIMIT: u64 = 50;
 
 /// The executable: `TITAN_TEAM_CODEX`, or `codex` from the PATH.
 pub fn executable() -> String {
@@ -25,265 +28,408 @@ pub fn executable() -> String {
         .unwrap_or_else(|| "codex".into())
 }
 
-/// Arguments after the executable, as fixed in ADR-0010.
-pub fn argv(
-    team: &TeamConfig,
-    role: &Role,
-    thread_id: Option<&str>,
-    out_file: &Path,
-    worktree: &Path,
-) -> Vec<String> {
-    let mut args: Vec<String> = vec!["exec".into()];
-    if thread_id.is_some() {
-        args.push("resume".into());
-    }
-    args.extend([
-        "--json".into(),
-        "-o".into(),
-        out_file.to_string_lossy().into_owned(),
-        "-m".into(),
-        role.model.clone(),
-    ]);
+/// `5` → 5, `"high"` → "high", `[1]` → [1]: a `-c` value read as TOML, or
+/// the text itself when it is not TOML.
+fn toml_value(text: &str) -> Value {
+    toml::from_str::<toml::Table>(&format!("v = {text}"))
+        .ok()
+        .and_then(|mut table| table.remove("v"))
+        .and_then(|value| serde_json::to_value(value).ok())
+        .unwrap_or_else(|| Value::String(text.to_string()))
+}
+
+fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The `config` of `thread/start` and `thread/resume` (FORMAT.md): the
+/// effort, `[codex].config` and the role's `config`, and the team's build
+/// folder for a writing role.
+pub fn config_object(team: &TeamConfig, role: &Role) -> Map<String, Value> {
+    let mut config = Map::new();
     if let Some(effort) = &role.effort {
-        args.extend(["-c".into(), format!("model_reasoning_effort={effort}")]);
+        config.insert("model_reasoning_effort".into(), json!(effort));
     }
     for pair in team.codex_config.iter().chain(&role.config) {
-        args.extend(["-c".into(), pair.clone()]);
-    }
-    match thread_id {
-        Some(_) => args.extend(["-c".into(), format!("sandbox_mode=\"{}\"", role.sandbox)]),
-        None => args.extend([
-            "-s".into(),
-            role.sandbox.clone(),
-            "-C".into(),
-            worktree.to_string_lossy().into_owned(),
-        ]),
+        if let Some((key, value)) = pair.split_once('=') {
+            config.insert(key.trim().to_string(), toml_value(value.trim()));
+        }
     }
     // A writing role builds in the team's shared folder too, which lies
-    // outside its worktree: its sandbox must let it write there.
+    // outside its worktree: its sandbox must let it write there, and its
+    // commands must use it.
     if let Some(dir) = team
         .project
         .target_dir
         .as_ref()
         .filter(|_| role.sandbox == "workspace-write")
     {
-        let root = serde_json::to_string(&dir.to_string_lossy()).unwrap_or_default();
-        args.extend([
-            "-c".into(),
-            format!("sandbox_workspace_write.writable_roots=[{root}]"),
-        ]);
+        let dir = absolute(dir).to_string_lossy().into_owned();
+        config.insert(
+            "sandbox_workspace_write.writable_roots".into(),
+            json!([dir]),
+        );
+        config.insert(
+            "shell_environment_policy.set".into(),
+            json!({"CARGO_TARGET_DIR": dir}),
+        );
     }
-    if let Some(schema) = &role.output_schema {
-        args.extend([
-            "--output-schema".into(),
-            schema.to_string_lossy().into_owned(),
-        ]);
+    config
+}
+
+/// `thread/start` (new thread) or `thread/resume` and their params.
+pub fn thread_request(
+    team: &TeamConfig,
+    role: &Role,
+    thread: Option<&str>,
+    worktree: &Path,
+) -> (&'static str, Value) {
+    let mut params = json!({
+        "model": role.model,
+        "sandbox": role.sandbox,
+        "approvalPolicy": "never",
+        "config": config_object(team, role),
+    });
+    match thread {
+        Some(id) => {
+            params["threadId"] = json!(id);
+            ("thread/resume", params)
+        }
+        None => {
+            params["cwd"] = json!(absolute(worktree).to_string_lossy());
+            ("thread/start", params)
+        }
     }
-    if let Some(thread) = thread_id {
-        args.push(thread.to_string());
+}
+
+/// The params of `turn/start`.
+pub fn turn_params(thread: &str, prompt: &str, schema: Option<&Value>) -> Value {
+    let mut params = json!({
+        "threadId": thread,
+        "input": [{"type": "text", "text": prompt}],
+    });
+    if let Some(schema) = schema {
+        params["outputSchema"] = schema.clone();
     }
-    args.push("-".into());
-    args
+    params
+}
+
+/// The role's output schema, read as JSON.
+pub fn read_schema(role: &Role) -> Result<Option<Value>, String> {
+    let Some(path) = &role.output_schema else {
+        return Ok(None);
+    };
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("No se pudo leer {}: {error}", path.display()))?;
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|error| format!("{} no es JSON: {error}", path.display()))
+}
+
+/// The requests `--dry-run` shows: `initialize`, the thread request and
+/// `turn/start` (the thread id of a new thread is not known yet).
+pub fn dry_run_lines(
+    team: &TeamConfig,
+    role: &Role,
+    thread: Option<&str>,
+    worktree: &Path,
+    prompt: &str,
+    schema: Option<&Value>,
+) -> Vec<String> {
+    let (method, params) = thread_request(team, role, thread, worktree);
+    vec![
+        request_line(1, "initialize", &initialize_params()),
+        request_line(2, method, &params),
+        request_line(
+            3,
+            "turn/start",
+            &turn_params(thread.unwrap_or("<hilo nuevo>"), prompt, schema),
+        ),
+    ]
 }
 
 /// What a turn produced.
 #[derive(Debug, Default)]
 pub struct TurnOutput {
     pub status: &'static str,
-    pub stdout: String,
+    /// The server's messages for the thread, one JSON per line.
+    pub log: String,
     pub stderr: String,
     pub thread_id: Option<String>,
+    pub turn_id: Option<String>,
     pub usage: Usage,
     pub errors: Vec<String>,
-    /// Text of the last `agent_message`, used when there is no `-o` file.
+    /// Text of the last `agentMessage`.
     pub last_message: String,
 }
 
-/// Runs Codex with `prompt` on stdin. `on_activity` is called for each
-/// `item.started` worth showing, while the turn runs.
-pub fn run(
+/// Whether Codex refused a thread because another process writes it.
+pub fn is_busy_message(text: &str) -> bool {
+    text.to_lowercase().contains("already has an active writer")
+}
+
+/// A connection made before the turn is announced, with what it learned
+/// of the thread.
+pub struct Prepared {
+    client: Option<Client>,
+    /// The thread has a turn in progress: nothing may run.
+    pub busy: bool,
+    /// `data` of `thread/turns/list` (newest first) of a continued thread.
+    pub turns: Vec<Value>,
+    error: Option<String>,
+}
+
+/// Connects and, for a continued thread, reads its state and its turns.
+pub fn prepare(
     program: &str,
-    args: &[String],
-    prompt: &str,
     cwd: &Path,
-    limit: Duration,
     env: &[(&str, PathBuf)],
-    mut on_activity: impl FnMut(String),
-) -> Result<TurnOutput, String> {
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .envs(env.iter().map(|(key, value)| (*key, value)))
-        .current_dir(cwd)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    own_group(&mut command);
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("{program} no está disponible: {error}"))?;
-    let mut stdin = child.stdin.take();
-    let prompt = prompt.to_string();
-    let writer = std::thread::spawn(move || {
-        if let Some(stdin) = stdin.as_mut() {
-            let _ = stdin.write_all(prompt.as_bytes());
+    thread: Option<&str>,
+) -> Prepared {
+    let mut prepared = Prepared {
+        client: None,
+        busy: false,
+        turns: Vec::new(),
+        error: None,
+    };
+    let mut client = match Client::connect(program, cwd, env) {
+        Ok(client) => client,
+        Err(error) => {
+            prepared.error = Some(error);
+            return prepared;
         }
-    });
-    let stdout = child.stdout.take();
-    let (tx, rx) = mpsc::channel::<Vec<u8>>();
-    let reader = std::thread::spawn(move || {
-        if let Some(stdout) = stdout {
-            let mut lines = BufReader::new(stdout);
-            loop {
-                let mut line = Vec::new();
-                match lines.read_until(b'\n', &mut line) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        if tx.send(line).is_err() {
-                            break;
-                        }
-                    }
+    };
+    if let Some(id) = thread {
+        let deadline = Instant::now() + SETUP_LIMIT;
+        match client.request("thread/read", &json!({"threadId": id}), deadline) {
+            Ok(Ok(result)) => {
+                prepared.busy = result
+                    .pointer("/thread/status/type")
+                    .and_then(Value::as_str)
+                    == Some("active");
+            }
+            Ok(Err(error)) => prepared.error = Some(format!("thread/read: {error}")),
+            Err(Closed(error)) => prepared.error = Some(error),
+        }
+        if !prepared.busy && prepared.error.is_none() {
+            let params = json!({"threadId": id, "limit": TURNS_LIMIT});
+            match client.request("thread/turns/list", &params, deadline) {
+                Ok(Ok(result)) => {
+                    prepared.turns = result
+                        .get("data")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
                 }
+                Ok(Err(error)) => prepared.error = Some(format!("thread/turns/list: {error}")),
+                Err(Closed(error)) => prepared.error = Some(error),
             }
         }
-    });
-    let mut stderr_pipe = child.stderr.take();
-    let errors_reader = std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        if let Some(stderr) = stderr_pipe.as_mut() {
-            let _ = stderr.read_to_end(&mut bytes);
-        }
-        bytes
-    });
+    }
+    prepared.client = Some(client);
+    prepared
+}
 
-    let deadline = Instant::now() + limit;
+/// What [`run`] needs besides the connection.
+pub struct TurnRequest<'a> {
+    pub team: &'a TeamConfig,
+    pub role: &'a Role,
+    pub thread: Option<&'a str>,
+    pub worktree: &'a Path,
+    pub prompt: &'a str,
+    pub limit: Duration,
+}
+
+/// Starts or resumes the thread and runs one turn. `on_activity` is called
+/// for each `item/started` worth showing, while the turn runs.
+pub fn run(
+    prepared: Prepared,
+    request: &TurnRequest,
+    mut on_activity: impl FnMut(String),
+) -> TurnOutput {
     let mut out = TurnOutput {
         status: "ok",
+        thread_id: request.thread.map(str::to_string),
         ..TurnOutput::default()
     };
-    let mut activities = 0;
-    let mut timed_out = false;
-    loop {
-        // Checked on every line: a turn that never stops writing must not
-        // outlive its limit.
-        if Instant::now() >= deadline {
-            timed_out = true;
-            break;
+    let busy = prepared.busy;
+    let Some(mut client) = prepared.client else {
+        out.status = "error";
+        out.errors.push(
+            prepared
+                .error
+                .unwrap_or_else(|| "sin conexión con Codex".into()),
+        );
+        out.stderr = out.errors.join("\n");
+        return out;
+    };
+    if busy {
+        out.status = STATUS_BUSY;
+    } else if let Some(error) = prepared.error {
+        out.status = "error";
+        out.errors.push(error);
+    } else {
+        turn(&mut client, request, &mut out, &mut on_activity);
+    }
+    if let Some(thread) = out.thread_id.clone().filter(|_| !busy) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let _ = client.request("thread/unsubscribe", &json!({"threadId": thread}), deadline);
+    }
+    let server = client.close();
+    let mut stderr = server;
+    for error in &out.errors {
+        if !stderr.is_empty() && !stderr.ends_with('\n') {
+            stderr.push('\n');
         }
-        let left = deadline.saturating_duration_since(Instant::now());
-        match rx.recv_timeout(left) {
-            Ok(bytes) => {
-                let line = String::from_utf8_lossy(&bytes).into_owned();
-                out.stdout.push_str(&line);
-                if let Some(text) = read_line(&line, &mut out, cwd)
+        stderr.push_str(error);
+        stderr.push('\n');
+    }
+    out.stderr = stderr;
+    out
+}
+
+/// The thread request and the turn itself; leaves the result in `out`.
+fn turn(
+    client: &mut Client,
+    request: &TurnRequest,
+    out: &mut TurnOutput,
+    on_activity: &mut impl FnMut(String),
+) {
+    let fail = |out: &mut TurnOutput, error: String| {
+        out.status = if is_busy_message(&error) {
+            STATUS_BUSY
+        } else {
+            "error"
+        };
+        out.errors.push(error);
+    };
+    let schema = match read_schema(request.role) {
+        Ok(schema) => schema,
+        Err(error) => return fail(out, error),
+    };
+    let setup = Instant::now() + SETUP_LIMIT;
+    let (method, params) =
+        thread_request(request.team, request.role, request.thread, request.worktree);
+    match client.request(method, &params, setup) {
+        Ok(Ok(result)) => {
+            if let Some(id) = result.pointer("/thread/id").and_then(Value::as_str) {
+                out.thread_id = Some(id.to_string());
+            }
+        }
+        Ok(Err(error)) => return fail(out, format!("{method}: {error}")),
+        Err(Closed(error)) => return fail(out, error),
+    }
+    let Some(thread) = out.thread_id.clone() else {
+        return fail(out, format!("{method} no devolvió el hilo"));
+    };
+    let params = turn_params(&thread, request.prompt, schema.as_ref());
+    match client.request("turn/start", &params, setup) {
+        Ok(Ok(result)) => {
+            out.turn_id = result
+                .pointer("/turn/id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        Ok(Err(error)) => return fail(out, format!("turn/start: {error}")),
+        Err(Closed(error)) => return fail(out, error),
+    }
+    let Some(turn) = out.turn_id.clone() else {
+        return fail(out, "turn/start no devolvió el turno".into());
+    };
+    let deadline = Instant::now() + request.limit;
+    let mut activities = 0;
+    let mut interrupted_at: Option<Instant> = None;
+    loop {
+        let until = interrupted_at.map_or(deadline, |at| at + INTERRUPT_WAIT);
+        let message = match client.next(until) {
+            Ok(Some(message)) => message,
+            Ok(None) if interrupted_at.is_none() => {
+                // Out of time: ask Codex to stop the turn and wait a little
+                // for it to say so.
+                let params = json!({"threadId": thread, "turnId": turn});
+                let _ = client.request("turn/interrupt", &params, Instant::now() + INTERRUPT_WAIT);
+                interrupted_at = Some(Instant::now());
+                continue;
+            }
+            Ok(None) => break,
+            Err(Closed(error)) => {
+                if interrupted_at.is_none() {
+                    fail(out, error);
+                }
+                break;
+            }
+        };
+        let Some(method) = message.get("method").and_then(Value::as_str) else {
+            continue;
+        };
+        let params = message.get("params").cloned().unwrap_or(Value::Null);
+        let message_thread = params.get("threadId").and_then(Value::as_str);
+        if message_thread.is_some_and(|t| t != thread) {
+            continue;
+        }
+        out.log.push_str(&message.to_string());
+        out.log.push('\n');
+        let message_turn = params
+            .get("turnId")
+            .and_then(Value::as_str)
+            .or_else(|| params.pointer("/turn/id").and_then(Value::as_str));
+        if message_thread.is_none()
+            || message_turn != Some(turn.as_str())
+            || message.get("id").is_some()
+        {
+            continue;
+        }
+        match method {
+            "item/started" => {
+                if let Some(text) = params
+                    .get("item")
+                    .and_then(|item| activity(item, request.worktree))
                     && activities < ACTIVITY_LIMIT
                 {
                     activities += 1;
-                    on_activity(text);
+                    on_activity(clip(&text, TEXT_LIMIT));
                 }
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                timed_out = true;
+            "item/completed" => {
+                let item = params.get("item");
+                if item.and_then(|i| i.get("type")).and_then(Value::as_str) == Some("agentMessage")
+                    && let Some(text) = item.and_then(|i| i.get("text")).and_then(Value::as_str)
+                {
+                    out.last_message = text.to_string();
+                }
+            }
+            "thread/tokenUsage/updated" => {
+                let last = params.pointer("/tokenUsage/last");
+                let read = |key: &str| {
+                    last.and_then(|u| u.get(key))
+                        .and_then(Value::as_u64)
+                        .unwrap_or(0)
+                };
+                out.usage.input_tokens += read("inputTokens");
+                out.usage.cached_input_tokens += read("cachedInputTokens");
+                out.usage.output_tokens += read("outputTokens");
+            }
+            "turn/completed" => {
+                let status = params
+                    .pointer("/turn/status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if status != "completed" && interrupted_at.is_none() {
+                    out.status = "error";
+                    out.errors.push(
+                        params
+                            .pointer("/turn/error/message")
+                            .and_then(Value::as_str)
+                            .map_or_else(|| format!("el turno acabó con {status}"), str::to_string),
+                    );
+                }
                 break;
             }
+            _ => {}
         }
     }
-    let code = if timed_out {
-        kill_tree(&mut child);
-        None
-    } else {
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    // Anything it left running would keep the pipes open.
-                    kill_tree(&mut child);
-                    break status.code();
-                }
-                Ok(None) if Instant::now() >= deadline => {
-                    timed_out = true;
-                    kill_tree(&mut child);
-                    break None;
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(50)),
-                Err(_) => break Some(1),
-            }
-        }
-    };
-    let _ = writer.join();
-    let _ = reader.join();
-    out.stderr = String::from_utf8_lossy(&errors_reader.join().unwrap_or_default()).into_owned();
-    if timed_out {
+    if interrupted_at.is_some() {
         out.status = "timeout";
-    } else if is_busy(&out) {
-        out.status = STATUS_BUSY;
-    } else if code != Some(0) || !out.errors.is_empty() {
-        out.status = "error";
-    }
-    Ok(out)
-}
-
-/// Whether Codex refused the turn because its thread already has another
-/// writer (it is open elsewhere, e.g. `codex resume` from titan-agent).
-/// Then nothing ran and the thread must be kept as it is.
-pub fn is_busy(out: &TurnOutput) -> bool {
-    const BUSY: &str = "already has an active writer";
-    out.errors
-        .iter()
-        .chain(std::iter::once(&out.stderr))
-        .any(|text| text.to_lowercase().contains(BUSY))
-}
-
-/// Reads one JSONL line into `out`; returns the activity text it carries.
-fn read_line(line: &str, out: &mut TurnOutput, cwd: &Path) -> Option<String> {
-    let event: Value = serde_json::from_str(line.trim()).ok()?;
-    if out.thread_id.is_none()
-        && let Some(thread) = event.get("thread_id").and_then(Value::as_str)
-    {
-        out.thread_id = Some(thread.to_string());
-    }
-    let item = event.get("item");
-    match event.get("type").and_then(Value::as_str)? {
-        "turn.completed" => {
-            let usage = event.get("usage");
-            let read = |key: &str| {
-                usage
-                    .and_then(|u| u.get(key))
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-            };
-            out.usage.input_tokens += read("input_tokens");
-            out.usage.cached_input_tokens += read("cached_input_tokens");
-            out.usage.output_tokens += read("output_tokens");
-            None
-        }
-        "turn.failed" => {
-            let message = event
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("turn.failed");
-            out.errors.push(message.to_string());
-            None
-        }
-        "error" => {
-            let message = event
-                .get("message")
-                .and_then(Value::as_str)
-                .unwrap_or("error");
-            out.errors.push(message.to_string());
-            None
-        }
-        "item.completed" => {
-            if item.and_then(|i| i.get("type")).and_then(Value::as_str) == Some("agent_message")
-                && let Some(text) = item.and_then(|i| i.get("text")).and_then(Value::as_str)
-            {
-                out.last_message = text.to_string();
-            }
-            None
-        }
-        "item.started" => activity(item?, cwd).map(|text| clip(&text, TEXT_LIMIT)),
-        _ => None,
     }
 }
 
@@ -317,10 +463,10 @@ fn unwrap_shell(command: &str) -> &str {
     script
 }
 
-/// The activity line of an `item.started`, if its kind is shown.
+/// The activity line of an `item/started`, if its kind is shown.
 fn activity(item: &Value, cwd: &Path) -> Option<String> {
     match item.get("type").and_then(Value::as_str)? {
-        "command_execution" => {
+        "commandExecution" => {
             let command = match item.get("command") {
                 Some(Value::String(text)) => text.clone(),
                 Some(Value::Array(parts)) => parts
@@ -332,151 +478,28 @@ fn activity(item: &Value, cwd: &Path) -> Option<String> {
             };
             Some(format!("$ {}", unwrap_shell(command.trim())))
         }
-        "file_change" => {
-            let root = format!("{}/", cwd.to_string_lossy().trim_end_matches('/'));
+        "fileChange" => {
+            let root = absolute(cwd);
             let paths: Vec<String> = item
                 .get("changes")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
                 .filter_map(|change| change.get("path").and_then(Value::as_str))
-                .map(|path| path.strip_prefix(&root).unwrap_or(path).to_string())
+                .map(|path| {
+                    Path::new(path)
+                        .strip_prefix(&root)
+                        .map(|rest| rest.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|_| path.to_string())
+                })
                 .collect();
             Some(format!("edita {}", paths.join(", ")))
         }
-        kind @ ("mcp_tool_call" | "web_search") => Some(kind.to_string()),
+        "mcpToolCall" => Some("mcp_tool_call".into()),
+        "webSearch" => Some("web_search".into()),
         _ => None,
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn items_become_short_activity_lines() {
-        let cwd = Path::new("/w/task");
-        let item =
-            json!({"type":"file_change","changes":[{"path":"/w/task/src/a.rs"},{"path":"b.rs"}]});
-        assert_eq!(activity(&item, cwd).unwrap(), "edita src/a.rs, b.rs");
-        let item = json!({"type":"command_execution","command":["cargo","test"]});
-        assert_eq!(activity(&item, cwd).unwrap(), "$ cargo test");
-        assert_eq!(
-            activity(&json!({"type":"web_search"}), cwd).unwrap(),
-            "web_search"
-        );
-        assert!(activity(&json!({"type":"reasoning"}), cwd).is_none());
-    }
-
-    #[test]
-    fn errors_usage_and_threads_are_collected() {
-        let mut out = TurnOutput::default();
-        let cwd = Path::new("/w");
-        for line in [
-            r#"{"type":"thread.started","thread_id":"t1"}"#,
-            r#"{"type":"turn.completed","usage":{"input_tokens":5,"output_tokens":1}}"#,
-            r#"{"type":"turn.completed","usage":{"input_tokens":2,"cached_input_tokens":1}}"#,
-            r#"{"type":"turn.failed","error":{"message":"boom"}}"#,
-            r#"{"type":"error"}"#,
-            "plain text",
-        ] {
-            assert!(read_line(line, &mut out, cwd).is_none());
-        }
-        assert_eq!(out.thread_id.as_deref(), Some("t1"));
-        assert_eq!(out.usage.input_tokens, 7);
-        assert_eq!(out.usage.cached_input_tokens, 1);
-        assert_eq!(out.errors, ["boom", "error"]);
-        let long = format!(
-            r#"{{"type":"item.started","item":{{"type":"command_execution","command":"{}"}}}}"#,
-            "x".repeat(300)
-        );
-        assert_eq!(
-            read_line(&long, &mut out, cwd).unwrap().chars().count(),
-            TEXT_LIMIT
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_turn_past_its_limit_is_killed_and_marked() {
-        let args = vec![
-            "-c".to_string(),
-            "cat >/dev/null; sleep 5; echo late".to_string(),
-        ];
-        let out = run(
-            "sh",
-            &args,
-            "hi",
-            Path::new("."),
-            Duration::from_millis(300),
-            &[],
-            |_| {},
-        )
-        .unwrap();
-        assert_eq!(out.status, "timeout");
-        let args = vec![
-            "-c".to_string(),
-            "cat >/dev/null; while :; do echo '{}'; sleep 0.01; done".to_string(),
-        ];
-        let started = Instant::now();
-        let out = run(
-            "sh",
-            &args,
-            "hi",
-            Path::new("."),
-            Duration::from_millis(300),
-            &[],
-            |_| {},
-        )
-        .unwrap();
-        assert_eq!(out.status, "timeout");
-        assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "endless output must not beat the limit"
-        );
-        let args = vec![
-            "-c".to_string(),
-            "cat >/dev/null; echo '{\"type\":\"error\",\"message\":\"thread t-1 already has an active writer\"}'; exit 1".to_string(),
-        ];
-        let out = run(
-            "sh",
-            &args,
-            "hi",
-            Path::new("."),
-            Duration::from_secs(5),
-            &[],
-            |_| {},
-        )
-        .unwrap();
-        assert_eq!(out.status, STATUS_BUSY);
-        let args = vec![
-            "-c".to_string(),
-            "cat >/dev/null; echo 'Error: Thread Already Has An Active Writer' >&2; exit 1"
-                .to_string(),
-        ];
-        let out = run(
-            "sh",
-            &args,
-            "hi",
-            Path::new("."),
-            Duration::from_secs(5),
-            &[],
-            |_| {},
-        )
-        .unwrap();
-        assert_eq!(out.status, STATUS_BUSY, "stderr counts too");
-        let args = vec!["-c".to_string(), "cat >/dev/null; exit 4".to_string()];
-        let out = run(
-            "sh",
-            &args,
-            "hi",
-            Path::new("."),
-            Duration::from_secs(5),
-            &[],
-            |_| {},
-        )
-        .unwrap();
-        assert_eq!(out.status, "error");
-    }
-}
+mod tests;

@@ -159,9 +159,14 @@ done
             started = quote(&thread_json("idle")),
             read = quote(&thread_json(&self.thread_status)),
             turns = quote(&json!({"data": self.turns, "nextCursor": null}).to_string()),
-            turn_started = quote(&json!({"turn": {"id": turn, "status": "inProgress"}}).to_string()),
+            turn_started =
+                quote(&json!({"turn": {"id": turn, "status": "inProgress"}}).to_string()),
             turn_lines = print(&turn_lines),
-            body = if self.body.trim().is_empty() { ":" } else { &self.body },
+            body = if self.body.trim().is_empty() {
+                ":"
+            } else {
+                &self.body
+            },
             end_lines = print(&end_lines),
             interrupted = quote(&interrupted.to_string()),
         );
