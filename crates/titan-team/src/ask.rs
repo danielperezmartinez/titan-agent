@@ -10,9 +10,9 @@ use titan_agent_core::team::{EventKind, Findings, STATUS_BUSY, TEXT_LIMIT, clip,
 use crate::checks::{self, CheckRun};
 use crate::commands::{run_tests, worktree};
 use crate::config::{Role, TeamConfig, resolve};
-use crate::process::{git, git_ok, last_lines, path_matches, path_warnings};
+use crate::process::{git, last_lines, path_matches, path_warnings};
 use crate::state::{self, EventLog, HistoryEntry, RoleState, now_iso, relative, task_dir};
-use crate::{Args, Failure, codex};
+use crate::{Args, Failure, codex, user_turns};
 
 /// Exit code of a turn refused because the role's thread is open elsewhere.
 pub const BUSY_EXIT: i32 = 4;
@@ -229,13 +229,21 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
     let n = state.history.len() as u32 + 1;
     let dir = task_dir(team, task);
     let file = |suffix: &str| dir.join(format!("{n:02}-{}.{suffix}", safe(role_name)));
-    let response = file("response");
     let program = codex::executable();
-    let argv = codex::argv(team, role, thread_id.as_deref(), &response, &wt);
     if args.flag("--dry-run") {
-        let mut line = vec![program.clone()];
-        line.extend(argv.iter().cloned());
-        println!("Comando: {}\n\n--- prompt ---\n{prompt}", shell_join(&line));
+        let schema = codex::read_schema(role).map_err(Failure::usage)?;
+        let lines = codex::dry_run_lines(
+            team,
+            role,
+            thread_id.as_deref(),
+            &wt,
+            &prompt,
+            schema.as_ref(),
+        );
+        println!(
+            "Peticiones JSON-RPC:\n{}\n\n--- prompt ---\n{prompt}",
+            lines.join("\n")
+        );
         return Ok(0);
     }
     if !available(&program) {
@@ -244,9 +252,50 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         )));
     }
     std::fs::create_dir_all(&dir).map_err(Failure::io)?;
+    // Only a writing role builds during its turn (the read-only sandbox
+    // could not write the shared folder anyway).
+    let build_env = if role.sandbox == "workspace-write" {
+        team.project.build_env()
+    } else {
+        Vec::new()
+    };
+    for (_, dir) in &build_env {
+        if let Err(error) = std::fs::create_dir_all(dir) {
+            eprintln!("aviso: no se pudo crear {}: {error}", dir.display());
+        }
+    }
+    let mut request = codex::TurnRequest {
+        team,
+        role,
+        thread: thread_id.as_deref(),
+        worktree: &wt,
+        prompt: "",
+        limit: Duration::from_secs(role.timeout_s),
+        recheck: args.flag("--gate"),
+    };
+    // Connected (and the thread resumed) before the turn is announced: the
+    // thread may be busy, and the user's turns since the role's last one go
+    // first on the log.
+    let prepared = codex::prepare(&program, &build_env, &request);
+    if let Some(error) = prepared.unavailable.clone() {
+        return Err(Failure::usage(error));
+    }
 
     let turn = known.map_or(0, |r| r.turns) + 1;
     let log = EventLog::new(team, task);
+    let user_turns = match (&thread_id, prepared.busy) {
+        (Some(thread), false) => {
+            match user_turns::record(team, role, &state, &wt, thread, &prepared.turns, &log) {
+                Ok(found) => found,
+                Err(error) => {
+                    prepared.close();
+                    return Err(error);
+                }
+            }
+        }
+        _ => None,
+    };
+    let busy_before = prepared.busy;
     let director = team.director().map(str::to_string);
     log.append(EventKind::BriefSent {
         from: director.clone(),
@@ -278,7 +327,8 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         .project
         .gate_cmd
         .as_deref()
-        .filter(|_| args.flag("--gate"))
+        // A busy thread runs nothing, not even the gate.
+        .filter(|_| args.flag("--gate") && !busy_before)
     {
         if let Err(error) = log.append(EventKind::Activity {
             role: role_name.clone(),
@@ -294,45 +344,17 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         prompt.push_str(&format!("\n\n{block}"));
     }
     let started = Instant::now();
-    // Only a writing role builds during its turn (the read-only sandbox
-    // could not write the shared folder anyway).
-    let build_env = if role.sandbox == "workspace-write" {
-        team.project.build_env()
-    } else {
-        Vec::new()
-    };
-    for (_, dir) in &build_env {
-        if let Err(error) = std::fs::create_dir_all(dir) {
-            eprintln!("aviso: no se pudo crear {}: {error}", dir.display());
+    request.prompt = &prompt;
+    let out = codex::run(prepared, &request, |text| {
+        // Activity is best effort: losing a line must not stop the turn.
+        if let Err(error) = log.append(EventKind::Activity {
+            role: role_name.clone(),
+            turn,
+            text,
+        }) {
+            eprintln!("aviso: {}", error.message);
         }
-    }
-    let outcome = codex::run(
-        &program,
-        &argv,
-        &prompt,
-        &wt,
-        Duration::from_secs(role.timeout_s),
-        &build_env,
-        |text| {
-            // Activity is best effort: losing a line must not stop the turn.
-            if let Err(error) = log.append(EventKind::Activity {
-                role: role_name.clone(),
-                turn,
-                text,
-            }) {
-                eprintln!("aviso: {}", error.message);
-            }
-        },
-    );
-    let out = match outcome {
-        Ok(out) => out,
-        Err(error) => codex::TurnOutput {
-            status: "error",
-            stderr: error.clone(),
-            errors: vec![error],
-            ..Default::default()
-        },
-    };
+    });
     let duration = started.elapsed();
     // The thread is open elsewhere (another writer): nothing ran. The role
     // keeps its thread and its turn count, and no new thread is opened.
@@ -340,7 +362,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
     // From here on the turn has run: every step is recorded even if an
     // earlier one fails, and the failures are reported at the end.
     let mut failures: Vec<String> = Vec::new();
-    for (suffix, content) in [("jsonl", &out.stdout), ("stderr", &out.stderr)] {
+    for (suffix, content) in [("jsonl", &out.log), ("stderr", &out.stderr)] {
         if let Err(error) = std::fs::write(file(suffix), content) {
             failures.push(format!(
                 "No se pudo guardar {}: {error}",
@@ -377,8 +399,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         }
         check_runs = runs;
     }
-    let text = std::fs::read_to_string(&response).unwrap_or_else(|_| out.last_message.clone());
-    let _ = std::fs::remove_file(&response);
+    let text = out.last_message.clone();
     let report: Option<Value> = role
         .output_schema
         .as_ref()
@@ -438,7 +459,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         .and_then(Value::as_str)
         .map(str::to_string);
     let summary = match (&verdict, findings) {
-        _ if busy => format!("hilo de {role_name} abierto en titan-agent"),
+        _ if busy => format!("hilo de {role_name} ocupado"),
         (Some(verdict), Some(findings)) => match findings.total() {
             1 => format!("{verdict} · 1 hallazgo"),
             n => format!("{verdict} · {n} hallazgos"),
@@ -480,6 +501,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         role: role_name.clone(),
         turn,
         thread_id: thread.clone(),
+        turn_id: out.turn_id.clone(),
         resumed: thread_id.is_some(),
         status: status.to_string(),
         duration_s: (duration.as_secs_f64() * 10.0).round() / 10.0,
@@ -510,8 +532,24 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         let mut value = serde_json::to_value(&entry).unwrap_or(Value::Null);
         value["text"] = json!(text);
         value["parsed"] = report.clone().unwrap_or(Value::Null);
+        value["user_turns"] = user_turns.as_ref().map_or(
+            Value::Null,
+            |u| json!({"turns": u.turns, "text": u.text, "commit": u.commit}),
+        );
         println!("{value}");
     } else {
+        if let Some(found) = &user_turns {
+            println!(
+                "Turnos del usuario con {role_name}: {} («{}»){}",
+                found.turns,
+                found.text,
+                found
+                    .commit
+                    .as_deref()
+                    .map(|c| format!(", commit {c}"))
+                    .unwrap_or_default()
+            );
+        }
         print_report(
             team,
             role,
@@ -531,7 +569,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
     }
     if busy {
         eprintln!(
-            "El hilo de {role_name} está abierto en titan-agent; ciérralo o espera y repite la orden.{}",
+            "El hilo de {role_name} está ocupado (tiene un turno en curso o lo escribe otro proceso); espera y repite la orden.{}",
             thread
                 .as_deref()
                 .map(|t| format!(" Su hilo se conserva ({t})."))
@@ -552,23 +590,6 @@ fn safe(role: &str) -> String {
             }
         })
         .collect()
-}
-
-fn shell_join(words: &[String]) -> String {
-    words
-        .iter()
-        .map(|w| {
-            if !w.is_empty()
-                && w.chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "-_./=:@".contains(c))
-            {
-                w.clone()
-            } else {
-                format!("'{}'", w.replace('\'', "'\\''"))
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 fn count_findings(report: &Value) -> Findings {
@@ -621,26 +642,7 @@ fn commit_turn(
             .collect();
         return Ok((None, changed));
     }
-    git(wt, &["add", "-A"])?;
-    if git_ok(wt, &["diff", "--cached", "--quiet"]) {
-        return Ok((None, Vec::new()));
-    }
-    let identity = git_ok(wt, &["config", "user.name"]) && git_ok(wt, &["config", "user.email"]);
-    let message = format!("team: {name} turno {turn}");
-    let mut commit_args = Vec::new();
-    if !identity {
-        commit_args.extend(["-c", "user.name=team", "-c", "user.email=team@localhost"]);
-    }
-    commit_args.extend(["commit", "-m", &message]);
-    git(wt, &commit_args)?;
-    let hash = git(wt, &["rev-parse", "--short", "HEAD"])?
-        .trim()
-        .to_string();
-    let changed = git(wt, &["diff", "--name-only", "HEAD~1..HEAD"])?
-        .lines()
-        .map(str::to_string)
-        .collect();
-    Ok((Some(hash), changed))
+    user_turns::commit_all(wt, &format!("team: {name} turno {turn}"))
 }
 
 fn print_report(
@@ -749,12 +751,7 @@ mod tests {
     }
 
     #[test]
-    fn dry_run_lines_quote_what_needs_it() {
-        let words = ["codex", "-c", "sandbox_mode=\"read-only\"", "a b", "-"].map(String::from);
-        assert_eq!(
-            shell_join(&words),
-            "codex -c 'sandbox_mode=\"read-only\"' 'a b' -"
-        );
+    fn role_names_are_safe_in_file_names() {
         assert_eq!(safe("rev/isor"), "rev_isor");
     }
 

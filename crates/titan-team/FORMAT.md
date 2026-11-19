@@ -50,7 +50,7 @@ la fuente de verdad es la ADR-0010 de su bóveda; este texto la resume.)
 
 | Clave | Tipo | Por defecto | Qué es |
 | --- | --- | --- | --- |
-| `config` | lista de `clave=valor` | `[]` | Cada una va como `-c` en todas las llamadas a Codex (p. ej. `project_doc_max_bytes=0` para que los roles no lean `AGENTS.md`). |
+| `config` | lista de `clave=valor` | `[]` | Cada una va en el `config` de `thread/start` y `thread/resume` de todos los turnos (la clave tal cual, el valor leído como TOML; p. ej. `project_doc_max_bytes=0` para que los roles no lean `AGENTS.md`). |
 
 ### `[flow]`
 
@@ -157,7 +157,60 @@ director va con `-m TEXTO` o desde un fichero con `-f`/`--file`/`--message-file`
 | 1 | el turno falló o agotó su tiempo, o los tests fallaron (`test` devuelve el código de la orden de tests) |
 | 2 | uso, configuración o estado (encargo inexistente, rol no lanzable, fichero que falta, encargo ocupado…) |
 | 3 | se superó el tope de rondas de revisión sin `--force` |
-| 4 | **hilo ocupado**: el hilo del rol está abierto en otro sitio (por ejemplo, en titan-agent con `codex resume`) y Codex rechaza un segundo escritor. No se ejecutó nada: el rol **conserva su hilo** y su número de turnos, la ronda de revisión no se gasta y titan-team nunca abre un hilo nuevo por su cuenta. Hay que cerrar ese hilo (o esperar) y repetir la misma orden. |
+| 4 | **hilo ocupado**: el hilo del rol tiene un turno en curso (por ejemplo, del usuario desde el chat de titan-agent) o lo escribe otro proceso de Codex («already has an active writer»). No se ejecutó nada: el rol **conserva su hilo** y su número de turnos, la ronda de revisión no se gasta y titan-team nunca abre un hilo nuevo por su cuenta. Hay que esperar y repetir la misma orden. |
+
+### Cómo se ejecuta un turno (app-server de Codex)
+
+Cada turno habla JSON-RPC con el **app-server** de Codex (ADR-0013):
+
+- **Conexión**: si `<codex> app-server daemon version` da `"status":
+  "running"` y un `socketPath`, titan-team se conecta a ese socket
+  (WebSocket, el daemon compartido que usan el terminal de Codex y el chat de
+  titan-agent); si no, lanza `<codex> app-server` en el worktree, por stdio
+  (un objeto JSON por línea), solo durante el turno.
+- **Peticiones**: un objeto JSON compacto por línea que empieza por
+  `{"id":<n>,"method":"<método>"` (`id` desde 1). Primero `initialize`
+  (`clientInfo.name = "titan-team"`, `capabilities.experimentalApi = true`)
+  y la notificación `initialized`.
+- **Hilo nuevo**: `thread/start` con `cwd` (el worktree), `model`, `sandbox`,
+  `approvalPolicy: "never"` y `config` (el esfuerzo como
+  `model_reasoning_effort`, los pares de `[codex].config` y del rol y, en un
+  rol `workspace-write` con `target_dir`, `sandbox_workspace_write.writable_roots`
+  y `shell_environment_policy.set.CARGO_TARGET_DIR`).
+- **Hilo que continúa**: `thread/read` (si tiene un turno en curso, el turno
+  es `busy`), `thread/turns/list` (turnos del usuario, abajo) y
+  `thread/resume` con los mismos ajustes, todo antes de anunciar el turno.
+  «already has an active writer» es `busy`. Con `--gate`, justo antes de
+  `turn/start` se vuelve a leer el estado (el usuario puede haber empezado un
+  turno mientras corría la compuerta): si está en curso, el turno es `busy` y
+  nunca lo dirige. Con el
+  hilo ocupado no se ejecuta nada, tampoco `--gate`.
+- **Turno**: `turn/start` con el prompt como entrada de texto y
+  `outputSchema` si el rol tiene `output_schema`. `item/started` da los
+  `activity`; el último `agentMessage` es la respuesta; la suma de
+  `thread/tokenUsage/updated.tokenUsage.last` es el `usage`; `turn/completed`
+  cierra el turno (`completed` → `ok`; si no, `error`). Al pasar `timeout_s`,
+  `turn/interrupt` y estado `timeout`. Al final, `thread/unsubscribe`.
+  titan-team no responde a las peticiones del servidor (aprobaciones,
+  preguntas).
+- **Salidas** en `<state_dir>/<encargo>/`: `NN-<rol>.jsonl` (los mensajes del
+  servidor para el hilo, uno por línea), `NN-<rol>.stderr` (el stderr del
+  servidor propio y los errores), y `NN-<rol>.md` o `.json` (la respuesta).
+- **`--dry-run`** imprime `Peticiones JSON-RPC:` con `initialize`, la
+  petición del hilo y `turn/start`, y luego `--- prompt ---` y el prompt; no
+  ejecuta Codex.
+
+### Turnos del usuario con un rol
+
+Cada entrada del historial guarda `turn_id`, el id de Codex de su turno
+(`null` si no llegó a empezar). Al continuar un hilo, los turnos de
+`thread/turns/list` más recientes que el último con un `turn_id` del rol son
+**turnos del usuario** (desde el chat o el terminal de Codex). Si los hay,
+antes del turno se hace commit de lo que dejaron (rol `workspace-write` con
+`autocommit`; mensaje `team: turnos del usuario con <rol>`), se escribe
+`user_turn` y la salida de `ask` lo dice antes de la respuesta (una línea
+`Turnos del usuario con <rol>: N …`, o el campo `user_turns` `{turns, text,
+commit}` con `--json`; `null` si no hay).
 
 ## Log de eventos (versión 1)
 
@@ -177,13 +230,14 @@ Claude Code más activa de la carpeta base.
 | `turn_started` | `role`, `turn`, `cli`, `model`, `effort`, `sandbox`, `thread_id` (`null` si es nuevo), `review_round` | antes de lanzar Codex |
 | `activity` | `role`, `turn`, `text` (`$ <orden>`, `edita <rutas>`, `mcp_tool_call`, `web_search`) | durante el turno, como mucho 200 |
 | `turn_finished` | `role`, `turn`, `status` (`ok` · `error` · `timeout` · `busy`), `duration_ms`, `thread_id`, `usage` `{input_tokens, cached_input_tokens, output_tokens}`, `commit`, `changed_files`, `warnings`, `text` | al terminar |
+| `user_turn` | `role`, `thread_id`, `turns`, `text` (el primer mensaje del usuario, 200 caracteres como mucho), `commit`, `changed_files` | antes de `brief_sent`, si hubo turnos del usuario con el rol |
 | `report` | `role`, `review_round`, `verdict`, `findings` `{blocker, major, minor, nit}`, `questions` | tras el turno de un rol con `output_schema` |
 | `decision` | `by`, `text` | `decide` |
 | `task_closed` | `delete_branch` | `close` |
 
-- `status = "busy"`: el hilo estaba abierto en otro sitio (salida 4).
-  `thread_id` es el que el rol ya tenía, `text` dice
-  `hilo de <rol> abierto en titan-agent` y el turno no cuenta como hecho.
+- `status = "busy"`: el hilo estaba ocupado (salida 4). `thread_id` es el
+  que el rol ya tenía, `text` dice `hilo de <rol> ocupado` y el turno no
+  cuenta como hecho.
 - `text` de `brief_sent`, `activity` y `turn_finished`: como mucho 200
   caracteres; `decision.text`, 500. Lo que pasa se corta con `…`.
 - Los lectores ignoran tipos y campos desconocidos y saltan líneas mal

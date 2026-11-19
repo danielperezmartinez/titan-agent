@@ -3,10 +3,12 @@
 
 use serde_json::{Value, json};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+mod support;
+use support::{FakeCodex, methods, prompt, requests};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -58,28 +60,14 @@ prompt_file = "prompt.md"
 "#,
         )
         .unwrap();
-        let fake = f.0.join("fake-codex");
-        fs::write(
-            &fake,
-            r#"#!/bin/sh
-printf '%s\n' "$@" > "$FIXTURE_ROOT/argv"
-pwd > "$FIXTURE_ROOT/cwd"
-cat > "$FIXTURE_ROOT/stdin"
-output=''
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = '-o' ]; then shift; output="$1"; fi
-  shift
-done
-printf 'Final answer\nSecond line\n' > "$output"
-printf '%s\n' 'ignored diagnostic line' \
-  '{"type":"thread.started","thread_id":"fixture-thread"}' \
-  '{"type":"item.started","item":{"type":"command_execution","command":"printf inspect"}}' \
-  '{"type":"item.completed","item":{"type":"agent_message","text":"Fallback answer"}}' \
-  '{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":3,"output_tokens":7}}'
-"#,
-        )
-        .unwrap();
-        fs::set_permissions(fake, fs::Permissions::from_mode(0o755)).unwrap();
+        FakeCodex {
+            thread_id: "fixture-thread".into(),
+            answer: "Final answer\nSecond line".into(),
+            activity: vec![json!({"type":"commandExecution", "command":"printf inspect"})],
+            usage: (11, 3, 7),
+            ..FakeCodex::default()
+        }
+        .install(&f.0);
         f
     }
 
@@ -95,8 +83,7 @@ printf '%s\n' 'ignored diagnostic line' \
     fn run(&self, args: &[&str]) -> Output {
         Command::new(env!("CARGO_BIN_EXE_titan-team"))
             .current_dir(&self.0)
-            .env("TITAN_TEAM_CODEX", self.0.join("fake-codex"))
-            .env("FIXTURE_ROOT", &self.0)
+            .env("TITAN_TEAM_CODEX", self.0.join("codex"))
             .args(args)
             .output()
             .unwrap()
@@ -214,37 +201,25 @@ fn a_codex_turn_uses_stdin_and_appends_versioned_events_in_order() {
     ]);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let answer: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(answer["text"], "Final answer\nSecond line\n");
+    assert_eq!(answer["text"], "Final answer\nSecond line");
     assert_eq!(answer["parsed"], Value::Null);
     assert_eq!(
-        fs::read_to_string(f.0.join("stdin")).unwrap(),
+        prompt(&f.0),
         "Inspect the paper design.\n\n# Encargo\n\nBuild a paper lighthouse.\n\n# Mensaje del director\n\nReview the outline."
     );
     let worktree = f.0.join(".agents/worktrees/paper");
     assert_eq!(
-        PathBuf::from(fs::read_to_string(f.0.join("cwd")).unwrap().trim()),
-        worktree
+        fs::read_to_string(f.0.join("codex-cwd")).unwrap().trim(),
+        worktree.to_str().unwrap()
     );
-    let args: Vec<String> = fs::read_to_string(f.0.join("argv"))
-        .unwrap()
-        .lines()
-        .map(str::to_owned)
-        .collect();
-    assert_eq!(&args[..3], &["exec", "--json", "-o"]);
-    assert_eq!(
-        &args[4..],
-        &[
-            "-m",
-            "fixture-model",
-            "-c",
-            "model_reasoning_effort=high",
-            "-s",
-            "read-only",
-            "-C",
-            worktree.to_str().unwrap(),
-            "-"
-        ]
-    );
+    let start = requests(&f.0)
+        .into_iter()
+        .find(|r| r["method"] == "thread/start")
+        .unwrap();
+    assert_eq!(start["params"]["cwd"], worktree.to_str().unwrap());
+    assert_eq!(start["params"]["model"], "fixture-model");
+    assert_eq!(start["params"]["sandbox"], "read-only");
+    assert!(methods(&f.0).contains(&"turn/start".to_string()));
     assert!(
         f.event_bytes().starts_with(&before),
         "events must be append-only"
@@ -286,14 +261,10 @@ fn a_codex_turn_uses_stdin_and_appends_versioned_events_in_order() {
     let saved = f.0.join(".agents/state/paper");
     assert_eq!(
         fs::read_to_string(saved.join("01-reviewer.md")).unwrap(),
-        "Final answer\nSecond line\n"
+        "Final answer\nSecond line"
     );
     assert!(saved.join("01-reviewer.stderr").exists());
-    assert!(
-        fs::read_to_string(saved.join("01-reviewer.jsonl"))
-            .unwrap()
-            .contains("ignored diagnostic line")
-    );
+    assert!(saved.join("01-reviewer.jsonl").exists());
 }
 
 #[test]
@@ -303,22 +274,21 @@ fn review_limit_returns_three_without_launching_or_writing_and_force_can_resume(
     let first = f.run(&["ask", "reviewer", "paper"]);
     assert_eq!(first.status.code(), Some(0), "{first:?}");
     let before = f.event_bytes();
-    fs::remove_file(f.0.join("argv")).unwrap();
+    fs::remove_file(f.0.join("requests.jsonl")).unwrap();
     let blocked = f.run(&["ask", "reviewer", "paper", "-m", "Check again."]);
     assert_eq!(blocked.status.code(), Some(3), "{blocked:?}");
     assert!(!blocked.stderr.is_empty());
-    assert!(!f.0.join("argv").exists());
+    assert!(!f.0.join("requests.jsonl").exists());
     assert_eq!(f.event_bytes(), before);
     let forced = f.run(&["ask", "reviewer", "paper", "-m", "Check again.", "--force"]);
     assert_eq!(forced.status.code(), Some(0), "{forced:?}");
-    assert_eq!(
-        fs::read_to_string(f.0.join("stdin")).unwrap(),
-        "# Mensaje del director\n\nCheck again."
-    );
-    let args = fs::read_to_string(f.0.join("argv")).unwrap();
-    assert!(args.starts_with("exec\nresume\n--json\n-o\n"));
-    assert!(args.contains("-c\nsandbox_mode=\"read-only\"\n"));
-    assert!(args.ends_with("fixture-thread\n-\n"));
+    assert_eq!(prompt(&f.0), "# Mensaje del director\n\nCheck again.");
+    let resume = requests(&f.0)
+        .into_iter()
+        .find(|r| r["method"] == "thread/resume")
+        .unwrap();
+    assert_eq!(resume["params"]["threadId"], "fixture-thread");
+    assert_eq!(resume["params"]["sandbox"], "read-only");
     let events = f.events();
     let starts: Vec<_> = events
         .iter()

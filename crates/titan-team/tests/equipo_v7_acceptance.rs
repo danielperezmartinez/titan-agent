@@ -3,10 +3,12 @@
 
 use serde_json::{Value, json};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+mod support;
+use support::FakeCodex;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -27,22 +29,11 @@ impl Fixture {
         fs::write(f.0.join("prompt.md"), "Build a paper kite.").unwrap();
         fs::write(f.0.join("brief.md"), "Build a paper kite.").unwrap();
         f.configure("", "");
-        let script = r#"#!/bin/sh
-cat > "$FIXTURE_ROOT/stdin"
-touch "$FIXTURE_ROOT/codex-started"
-out=''
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = '-o' ]; then shift; out="$1"; fi
-  shift
-done
-printf 'draft\n' > draft.txt
-printf 'Paper response\n' > "$out"
-printf '%s\n' '{"type":"thread.started","thread_id":"paper-thread"}'
-printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
-"#;
-        let path = f.0.join("codex");
-        fs::write(&path, script).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        FakeCodex {
+            body: "printf 'draft\\n' > draft.txt".into(),
+            ..FakeCodex::default()
+        }
+        .install(&f.0);
         f
     }
 

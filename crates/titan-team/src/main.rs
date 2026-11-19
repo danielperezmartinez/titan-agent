@@ -6,6 +6,7 @@
 //! It only launches `codex exec` (never `claude`), never with
 //! `danger-full-access`, and reads no credentials of any CLI.
 
+mod appserver;
 mod ask;
 mod checks;
 mod codex;
@@ -13,6 +14,7 @@ mod commands;
 mod config;
 mod process;
 mod state;
+mod user_turns;
 
 use std::path::PathBuf;
 

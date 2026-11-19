@@ -8,6 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod support;
+use support::FakeCodex;
+
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
 struct Temp(PathBuf);
@@ -84,21 +87,7 @@ prompt_file = "prompt.md"
     .unwrap();
     fs::write(f.0.join("prompt.md"), "Build a paper kite.").unwrap();
     fs::write(f.0.join("brief.md"), "Prepare a paper kite.").unwrap();
-    executable(
-        &f.0.join("codex"),
-        r#"#!/bin/sh
-touch "$FIXTURE_ROOT/codex-started"
-cat > "$FIXTURE_ROOT/stdin"
-out=''
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = '-o' ]; then shift; out="$1"; fi
-  shift
-done
-printf 'Paper response\n' > "$out"
-printf '%s\n' '{"type":"thread.started","thread_id":"paper-thread"}'
-printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}'
-"#,
-    );
+    FakeCodex::default().install(&f.0);
     ok(run(&f.0, &["new", "paper", "--brief", "brief.md"]));
     f
 }
@@ -133,7 +122,7 @@ fn c2_message_file_aliases_reach_the_end_of_the_prompt_and_conflicts_fail() {
         let mut args = vec!["ask", "writer", "paper"];
         args.extend(flags);
         ok(run(&f.0, &args));
-        let prompt = fs::read_to_string(f.0.join("stdin")).unwrap();
+        let prompt = support::prompt(&f.0);
         // Blank-line framing is unspecified; the heading and final message are contractual.
         let (_, message) = prompt.rsplit_once("# Mensaje del director\n").unwrap();
         assert_eq!(message.trim(), "Fold the blue wing.\nKeep the tail.");

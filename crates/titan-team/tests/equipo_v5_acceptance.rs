@@ -3,10 +3,12 @@
 
 use serde_json::{Value, json};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+mod support;
+use support::FakeCodex;
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -62,25 +64,12 @@ prompt_file = "prompt.md"
     }
 
     fn fake(&self, body: &str, exit: i32) {
-        let script = format!(
-            r#"#!/bin/sh
-cat > "$FIXTURE_ROOT/stdin"
-touch "$FIXTURE_ROOT/codex-started"
-out=''
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = '-o' ]; then shift; out="$1"; fi
-  shift
-done
-{body}
-printf 'Paper response\n' > "$out"
-printf '%s\n' '{{"type":"thread.started","thread_id":"paper-thread"}}'
-printf '%s\n' '{{"type":"turn.completed","usage":{{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}}}'
-exit {exit}
-"#
-        );
-        let path = self.0.join("codex");
-        fs::write(&path, script).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        FakeCodex {
+            body: body.into(),
+            exit: (exit != 0).then_some(exit),
+            ..FakeCodex::default()
+        }
+        .install(&self.0);
     }
 
     fn run(&self, args: &[&str]) -> Output {
@@ -395,7 +384,7 @@ fn c3_gate_failure_reaches_codex_after_diff_and_tests_with_only_the_tail() {
         "ask", "reviewer", "paper", "--diff", "--test", "--gate", "--json",
     ]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
-    let prompt = fs::read_to_string(f.0.join("stdin")).unwrap();
+    let prompt = support::prompt(&f.0);
     let diff = prompt.find("# Diff respecto a la base").unwrap();
     let tests = prompt.find("# Resultado de los tests (exit 0)").unwrap();
     let gate = prompt.find("# Compuerta (exit 5)").unwrap();
