@@ -5,7 +5,7 @@ Resumen: 'Versión 0.8.0, después de la 0.7.0 (que trae la vista «conversació
 Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; ADR-0012 y ADR-0013 aceptadas por el usuario el mismo día; decisión visual aceptada tras revisar la previa; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. Al diseñar la 0.7.0 (mismo día) el usuario decidió que el chat va en la 0.8.0, sobre la estructura de la 0.7.0. La versión se acuerda en cada PR.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:30:00+01:00
-Última modificación: 2026-11-19T20:30:00+01:00
+Última modificación: 2026-11-19T21:10:00+01:00
 ---
 
 # Chat de sesión con Codex y Claude Code
@@ -368,6 +368,117 @@ Sigue sin efectos: ni eventos, ni historial, ni `checks`.
 **C11. Documentación.** `titan-team doc` (imprime
 `crates/titan-team/FORMAT.md`) nombra `app-server`, `user_turn` y `turn_id`,
 y ya no dice que el turno se ejecuta con `codex exec`.
+
+## PR 1 · Resultado (rama `feat/v0.8.0`, versión 0.8.0)
+
+**Hecho**: titan-team ejecuta los turnos por el app-server (`crates/titan-team/src/appserver.rs`,
+`codex.rs`, `user_turns.rs`), turnos del usuario con commit y evento
+`user_turn`, `turn_id` en el historial, `FORMAT.md` y la skill `equipo`
+actualizados, y el kit `scripts/demo/equipo-appserver.sh` para probarlo con
+el Codex real. El monitor ignora `user_turn` hasta la PR 2.
+
+**Tests**: 8 de aceptación de Sol en `crates/titan-team/tests/appserver_acceptance.rs`
+(turno 1, commit `d17fda2`; turno 2 solo cambió un `.last()` que clippy
+rechazaba), 10 propios en `tests/appserver.rs` (el falso, el daemon por
+WebSocket, la suma de `usage`, `busy` sin turnos del usuario repetidos y las
+regresiones de la revisión) y unitarios en `codex/tests.rs`, `user_turns.rs`
+y `appserver.rs`. El app-server falso compartido es `tests/support/mod.rs`.
+Los tests antiguos (`cli.rs`, `equipo_v5/v6/v7`, `phase3`) los pasó Luna al
+falso nuevo (2 turnos).
+
+**Revisión de Sol** (high, `--gate`, hilo nuevo): `changes_requested`, 8
+mayores y 2 menores. Decisiones del director:
+
+| Hallazgo | Decisión |
+| --- | --- |
+| El plazo no vence con un servidor que no para de escribir | Aceptado: se comprueba antes de cada lectura; bandeja de mensajes acotada (10 000) |
+| `initialize` fallido deja vivo el servidor propio | Aceptado: se cierra y su stderr va al error |
+| `--gate` se ejecuta con el hilo ocupado | Aceptado: con `busy` no se ejecuta nada |
+| `busy` en `turn/start` tras registrar los turnos del usuario | Aceptado en parte: `thread/resume` va antes de anunciar el turno (así `busy` por «active writer» no registra nada) y, con `--gate`, se relee el estado justo antes de `turn/start` para no dirigir un turno del usuario que empiece durante la compuerta. Queda una ventana de milisegundos sin cubrir |
+| Un Codex no ejecutable escribe eventos | Aceptado: salida 2, «no está disponible», sin eventos |
+| La interrupción podía esperar 20 s | Aceptado: un solo plazo de 10 s; `thread/unsubscribe` como mucho 3 s |
+| Si falla el commit de los turnos del usuario, se sigue | Aceptado: el turno se detiene (salida 2) para no mezclar sus cambios con los del rol |
+| El servidor propio que sale con un hijo vivo no se detecta | Aceptado: se vigila su salida mientras se espera |
+| El `.jsonl` pierde mensajes de la preparación y del cierre | Aceptado: se vuelcan al cerrar |
+| `daemon version` con salida ≠ 0 | Aceptado |
+
+**Hallado en la prueba con el Codex real** (antes de la revisión): un turno
+del usuario se registraba aunque luego el hilo saliera `busy`, y se habría
+contado dos veces. Corregido (resume antes de anunciar) y con test.
+
+**Verificación** (local, 2026-11-19): `cargo fmt --all --check`, `cargo
+clippy --workspace --all-targets -- -D warnings` y `cargo test --workspace`
+en verde (250 tests). Con el Codex real (daemon compartido 0.170, `gpt-6-luna`
+low, repo de prueba, hilos borrados al acabar): turno nuevo por el daemon con
+`CARGO_TARGET_DIR` en las órdenes del rol; turno del usuario por el mismo
+daemon → el siguiente `ask` lo cuenta, hace commit y escribe `user_turn`;
+turno del usuario en curso → `ask` sale con 4 sin ejecutar nada.
+
+**Métricas (spike + PR 1)**: de 20:05 a 21:10, unos 65 min. Claude (esta
+sesión, Opus): 176 respuestas, 178 llamadas, 169 k de salida, 0,38 M de
+escritura en caché y 47 M de lectura. Codex:
+
+| Encargo | Rol | Entrada (caché) | Salida | Tiempo |
+| --- | --- | --- | --- | --- |
+| spike | luna low, 9 turnos cortos | ~18 k c/u | — | — |
+| `v08-pr1` t1 | Sol, tests | 276 k (234 k) | 9,8 k | 238 s |
+| `v08-pr1` t2 | Sol, lint | 555 k (507 k) | 10,4 k | 36 s |
+| `v08-pr1-tests` t1 | Luna, tests antiguos | 1,02 M (0,98 M) | 4,3 k | 198 s |
+| `v08-pr1-tests` t2 | Luna, tests antiguos | 2,32 M (2,25 M) | 9,0 k | 181 s |
+| `v08-pr1-revision` | Sol, revisión high | 796 k (698 k) | 7,4 k | 219 s |
+
+Claude del spike: unos 12 turnos de haiku.
+
+### Carencias del equipo (PR 1)
+
+1. **El primer turno de Luna se quedó a medias** (3 de 5 ficheros, 1 M de
+   entrada): paró al ver que la compuerta fallaba por un lint en un test de
+   Sol que no podía tocar. *Causa*: la comprobación `build` de Sol compila
+   pero no pasa clippy, así que el lint llegó a la compuerta de Luna.
+   *Propuesta*: que `build_cmd` del equipo sea `cargo clippy --workspace
+   --all-targets -- -D warnings` (compila los tests y además pasa los
+   lints).
+2. **Orden en segundo plano con tope**: Sol se lanzó con un tope de 10 min
+   en la orden de fondo, menor que su `timeout_s` más las comprobaciones.
+   Salió bien por poco. *Ajuste aplicado*: los turnos largos se lanzan
+   desacoplados (`setsid nohup`) y se espera con un monitor. *Propuesta*:
+   decirlo en la skill.
+3. **Luna gasta mucha entrada en ediciones repetitivas largas** (3,3 M en
+   dos turnos para 5 ficheros de tests). Aun así ahorra cuota de Claude.
+   *Propuesta*: nada por ahora; anotarlo si se repite.
+4. **Un fallo de diseño solo salió con el CLI real** (turno del usuario
+   contado dos veces con `busy`): el contrato fijaba el orden de las
+   peticiones pero no qué pasa con lo ya registrado si después sale
+   `busy`. *Propuesta*: en contratos con efectos antes de una petición que
+   puede fallar, un apartado que diga qué efectos quedan.
+
+### Prueba a mano (PR 1)
+
+Sin ventana: se prueba con el Codex real (unas pocas llamadas cortas de
+luna). Desde la carpeta del repo:
+
+1. `scripts/demo/equipo-appserver.sh up` → compila titan-team, crea un repo
+   de prueba y el primer turno del rol `escritor` sale `estado: ok`, con la
+   respuesta `hecho` y un commit con `cometa.txt`; al final, `Hilo del rol:
+   <id>`.
+2. `scripts/demo/equipo-appserver.sh hilo` → imprime `cd … && codex resume
+   <id>`. Ejecútala en otro terminal → se abre el terminal de Codex con el
+   hilo del rol.
+3. En ese terminal escribe «Crea el fichero usuario.txt con el texto hola» y
+   espera a que acabe → Codex crea el fichero.
+4. Con el terminal de Codex abierto, `scripts/demo/equipo-appserver.sh
+   siguiente` → primero `Turnos del usuario con escritor: 1 («Crea el
+   fichero usuario.txt…»), commit <hash>` y luego el turno 2 `ok`. **No sale
+   «active writer».**
+5. En el terminal de Codex pide algo largo («Ejecuta sleep 30 y responde
+   ok») y, mientras trabaja, `… siguiente` → sale con 4 y `El hilo de
+   escritor está ocupado…`; no se ejecuta nada.
+6. Cuando acabe, `… siguiente` → cuenta 1 turno del usuario (el del paso 5)
+   y el turno sale `ok`.
+7. `scripts/demo/equipo-appserver.sh eventos` → cada `user_turn` va antes de
+   su `brief_sent`.
+8. Sal del terminal de Codex y `scripts/demo/equipo-appserver.sh down` →
+   borra el hilo de prueba en Codex y la carpeta.
 
 ## Spike
 
