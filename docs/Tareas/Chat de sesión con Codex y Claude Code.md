@@ -1,11 +1,11 @@
 ---
 Nombre: Chat de sesión con Codex y Claude Code
-Estado: Planificando
+Estado: En curso
 Resumen: 'Versión 0.8.0, después de la 0.7.0 (que trae la vista «conversación» y el campo de texto común): llenar la conversación con el chat, con menú `/` y `@`, en tres PR (titan-team por el app-server, chat de Codex, chat de Claude Code). En Codex, por el app-server compartido, con titan-team ejecutando sus turnos en el mismo app-server para que no haya dos escritores. En Claude Code, envío con `claude --resume` en un PTY del daemon, lectura de la transcripción y hooks al lanzar para responder permisos, preguntas y planes. Empieza con un spike con los CLI reales. La hace el equipo v7 (configuración de [[Equipo v7]]).'
 Decisiones: 'Investigación y diseño con el usuario el 2026-11-17 (sesión «chat-sesion», lanzada desde control-3b): Codex y Claude a la vez; titan-team con cliente JSON-RPC propio (ADR-0013); rol ocupado → cola oficial; previa y decisión visual; ADR-0012 y ADR-0013 aceptadas por el usuario el mismo día; decisión visual aceptada tras revisar la previa; un solo campo de texto para «Nueva sesión» y el chat; menú `/`; diffs, permisos, preguntas y planes en el chat. Al diseñar la 0.7.0 (mismo día) el usuario decidió que el chat va en la 0.8.0, sobre la estructura de la 0.7.0. La versión se acuerda en cada PR.'
 Bloqueada: []
 Fecha de creación: 2026-11-17T23:30:00+01:00
-Última modificación: 2026-11-18T23:00:00+01:00
+Última modificación: 2026-11-19T20:30:00+01:00
 ---
 
 # Chat de sesión con Codex y Claude Code
@@ -208,6 +208,143 @@ hallazgos de la prueba manual.
 - PR integrada con la versión acordada.
 
 ## Spike
+
+Hecho el 2026-11-19 por la sesión de la 0.8.0 (Opus), con Codex CLI 0.169.0
+(el daemon compartido corría la **0.170.0**) y Claude Code **2.1.328**.
+Modelos baratos (Codex `gpt-6-luna` con esfuerzo `low`, Claude `haiku`),
+una carpeta de proyecto de prueba con datos inventados, y hilos y sesiones
+propios, **borrados al acabar** (5 hilos de Codex con `thread/delete`; 3
+sesiones de Claude paradas y sus ficheros borrados). Ninguna sesión del
+usuario tocada.
+
+### Codex (app-server, WebSocket sobre el socket del daemon compartido)
+
+1. **Cola** (`thread/queue/*`, pide `experimentalApi: true` en
+   `initialize.capabilities`):
+   - `thread/queue/add {threadId, clientUserMessageId, input}` →
+     `{queuedSubmission: {id, input, clientUserMessageId}}`;
+   - con el hilo **libre** arranca ya (`thread/queue/changed` ×2 y
+     `turn/started`); con un turno en curso **espera** y arranca como turno
+     nuevo al acabar, sin dirigirlo;
+   - `thread/queue/list {threadId}` → `{data: [QueuedSubmission]}`;
+     `thread/queue/delete {threadId, queuedSubmissionId}` → `{deleted: true}`;
+   - `thread/queue/changed {threadId}` no trae la cola: hay que pedir
+     `list`.
+   - El `userMessage` del turno que sale de la cola lleva
+     `clientId = clientUserMessageId`.
+2. **Dos clientes** del mismo app-server: tras `thread/resume`, los dos
+   reciben todas las notificaciones del hilo y **las dos peticiones** del
+   servidor (mismo `id`). Responde el primero y el otro recibe
+   `serverRequest/resolved {threadId, requestId}`; una respuesta tardía del
+   segundo no rompe nada. `thread/unsubscribe` → `{status: "unsubscribed"}`.
+   **Un hilo sin turnos no se puede reanudar** desde otro cliente («no
+   rollout found»).
+3. **Parámetros (0.169/0.170)**:
+   - `thread/start {cwd, model, sandbox: "read-only"|"workspace-write",
+     approvalPolicy: "never"|"on-request"|"untrusted", config: {clave:
+     valor}}` (el esfuerzo va como `config.model_reasoning_effort` o
+     `turn/start.effort`) → `{thread: {id, path, status…}}`;
+   - `thread/resume {threadId, model?, sandbox?, approvalPolicy?, config?,
+     cwd?}`; con el hilo cargado en otro proceso responde el error
+     `thread <id> already has an active writer` (comprobado con un
+     `codex app-server` por stdio frente al daemon);
+   - `turn/start {threadId, input: [{type: "text", text}], effort?,
+     outputSchema?, collaborationMode?}` → `{turn: {id, status:
+     "inProgress"}}`;
+   - `thread/turns/list {threadId, limit?, cursor?, sortDirection?}` →
+     `{data: [Turn], nextCursor}`, **del más reciente al más antiguo**; cada
+     `Turn {id, status, items (resumen: userMessage y agentMessage),
+     startedAt, completedAt}`;
+   - `item/tool/requestUserInput` (servidor → cliente, en modo plan):
+     `{threadId, turnId, itemId, questions: [{id, header, question, isOther,
+     isSecret, options: [{label, description}]}], isBlocking}`; respuesta
+     `{answers: {<id>: {answers: ["…"]}}}`. Funcionó.
+   - `collaborationMode/list` → `{data: [{name, mode: "plan"|"default",
+     model, reasoning_effort}]}`; en `turn/start`, `collaborationMode: {mode,
+     settings: {model, reasoning_effort}}`.
+   - `skills/list {cwds}` → `{data: [{cwd, skills: [{name, description…}]}]}`;
+     `model/list` → `{data: [{id, displayName, description,
+     supportedReasoningEfforts…}]}`; `permissionProfile/list {cwd}` →
+     `{data: [{id: ":read-only"…}]}`; `fuzzyFileSearch {query, roots}` →
+     `{files: [{root, path, file_name, score}]}`.
+   - Aprobación de ficheros: `item/fileChange/requestApproval {threadId,
+     turnId, itemId, reason, grantRoot}`; el diff está en el `fileChange`
+     del `item/started` previo (`changes[].diff`, `kind.type`), y
+     `turn/diff/updated {diff}` trae el del turno. Respuesta `{decision:
+     "accept"|"acceptForSession"|"decline"|"cancel"}`.
+4. **Un turno por el app-server da lo mismo que `codex exec`**: respuesta
+   (último `agentMessage` con `phase: "final_answer"`), esquema (con
+   `outputSchema` el texto es el JSON), uso (`thread/tokenUsage/updated
+   {tokenUsage: {total, last: {inputTokens, cachedInputTokens,
+   outputTokens…}}}`) y actividad (`item/started` con `commandExecution
+   {command, commandActions}`, `fileChange`…). `turn/completed {turn:
+   {status: "completed"|"failed"|"interrupted", error}}`. `codex
+   app-server` por stdio habla JSON por líneas.
+
+### Claude Code 2.1.328
+
+5. **`claude --resume <sessionId> "texto"` en un PTY** contra una sesión
+   `--bg`:
+   - **necesita el `sessionId` completo** (el id corto de `claude agents`
+     abre el selector «No sessions match»);
+   - con la sesión **libre**, la transcripción recibe en ~1 s una entrada
+     `user` con `promptSource: "queued"` y `origin.kind: "human"`, y empieza
+     el turno;
+   - con un turno **en curso**, la transcripción recibe `queue-operation
+     {operation: "enqueue", content}` y luego un adjunto `queued_command`; el
+     mensaje **se absorbe a mitad del turno** (`queue-operation remove`,
+     `reason: "absorbed_mid_turn"`): Claude lo lee junto al siguiente
+     resultado de herramienta, como cuando el usuario escribe en el TUI con
+     el turno en marcha. **No hay cola de turnos: dirige el turno en curso.**
+   - El PTY se puede soltar en cuanto aparece la entrada (Ctrl+Z, que
+     desconecta y sale con 0, o cerrar el maestro): la sesión sigue en
+     segundo plano (mismo PID, `idle`).
+6. **Hooks con `--settings`**:
+   - `PermissionRequest` con `{"hookSpecificOutput": {"hookEventName":
+     "PermissionRequest", "decision": {"behavior": "allow"}}}` evita el
+     diálogo (Write y Bash); con `"deny"` y `message`, la herramienta falla
+     con ese mensaje («Denied by PermissionRequest hook»). Entrada:
+     `{session_id, cwd, permission_mode, hook_event_name, tool_name,
+     tool_input, permission_suggestions}`.
+   - `PreToolUse` sobre `AskUserQuestion` con `permissionDecision: "allow"` y
+     `updatedInput` = la entrada más `answers: {<pregunta>: <etiqueta>}`:
+     responde sin diálogo («Your questions have been answered…»).
+   - `ExitPlanMode`: **rechazar funciona** (`PreToolUse` con
+     `permissionDecision: "deny"` y el motivo, que Claude recibe). **Aprobar
+     no**: `PreToolUse allow` pasa a un `PermissionRequest`, y ni `allow` ni
+     `allow` con `updatedPermissions: [{type: "setMode"…}]` quitan el diálogo
+     del plan, que sigue en el TUI (`waiting` · `permission prompt`).
+   - Un hook que acaba sin salida deja el diálogo: `claude agents --json`
+     pasa a `status: "waiting"`, `waitingFor: "permission prompt"`.
+   - **Tope de espera**: el `timeout` del propio hook en los ajustes (en
+     segundos). Al agotarse, sigue el flujo normal (diálogo; en
+     `ExitPlanMode`, el `PermissionRequest`).
+   - `Elicitation`: **no probado** (no había un servidor MCP de prueba).
+7. **Transcripción** (`~/.claude/projects/<carpeta>/<sessionId>.jsonl`):
+   - mensajes: `type: "user"` con `message.content` texto (prompt) o lista
+     con `tool_result {tool_use_id, content, is_error}`; `type: "assistant"`
+     con `message.content` lista de `text`, `thinking` (texto vacío y firma)
+     y `tool_use {id, name, input}` (`Write {file_path, content}`, `Bash
+     {command, description}`, `AskUserQuestion {questions}`, `ExitPlanMode
+     {plan, planFilePath}`);
+   - fin de turno: `type: "system", subtype: "turn_duration"`;
+   - la cola: `queue-operation` y `attachment.type = "queued_command"`;
+   - **mucho más que no es conversación** y no se lee nunca: `attachment`
+     con el prompt de sistema, instrucciones, el correo y la organización
+     del usuario, `api-request*`, `session-owner`, `file-history-snapshot`…
+     El parser solo toma `user`, `assistant`, `system/turn_duration` y la
+     cola; las fixtures se escriben a mano.
+8. **`/compact` en el PTY de `claude attach` sin Enter**: queda escrito en el
+   campo con su menú de comandos abierto, sin lanzarse.
+
+### Lo que contradice o precisa las ADR (a decidir con el usuario)
+
+- **Claude con un turno en curso**: `claude --resume` no encola un turno
+  nuevo, dirige el turno en marcha (ADR-0012 solo prohíbe dirigir en Codex).
+- **Aprobar un plan de Claude** desde el chat no es posible con hooks
+  (ADR-0012 §3 lo daba por hecho); rechazarlo sí.
+- Detalle sin decisión: el envío necesita el `sessionId` completo (lo da
+  `claude agents --json`).
 
 ## Verificación
 
