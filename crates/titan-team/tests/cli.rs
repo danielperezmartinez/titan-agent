@@ -12,7 +12,10 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use serde_json::Value;
+use serde_json::{Value, json};
+
+mod support;
+use support::{FakeCodex, requests};
 
 static NEXT: AtomicUsize = AtomicUsize::new(0);
 
@@ -42,18 +45,6 @@ sandbox = "workspace-write"
 prompt_file = "prompt.md"
 "#;
 
-const FAKE: &str = r#"#!/bin/sh
-cat > /dev/null
-out=''
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = '-o' ]; then shift; out="$1"; fi
-  shift
-done
-echo made > made.txt
-printf 'done\n' > "$out"
-echo '{"type":"thread.started","thread_id":"t-1"}'
-"#;
-
 impl Repo {
     fn new() -> Repo {
         let root = std::env::temp_dir().join(format!(
@@ -79,8 +70,13 @@ impl Repo {
         fs::write(repo.0.join(".agents/team.toml"), TEAM).unwrap();
         fs::write(repo.0.join("prompt.md"), "Check the kite.").unwrap();
         fs::write(repo.0.join("brief.md"), "Fly a kite.").unwrap();
-        fs::write(repo.0.join("codex"), FAKE).unwrap();
-        fs::set_permissions(repo.0.join("codex"), fs::Permissions::from_mode(0o755)).unwrap();
+        FakeCodex {
+            thread_id: "t-1".into(),
+            answer: "done".into(),
+            body: "echo made > made.txt".into(),
+            ..FakeCodex::default()
+        }
+        .install(&repo.0);
         assert_eq!(
             repo.run(&["new", "kite", "--brief", "brief.md"])
                 .status
@@ -203,24 +199,22 @@ fn a_turn_whose_commit_fails_is_still_recorded() {
     assert_eq!(state["history"].as_array().unwrap().len(), 1);
 }
 
-/// A Codex that refuses to resume: the thread is open in another writer.
-const BUSY: &str = r#"#!/bin/sh
-cat > /dev/null
-echo '{"type":"error","message":"thread t-1 already has an active writer"}'
-exit 1
-"#;
-
 #[test]
 fn a_thread_open_elsewhere_is_kept_and_exits_4() {
     let repo = Repo::new();
     let first = repo.run_as(Some("s-director"), &["ask", "writer", "kite"]);
     assert_eq!(first.status.code(), Some(0), "{first:?}");
-    fs::write(repo.0.join("codex"), BUSY).unwrap();
+    FakeCodex {
+        thread_id: "t-1".into(),
+        resume_error: Some("thread t-1 already has an active writer".into()),
+        ..FakeCodex::default()
+    }
+    .install(&repo.0);
     let busy = repo.run(&["ask", "writer", "kite", "-m", "otra vuelta"]);
     assert_eq!(busy.status.code(), Some(4), "{busy:?}");
     let stderr = String::from_utf8_lossy(&busy.stderr);
     assert!(
-        stderr.contains("El hilo de writer está abierto en titan-agent"),
+        stderr.contains("El hilo de writer está ocupado"),
         "{stderr}"
     );
     let state = repo.state();
@@ -232,7 +226,7 @@ fn a_thread_open_elsewhere_is_kept_and_exits_4() {
         (&last["type"], &last["status"], &last["thread_id"]),
         (&"turn_finished".into(), &"busy".into(), &"t-1".into())
     );
-    assert_eq!(last["text"], "hilo de writer abierto en titan-agent");
+    assert_eq!(last["text"], "hilo de writer ocupado");
     // The director's session is on the events it ran, and only on those.
     let brief = events.iter().find(|e| e["type"] == "brief_sent").unwrap();
     assert_eq!(brief["director_session"], "s-director");
@@ -317,22 +311,6 @@ fn the_gate_runs_inside_the_turn_so_the_monitor_shows_it() {
     assert_eq!(saved, "# Compuerta (exit 0)\n\ngate-ran");
 }
 
-/// A Codex that writes down, next to itself, its arguments and the build
-/// folder it got.
-const RECORDER: &str = r#"#!/bin/sh
-cat > /dev/null
-root=$(dirname "$TITAN_TEAM_CODEX")
-printf '%s\n' "$@" > "$root/codex-args"
-printf '%s' "${CARGO_TARGET_DIR-unset}" > "$root/codex-target"
-out=''
-while [ "$#" -gt 0 ]; do
-  if [ "$1" = '-o' ]; then shift; out="$1"; fi
-  shift
-done
-printf 'done\n' > "$out"
-echo '{"type":"thread.started","thread_id":"t-1"}'
-"#;
-
 #[test]
 fn the_team_shares_one_build_folder_in_its_commands_and_writing_roles() {
     let repo = Repo::new();
@@ -353,7 +331,7 @@ fn the_team_shares_one_build_folder_in_its_commands_and_writing_roles() {
             "sandbox = \"workspace-write\"\nchecks = [\"test\"]",
         );
     fs::write(repo.0.join(".agents/team.toml"), team).unwrap();
-    fs::write(repo.0.join("codex"), RECORDER).unwrap();
+    FakeCodex::default().install(&repo.0);
     let shared = repo.0.join(".agents/target");
     let shared_text = shared.to_string_lossy().into_owned();
     let read = |name: &str| fs::read_to_string(repo.0.join(name)).unwrap();
@@ -368,19 +346,28 @@ fn the_team_shares_one_build_folder_in_its_commands_and_writing_roles() {
     );
     assert_eq!(read("codex-target"), shared_text, "a writing role");
     assert!(shared.is_dir(), "created before the writing role runs");
-    let args = read("codex-args");
-    assert!(
-        args.contains(&format!(
-            "sandbox_workspace_write.writable_roots=[\"{shared_text}\"]"
-        )),
-        "{args}"
+    let start = requests(&repo.0)
+        .into_iter()
+        .rfind(|r| r["method"] == "thread/start")
+        .unwrap();
+    assert_eq!(
+        start["params"]["config"]["sandbox_workspace_write.writable_roots"],
+        json!([shared_text])
     );
 
     // A read-only role could not write there: it gets neither.
     let out = repo.run(&["ask", "checker", "kite", "--force"]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     assert_eq!(read("codex-target"), "unset");
-    assert!(!read("codex-args").contains("writable_roots"));
+    let start = requests(&repo.0)
+        .into_iter()
+        .rfind(|r| r["method"] == "thread/start")
+        .unwrap();
+    assert!(
+        start["params"]["config"]
+            .get("sandbox_workspace_write.writable_roots")
+            .is_none()
+    );
 
     // An empty folder is an error of the file.
     let team =
