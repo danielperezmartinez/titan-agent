@@ -107,6 +107,20 @@ pub enum EventKind {
         by: Option<String>,
         text: String,
     },
+    /// Turns the user had with a role (from the chat or Codex's terminal)
+    /// since the role's last turn of titan-team (ADR-0013).
+    UserTurn {
+        role: String,
+        #[serde(default)]
+        thread_id: Option<String>,
+        turns: u32,
+        #[serde(default)]
+        text: String,
+        #[serde(default)]
+        commit: Option<String>,
+        #[serde(default)]
+        changed_files: Vec<String>,
+    },
     TaskClosed {
         #[serde(default)]
         delete_branch: bool,
@@ -333,7 +347,8 @@ impl TeamRun {
             }
             let at = event.ts_ms;
             match &event.kind {
-                EventKind::TaskCreated { .. } => {}
+                // The monitor shows the user's turns from the 0.8.0 chat on (PR 2).
+                EventKind::TaskCreated { .. } | EventKind::UserTurn { .. } => {}
                 EventKind::BriefSent { from, to, text, .. } => {
                     let from = from.clone().unwrap_or_else(|| USER.to_string());
                     run.feed.push(FeedItem {

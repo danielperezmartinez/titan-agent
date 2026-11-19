@@ -52,6 +52,10 @@ pub struct HistoryEntry {
     pub role: String,
     pub turn: u32,
     pub thread_id: Option<String>,
+    /// Codex's `turn.id` of this turn (app-server, ADR-0013); `None` when
+    /// the turn never started (e.g. `busy`) and in older entries.
+    #[serde(default)]
+    pub turn_id: Option<String>,
     pub resumed: bool,
     pub status: String,
     pub duration_s: f64,

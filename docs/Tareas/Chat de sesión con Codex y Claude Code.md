@@ -207,6 +207,168 @@ hallazgos de la prueba manual.
 - comprobaciones de «Comprobaciones y compuerta de "Hecha"» en verde;
 - PR integrada con la versión acordada.
 
+## PR 1 · Contrato (titan-team por el app-server)
+
+Fijado por el director tras el spike, antes de los tests de Sol (encargo
+`v08-pr1`, especificación completa en `.agents/state/v08-pr1/encargo.md`).
+Sin interfaz.
+
+**C1. Conexión.**
+- El ejecutable es el de siempre: `TITAN_TEAM_CODEX` o `codex` del PATH.
+- Antes del turno, titan-team ejecuta, sin shell,
+  `<codex> app-server daemon version`. Si su salida estándar es un objeto
+  JSON con `"status": "running"` y una cadena `socketPath`, y la plataforma
+  admite sockets de dominio Unix, se conecta a ese socket (WebSocket sobre
+  el socket, un mensaje de texto por petición o respuesta).
+- En cualquier otro caso (otro `status`, salida que no es JSON, la orden
+  falla, o no se puede conectar al socket) lanza `<codex> app-server` sin
+  shell, con la carpeta de trabajo en el worktree del encargo, la entrada y
+  la salida estándar por tuberías y el mismo entorno que hoy recibía `codex
+  exec` (incluido `CARGO_TARGET_DIR` para un rol `workspace-write` con
+  `project.target_dir`). Por stdio se intercambia **un objeto JSON por
+  línea**. Ese servidor solo vive durante el turno: al acabar se cierra (y
+  se mata su grupo de procesos si no sale).
+- Si `<codex>` no se puede ejecutar, `ask` sale con 2 como hoy (mensaje que
+  contiene `no está disponible`), sin escribir eventos.
+
+**C2. Forma de las peticiones.** Cada petición es **un objeto JSON compacto
+en una línea**, que empieza exactamente por `{"id":<n>,"method":"<método>"`
+(luego `,"params":{…}}`), con `id` entero que empieza en 1 y crece de uno
+en uno por conexión. Las notificaciones de titan-team no llevan `id`. Ningún
+texto lleva saltos de línea sin escapar.
+
+**C3. Saludo.** Primera petición: `initialize` con `params`
+`{"clientInfo": {"name": "titan-team", "version": "<versión de titan-team>"},
+"capabilities": {"experimentalApi": true}}`; tras su respuesta, la
+notificación `{"method":"initialized"}`.
+
+**C4. Hilo nuevo** (primer turno del rol en el encargo, o `--new`):
+`thread/start` con `params`:
+- `cwd`: la ruta absoluta del worktree del encargo;
+- `model`: el `model` del rol; `sandbox`: el `sandbox` del rol;
+  `approvalPolicy`: `"never"`;
+- `config`: un objeto con
+  - `model_reasoning_effort`: el `effort` del rol (solo si lo tiene);
+  - cada par `clave=valor` de `[codex].config` y luego del `config` del rol:
+    la clave tal cual (con sus puntos) y el valor leído como valor TOML
+    (`"high"` → `"high"`, `5` → `5`, `true` → `true`, `["a"]` → `["a"]`); si
+    no es TOML válido, la cadena tal cual. Un par posterior con la misma
+    clave sustituye al anterior;
+  - para un rol `workspace-write` con `project.target_dir`:
+    `sandbox_workspace_write.writable_roots`: `[<ruta absoluta de
+    target_dir>]` y `shell_environment_policy.set`: `{"CARGO_TARGET_DIR":
+    "<ruta absoluta de target_dir>"}`.
+- El hilo del rol es `result.thread.id`.
+
+**C5. Hilo que continúa** (el rol ya tiene `thread_id` y no hay `--new`):
+1. `thread/read {"threadId": <id>}`: si `result.thread.status.type` es
+   `"active"`, el turno es **`busy`** (C9) y no se envía nada más;
+2. `thread/turns/list {"threadId": <id>, "limit": 50}` (para C8);
+3. `thread/resume` con `threadId` y los mismos `model`, `sandbox`,
+   `approvalPolicy` y `config` de C4 (sin `cwd`).
+- Si `thread/resume` o `turn/start` responden un error JSON-RPC cuyo
+  `message` contiene `already has an active writer` (sin distinguir
+  mayúsculas), el turno es **`busy`** (C9).
+- Cualquier otro error JSON-RPC en `initialize`, `thread/start`,
+  `thread/read`, `thread/turns/list`, `thread/resume` o `turn/start` deja el
+  turno en `error`, con el mensaje del error en el `.stderr` del turno.
+
+**C6. El turno.**
+- `turn/start` con `params` `{"threadId": <id>, "input": [{"type": "text",
+  "text": <prompt>}]}` y, si el rol tiene `output_schema`, `"outputSchema":
+  <el contenido JSON de ese fichero>`. El turno es `result.turn.id`.
+- Solo cuentan las notificaciones (mensajes con `method` y sin `id`) cuyo
+  `params.threadId` es el del hilo y cuyo `params.turnId` (o
+  `params.turn.id`) es el del turno:
+  - `item/started` produce un evento `activity` (como mucho 200 por turno,
+    texto de 200 caracteres como mucho) según `params.item.type`:
+    - `commandExecution` → `$ <command>`, quitando la envoltura de shell
+      (`/usr/bin/bash -lc 'cargo test'` → `$ cargo test`; la regla de hoy:
+      si el programa es `sh`, `bash` o `zsh` con `-lc` o `-c`, se toma el
+      guion y se le quitan unas comillas simples o dobles exteriores);
+    - `fileChange` → `edita <rutas>`: las `path` de `item.changes`, unidas
+      por `, `, relativas al worktree cuando están dentro;
+    - `mcpToolCall` → `mcp_tool_call`; `webSearch` → `web_search`;
+    - cualquier otro tipo no produce evento;
+  - `item/completed` con `item.type = "agentMessage"`: su `item.text` es la
+    respuesta del turno (gana el último);
+  - `thread/tokenUsage/updated`: el `usage` del turno es la **suma** de
+    `tokenUsage.last` de todas las del turno (`inputTokens` →
+    `input_tokens`, `cachedInputTokens` → `cached_input_tokens`,
+    `outputTokens` → `output_tokens`);
+  - `turn/completed` cierra el turno: `turn.status = "completed"` → `ok`;
+    cualquier otro (`failed`, `interrupted`) → `error`, con
+    `turn.error.message` (si lo hay) en el `.stderr` del turno.
+- Si la conexión se cierra (o el servidor propio sale) antes de
+  `turn/completed`, el turno es `error`.
+- **Peticiones del servidor** (mensajes con `id` y `method`, p. ej.
+  aprobaciones o preguntas): titan-team **no las responde** ni las rechaza.
+- La respuesta se guarda como hoy: `NN-<rol>.md`, o `NN-<rol>.json` si el
+  rol tiene `output_schema` (y entonces se interpreta como hoy para
+  `report`).
+
+**C7. Tiempo límite y cierre.**
+- Si el turno no completa en `timeout_s` del rol: `turn/interrupt
+  {"threadId", "turnId"}`, se espera como mucho 10 s a su `turn/completed` y
+  el estado es `timeout` (aunque llegue `interrupted`). Salida 1, como hoy.
+- Al acabar (bien, mal o por tiempo), si hubo hilo: `thread/unsubscribe
+  {"threadId"}` y se cierra la conexión; el servidor propio se cierra.
+- **Salidas del turno** en `<state_dir>/<encargo>/`:
+  - `NN-<rol>.jsonl`: cada mensaje recibido del servidor que lleva
+    `method` (notificaciones y peticiones del servidor) y cuyo
+    `params.threadId`, si lo tiene, es el del hilo, uno por línea, en orden
+    de llegada;
+  - `NN-<rol>.stderr`: el stderr del servidor propio (vacío con el daemon)
+    y los mensajes de error de C5 y C6.
+
+**C8. Turnos del usuario con un rol.**
+- El historial (`<state_dir>/<encargo>.json`, `history[]`) guarda en cada
+  entrada un campo nuevo **`turn_id`**: el `turn.id` de Codex del turno, o
+  `null` si no llegó a empezar (p. ej. `busy`). Las entradas antiguas no lo
+  tienen y valen `null`.
+- Al continuar un hilo (C5, paso 2), con los turnos de `thread/turns/list`
+  (`result.data`, **del más reciente al más antiguo**): se recorren desde el
+  más reciente hasta el primero cuyo `id` sea el `turn_id` de alguna entrada
+  del historial de ese rol; los recorridos antes de él son **turnos del
+  usuario**. Si ninguno coincide (historial sin `turn_id`), no hay turnos del
+  usuario.
+- Si hay alguno, **antes** de `brief_sent`:
+  - si `project.autocommit` es `true` y el rol es `workspace-write`, se hace
+    commit de todo lo que haya sin confirmar en el worktree (como el commit
+    de un turno: `git add -A`, y nada si no hay cambios) con el mensaje
+    exacto `team: turnos del usuario con <rol>`;
+  - se escribe el evento **`user_turn`** con `role`, `thread_id`, `turns`
+    (cuántos), `text` (el texto del primer elemento `userMessage` del turno
+    del usuario **más antiguo**: la concatenación de sus `content[]` de
+    `type = "text"`, cortada a 200 caracteres con `…`), `commit` (el hash
+    corto, o `null`) y `changed_files` (las rutas del commit, o `[]`);
+  - la salida de `ask` lo cuenta **antes** de la respuesta: en texto, una
+    línea que empieza por `Turnos del usuario con <rol>: <N>`; con `--json`,
+    el campo `user_turns`: `{"turns": N, "text": …, "commit": …}`. Sin turnos
+    del usuario, la línea no sale y `user_turns` es `null`.
+- `user_turn` es un tipo nuevo del log de eventos v1 (`v` sigue en 1).
+
+**C9. Hilo ocupado (`busy`).** Mismo contrato que hoy, con textos nuevos:
+salida 4, nada se ejecuta (ni `checks` ni commit), el rol conserva su
+`thread_id` y su número de turnos, la ronda de revisión no se gasta, no hay
+reintentos ni hilo nuevo, y `turn_finished` sale con `status = "busy"` y
+`text = "hilo de <rol> ocupado"`. En stderr, una línea que empieza por
+`El hilo de <rol> está ocupado`. Ocurre por C5 (estado `active` o «active
+writer»).
+
+**C10. `--dry-run`.** No ejecuta `<codex>` (tampoco `daemon version`) ni se
+conecta. Imprime en stdout:
+- una línea `Peticiones JSON-RPC:` y, debajo, una línea por petición que se
+  enviaría con la forma de C2: `initialize`, luego `thread/start` (hilo
+  nuevo) o `thread/resume` (hilo que continúa; sin `thread/read` ni
+  `thread/turns/list`), y `turn/start` con el prompt completo;
+- después, como hoy, `--- prompt ---` y el prompt.
+Sigue sin efectos: ni eventos, ni historial, ni `checks`.
+
+**C11. Documentación.** `titan-team doc` (imprime
+`crates/titan-team/FORMAT.md`) nombra `app-server`, `user_turn` y `turn_id`,
+y ya no dice que el turno se ejecuta con `codex exec`.
+
 ## Spike
 
 Hecho el 2026-11-19 por la sesión de la 0.8.0 (Opus), con Codex CLI 0.169.0

@@ -480,6 +480,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         role: role_name.clone(),
         turn,
         thread_id: thread.clone(),
+        turn_id: None,
         resumed: thread_id.is_some(),
         status: status.to_string(),
         duration_s: (duration.as_secs_f64() * 10.0).round() / 10.0,
