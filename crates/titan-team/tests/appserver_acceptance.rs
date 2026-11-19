@@ -401,8 +401,7 @@ fn resume_accounts_for_user_turns() {
             events
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| e["type"] == "brief_sent")
-                .last()
+                .rfind(|(_, e)| e["type"] == "brief_sent")
                 .unwrap()
                 .0
                 > index
