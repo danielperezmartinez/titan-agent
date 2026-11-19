@@ -264,9 +264,18 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
             eprintln!("aviso: no se pudo crear {}: {error}", dir.display());
         }
     }
-    // Connected before the turn is announced: the thread may be busy, and
-    // the user's turns since the role's last one go first on the log.
-    let prepared = codex::prepare(&program, &wt, &build_env, thread_id.as_deref());
+    let mut request = codex::TurnRequest {
+        team,
+        role,
+        thread: thread_id.as_deref(),
+        worktree: &wt,
+        prompt: "",
+        limit: Duration::from_secs(role.timeout_s),
+    };
+    // Connected (and the thread resumed) before the turn is announced: the
+    // thread may be busy, and the user's turns since the role's last one go
+    // first on the log.
+    let prepared = codex::prepare(&program, &build_env, &request);
 
     let turn = known.map_or(0, |r| r.turns) + 1;
     let log = EventLog::new(team, task);
@@ -323,14 +332,7 @@ pub fn ask(team: &TeamConfig, rest: &[String], args: &Args, cwd: &Path) -> Resul
         prompt.push_str(&format!("\n\n{block}"));
     }
     let started = Instant::now();
-    let request = codex::TurnRequest {
-        team,
-        role,
-        thread: thread_id.as_deref(),
-        worktree: &wt,
-        prompt: &prompt,
-        limit: Duration::from_secs(role.timeout_s),
-    };
+    request.prompt = &prompt;
     let out = codex::run(prepared, &request, |text| {
         // Activity is best effort: losing a line must not stop the turn.
         if let Err(error) = log.append(EventKind::Activity {

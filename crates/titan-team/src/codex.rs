@@ -176,23 +176,24 @@ pub struct Prepared {
     pub busy: bool,
     /// `data` of `thread/turns/list` (newest first) of a continued thread.
     pub turns: Vec<Value>,
+    /// The continued thread is already resumed (subscribed).
+    resumed: bool,
     error: Option<String>,
 }
 
-/// Connects and, for a continued thread, reads its state and its turns.
-pub fn prepare(
-    program: &str,
-    cwd: &Path,
-    env: &[(&str, PathBuf)],
-    thread: Option<&str>,
-) -> Prepared {
+/// Connects and, for a continued thread, reads its state and its turns and
+/// resumes it: whether it is busy is known before the turn is announced, so
+/// the user's turns are only recorded when the role's turn can run.
+pub fn prepare(program: &str, env: &[(&str, PathBuf)], request: &TurnRequest) -> Prepared {
+    let thread = request.thread;
     let mut prepared = Prepared {
         client: None,
         busy: false,
         turns: Vec::new(),
+        resumed: false,
         error: None,
     };
-    let mut client = match Client::connect(program, cwd, env) {
+    let mut client = match Client::connect(program, request.worktree, env) {
         Ok(client) => client,
         Err(error) => {
             prepared.error = Some(error);
@@ -222,6 +223,16 @@ pub fn prepare(
                         .unwrap_or_default();
                 }
                 Ok(Err(error)) => prepared.error = Some(format!("thread/turns/list: {error}")),
+                Err(Closed(error)) => prepared.error = Some(error),
+            }
+        }
+        if !prepared.busy && prepared.error.is_none() {
+            let (method, params) =
+                thread_request(request.team, request.role, Some(id), request.worktree);
+            match client.request(method, &params, deadline) {
+                Ok(Ok(_)) => prepared.resumed = true,
+                Ok(Err(error)) if is_busy_message(&error) => prepared.busy = true,
+                Ok(Err(error)) => prepared.error = Some(format!("{method}: {error}")),
                 Err(Closed(error)) => prepared.error = Some(error),
             }
         }
@@ -269,7 +280,13 @@ pub fn run(
         out.status = "error";
         out.errors.push(error);
     } else {
-        turn(&mut client, request, &mut out, &mut on_activity);
+        turn(
+            &mut client,
+            request,
+            prepared.resumed,
+            &mut out,
+            &mut on_activity,
+        );
     }
     if let Some(thread) = out.thread_id.clone().filter(|_| !busy) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -292,6 +309,7 @@ pub fn run(
 fn turn(
     client: &mut Client,
     request: &TurnRequest,
+    resumed: bool,
     out: &mut TurnOutput,
     on_activity: &mut impl FnMut(String),
 ) {
@@ -308,19 +326,21 @@ fn turn(
         Err(error) => return fail(out, error),
     };
     let setup = Instant::now() + SETUP_LIMIT;
-    let (method, params) =
-        thread_request(request.team, request.role, request.thread, request.worktree);
-    match client.request(method, &params, setup) {
-        Ok(Ok(result)) => {
-            if let Some(id) = result.pointer("/thread/id").and_then(Value::as_str) {
-                out.thread_id = Some(id.to_string());
+    if !resumed {
+        let (method, params) =
+            thread_request(request.team, request.role, request.thread, request.worktree);
+        match client.request(method, &params, setup) {
+            Ok(Ok(result)) => {
+                if let Some(id) = result.pointer("/thread/id").and_then(Value::as_str) {
+                    out.thread_id = Some(id.to_string());
+                }
             }
+            Ok(Err(error)) => return fail(out, format!("{method}: {error}")),
+            Err(Closed(error)) => return fail(out, error),
         }
-        Ok(Err(error)) => return fail(out, format!("{method}: {error}")),
-        Err(Closed(error)) => return fail(out, error),
     }
     let Some(thread) = out.thread_id.clone() else {
-        return fail(out, format!("{method} no devolvió el hilo"));
+        return fail(out, "thread/start no devolvió el hilo".into());
     };
     let params = turn_params(&thread, request.prompt, schema.as_ref());
     match client.request("turn/start", &params, setup) {
