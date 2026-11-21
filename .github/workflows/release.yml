@@ -183,7 +183,7 @@ jobs:
           # Nothing is uploaded unless the signature verifies with the repo's public key.
           minisign -V -p packaging/minisign.pub -m dist/titan-agent-update.json
           (cd dist && sha256sum *.tar.gz *.zip titan-agent-update.json > SHA256SUMS)
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: |
             dist/*.tar.gz
