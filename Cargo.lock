@@ -3563,7 +3563,7 @@ dependencies = [
  "pbkdf2",
  "serde",
  "serde_bytes",
- "sha2",
+ "sha2 0.10.9",
  "subtle",
  "zbus 5.19.0",
  "zbus_macros 5.19.0",
@@ -4543,7 +4543,7 @@ checksum = "0516a385866c09368f0b5bcd1caff3366aace790fcd46e2bb032697bb172fd1f"
 dependencies = [
  "pbkdf2",
  "salsa20",
- "sha2",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -4712,6 +4712,17 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "digest 0.10.7",
+]
+
+[[package]]
+name = "sha2"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -5245,7 +5256,7 @@ dependencies = [
  "minisign-verify",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -5266,7 +5277,7 @@ dependencies = [
  "portable-pty",
  "serde",
  "serde_json",
- "sha2",
+ "sha2 0.11.1",
  "tar",
  "titan-agent-core",
  "toml 1.2.1+spec-1.1.0",
